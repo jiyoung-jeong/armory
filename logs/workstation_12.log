@@ -55,3 +55,30 @@ Status: Downloaded newer image for firefall/cluster_piper_env:v1
 2026-04-10 01:35:28,501 [INFO] Container started successfully
 2026-04-10 01:36:07,244 [INFO] Docker container running — status: booted
 2026-04-10 01:37:48,841 [INFO] Container stopped and removed
+2026-04-10 02:02:43,781 [INFO] Docker container not running — status: offline
+2026-04-10 02:03:06,330 [INFO] Starting Docker container in detached mode
+2026-04-10 02:03:06,935 [INFO] docker run output: 090fe1a48a0673cc106778040de15dfd1566db483af0ef2938d5bc73d5144ad3
+2026-04-10 02:03:09,453 [INFO] Container started successfully
+2026-04-10 02:03:39,066 [INFO] Container stopped and removed
+2026-04-10 02:06:42,007 [INFO] Docker container not running — status: offline
+2026-04-10 02:07:22,663 [INFO] Docker container not running — status: offline
+2026-04-10 02:07:26,810 [INFO] Starting Docker container in detached mode
+2026-04-10 02:07:27,316 [INFO] docker run output: 46a2651687cf0e9544343935fe5f06776746a976a93511388be319b60581d2bb
+2026-04-10 02:07:30,032 [INFO] Container started successfully
+2026-04-10 02:08:09,742 [INFO] Docker container running — status: booted
+2026-04-10 02:08:19,625 [INFO] Docker container running — status: booted
+2026-04-10 02:13:21,385 [INFO] Container stopped and removed
+2026-04-10 02:15:27,030 [INFO] Docker container not running — status: offline
+2026-04-10 11:01:52,317 [INFO] Docker container not running — status: offline
+2026-04-10 11:08:43,239 [INFO] Docker container not running — status: offline
+2026-04-10 11:08:54,445 [INFO] Starting Docker container in detached mode
+2026-04-10 11:08:54,849 [INFO] docker run output: 704c488d82d2d70c42fb2e400780c71bb7b67e499fb5b7b358d7331ec3771686
+2026-04-10 11:08:57,466 [INFO] Container started successfully
+2026-04-10 11:09:14,038 [INFO] Docker container running — status: booted
+2026-04-10 11:09:20,026 [INFO] Container stopped and removed
+2026-04-10 11:35:18,212 [INFO] Docker container not running — status: offline
+2026-04-10 11:36:37,996 [INFO] Docker container not running — status: offline
+2026-04-10 11:36:56,524 [INFO] Starting Docker container in detached mode
+2026-04-10 11:36:57,231 [INFO] docker run output: b060812f1d5338938f5d90c7244d3ed69c4997d2992550cdbf90210a84a303ce
+2026-04-10 11:36:59,847 [INFO] Container started successfully
+2026-04-10 11:39:58,407 [INFO] Container stopped and removed

@@ -1,0 +1,60 @@
+2026-04-10 11:36:25,880 [INFO] Docker container not running — status: offline
+2026-04-10 11:36:53,188 [INFO] Starting Docker container in detached mode
+2026-04-10 11:37:16,612 [INFO] docker run output: d3ee183a6701cd33412301b581c9f6b583b678524deae86ddd9124740cd31426
+2026-04-10 11:37:16,712 [WARNING] docker run stderr: Unable to find image 'firefall/cluster_piper_env:v1' locally
+v1: Pulling from firefall/cluster_piper_env
+7e49dc6156b0: Already exists
+f0141529a775: Already exists
+8a33ee036c17: Already exists
+b077c07b8ae5: Already exists
+0f68bb720c68: Already exists
+66580f77fd4c: Already exists
+09cff80b11e7: Already exists
+91d91a7c7692: Already exists
+c3fa9edd4f4c: Already exists
+46530456e388: Already exists
+b0581298a7a3: Already exists
+b31a9b9a3bd3: Already exists
+785e2c97f95f: Already exists
+bdc1fc764c89: Already exists
+90ba925920ba: Already exists
+9f870436124f: Already exists
+732d02a3684c: Already exists
+ea4ba0e8c657: Already exists
+cb4896ca45fe: Already exists
+4db009601e72: Already exists
+d2d950dbb8dc: Already exists
+405b5893e10b: Already exists
+b04bcd5dfdd4: Already exists
+1818efcedc38: Already exists
+655b1656783c: Already exists
+2d75117caf0c: Already exists
+e7759762e2a1: Already exists
+980afb2860f8: Already exists
+7431cb3d81a1: Already exists
+fe76251d8bc6: Already exists
+9b4134e1dddb: Already exists
+271e2093113e: Already exists
+fe2b6f1451f3: Already exists
+b459cf1d3b83: Already exists
+ec13a3472fae: Already exists
+badad1de7bf6: Already exists
+a503a68d1f4e: Already exists
+ae22b881eea8: Already exists
+30b3aca2fba0: Already exists
+b11be751cc72: Already exists
+0fa072c08f46: Already exists
+1c3d9effa68f: Already exists
+c6edbe778426: Already exists
+6083750fc0a7: Pulling fs layer
+8ba5436245a3: Pulling fs layer
+8ba5436245a3: Verifying Checksum
+8ba5436245a3: Download complete
+6083750fc0a7: Verifying Checksum
+6083750fc0a7: Download complete
+6083750fc0a7: Pull complete
+8ba5436245a3: Pull complete
+Digest: sha256:e0b753ad54496af56d82d9230372960c7281cca6d6ce08818da876588ef0f95c
+Status: Downloaded newer image for firefall/cluster_piper_env:v1
+2026-04-10 11:37:19,124 [INFO] Container started successfully
+2026-04-10 11:39:55,284 [INFO] Container stopped and removed

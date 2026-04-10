@@ -2,6 +2,8 @@
 """ARMory — Advanced Robotic Manipulation CLI tool."""
 
 import os
+import re
+import shutil
 import signal
 import sys
 
@@ -16,39 +18,70 @@ from src.ui.dashboard import Dashboard
 # ── ASCII splash ────────────────────────────────────────────────
 
 ESC = chr(27)
-CYAN = f"{ESC}[38;5;51m"
-GRAY = f"{ESC}[38;5;245m"
 RESET = f"{ESC}[0m"
+BOLD = f"{ESC}[1m"
+PASTEL_PINK = f"{ESC}[38;5;225m"
+PASTEL_LAVENDER = f"{ESC}[38;5;183m"
+PASTEL_SKY = f"{ESC}[38;5;153m"
+MUTED = f"{ESC}[38;5;250m"
 
-LOGO_ART = """
-     █████╗ ██████╗ ███╗   ███╗ ██████╗ ██████╗ ██╗   ██╗
-    ██╔══██╗██╔══██╗████╗ ████║██╔═══██╗██╔══██╗╚██╗ ██╔╝
-    ███████║██████╔╝██╔████╔██║██║   ██║██████╔╝ ╚████╔╝
-    ██╔══██║██╔══██╗██║╚██╔╝██║██║   ██║██╔══██╗  ╚██╔╝
-    ██║  ██║██║  ██║██║ ╚═╝ ██║╚██████╔╝██║  ██║   ██║
-    ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝
-"""
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+BANNER_WIDTH = 54
 
-LOGO_SUB = """    ═══════════════════════════════════════════════════
-                Advanced  Robotic  Manipulation
-    ═══════════════════════════════════════════════════"""
 
-LOGO = f"{CYAN}{LOGO_ART}{RESET}\n{GRAY}{LOGO_SUB}{RESET}"
+def _visible_len(text: str) -> int:
+    return len(ANSI_RE.sub("", text))
+
+
+def _center_line(text: str, width: int) -> str:
+    return " " * max(0, (width - _visible_len(text)) // 2) + text
+
+
+def _banner_line(text: str) -> str:
+    inner_width = BANNER_WIDTH - 2
+    padding = max(0, inner_width - _visible_len(text))
+    left = padding // 2
+    right = padding - left
+    return f"{PASTEL_LAVENDER}│{RESET}{' ' * left}{text}{' ' * right}{PASTEL_LAVENDER}│{RESET}"
+
+
+def _splash_lines() -> list[str]:
+    brand = f"{PASTEL_PINK}{BOLD}ARM{RESET}{PASTEL_SKY}{BOLD}ory{RESET}"
+    subtitle = f"{MUTED}Advanced Robotic Manipulation{RESET}"
+    console = f"{MUTED}fleet console{RESET}"
+    return [
+        f"{PASTEL_LAVENDER}╭{'─' * (BANNER_WIDTH - 2)}╮{RESET}",
+        _banner_line(brand),
+        _banner_line(subtitle),
+        _banner_line(console),
+        f"{PASTEL_LAVENDER}╰{'─' * (BANNER_WIDTH - 2)}╯{RESET}",
+    ]
 
 
 def bootup():
     """Display the ASCII splash screen and welcome message."""
-    os.system("clear")
-    print(LOGO)
+    print(f"{ESC}[2J{ESC}[H", end="")
 
     try:
         user = os.getlogin()
     except OSError:
         user = os.environ.get("USER", "operator")
 
-    print(f"    \033[38;5;51mWelcome, \033[1m{user}\033[0m")
+    cols, rows = shutil.get_terminal_size(fallback=(100, 30))
+    splash = _splash_lines()
+    welcome = f"{PASTEL_SKY}Welcome, {BOLD}{user}{RESET}"
+    prompt = f"{MUTED}Press Enter to proceed{RESET}"
+
+    block_height = len(splash) + 4
+    top_padding = max(0, (rows - block_height) // 2)
+    print("\n" * top_padding, end="")
+
+    for line in splash:
+        print(_center_line(line, cols))
     print()
-    input("    \033[38;5;245mPress Enter to proceed...\033[0m")
+    print(_center_line(welcome, cols))
+    print()
+    input(_center_line(prompt, cols))
 
 
 def main():
