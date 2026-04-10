@@ -1,0 +1,10 @@
+workstations:
+  - id: 11
+  - id: 12
+  - id: 13
+  - id: 14
+
+ssh:
+  user: rbansal66
+  base_ip: "130.207.121"
+  ip_offset: 200

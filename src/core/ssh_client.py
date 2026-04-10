@@ -1,0 +1,369 @@
+"""Concurrent SSH execution logic using asyncssh."""
+
+import asyncio
+import logging
+import os
+import threading
+from typing import Callable
+
+import asyncssh
+
+from .config import Config, Robot, RobotStatus
+
+DOCKER_CONTAINER = "piper_env"
+
+
+class SSHManager:
+    """Manages concurrent SSH connections to robot workstations.
+
+    Runs an asyncio event loop on a background thread so the curses UI
+    on the main thread never blocks.
+    """
+
+    def __init__(self, config: Config, on_log: Callable[[str], None] | None = None):
+        self.config = config
+        self._on_log = on_log
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._connections: dict[int, asyncssh.SSHClientConnection] = {}
+        self._lock = asyncio.Lock()
+
+        # Set up per-workstation loggers
+        self._loggers: dict[int, logging.Logger] = {}
+        self._system_logger = self._make_logger(
+            "armory_system",
+            os.path.join(config.log_dir, "armory_system.log"),
+        )
+        for robot in config.robots:
+            self._loggers[robot.id] = self._make_logger(
+                f"workstation_{robot.id}",
+                os.path.join(config.log_dir, f"workstation_{robot.id}.log"),
+            )
+
+    # ── lifecycle ────────────────────────────────────────────────
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        """Gracefully close all SSH connections and stop the loop."""
+        future = asyncio.run_coroutine_threadsafe(self._close_all(), self._loop)
+        try:
+            future.result(timeout=5)
+        except Exception:
+            pass
+        self._loop.call_soon_threadsafe(self._loop.stop)
+        self._thread.join(timeout=3)
+
+    def _run_loop(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_forever()
+
+    # ── public API (thread-safe, returns futures) ────────────────
+
+    def submit(self, coro) -> asyncio.Future:
+        """Submit a coroutine to the background event loop."""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+    def check_all_status(self, callback: Callable | None = None):
+        """Check status of all robots concurrently. Returns a Future."""
+        return self.submit(self._check_all_status(callback))
+
+    def run_on_robots(
+        self,
+        robots: list[Robot],
+        command: str,
+        callback: Callable | None = None,
+    ):
+        """Run a command inside the Docker container on multiple robots."""
+        return self.submit(self._run_on_robots(robots, command, callback))
+
+    def boot_robots(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Start the Docker container on multiple robots."""
+        return self.submit(self._boot_robots(robots, callback))
+
+    def shutdown_robots(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Stop and remove the Docker container on multiple robots."""
+        return self.submit(self._shutdown_robots(robots, callback))
+
+    # ── internal async methods ──────────────────────────────────
+
+    async def _get_connection(self, robot: Robot) -> asyncssh.SSHClientConnection:
+        async with self._lock:
+            conn = self._connections.get(robot.id)
+            if conn is not None:
+                # Check if still alive
+                try:
+                    await conn.run("true", timeout=3)
+                    return conn
+                except Exception:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    del self._connections[robot.id]
+
+            conn = await asyncssh.connect(
+                robot.ip,
+                username=self.config.ssh_user,
+                known_hosts=None,
+                connect_timeout=8,
+            )
+            self._connections[robot.id] = conn
+            return conn
+
+    async def _close_all(self):
+        async with self._lock:
+            for rid, conn in self._connections.items():
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._connections.clear()
+
+    async def _check_status(self, robot: Robot) -> RobotStatus:
+        logger = self._loggers[robot.id]
+        try:
+            conn = await self._get_connection(robot)
+            result = await conn.run(
+                f"docker ps --filter name={DOCKER_CONTAINER} -q",
+                timeout=10,
+            )
+            if result.stdout.strip():
+                logger.info("Docker container running — status: booted")
+                self._emit(f"WS-{robot.id}: container running (booted)")
+                return RobotStatus.BOOTED
+            else:
+                logger.info("Docker container not running — status: offline")
+                self._emit(f"WS-{robot.id}: container not running (offline)")
+                return RobotStatus.OFFLINE
+        except Exception as e:
+            logger.error("Status check failed: %s", e)
+            self._emit(f"WS-{robot.id}: unreachable — {e}")
+            async with self._lock:
+                self._connections.pop(robot.id, None)
+            return RobotStatus.OFFLINE
+
+    async def _check_all_status(self, callback: Callable | None = None):
+        tasks = []
+        for robot in self.config.robots:
+            tasks.append(self._check_and_update(robot))
+        await asyncio.gather(*tasks)
+        if callback:
+            callback()
+
+    async def _check_and_update(self, robot: Robot):
+        # Preserve 'online' status (set by dummy Connect to Server)
+        if robot.status == RobotStatus.ONLINE:
+            # Still verify connectivity
+            status = await self._check_status(robot)
+            if status == RobotStatus.OFFLINE:
+                robot.status = RobotStatus.OFFLINE
+            # else keep ONLINE
+        else:
+            robot.status = await self._check_status(robot)
+
+    async def _run_on_robots(
+        self,
+        robots: list[Robot],
+        command: str,
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._exec_in_docker(r, command) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _exec_in_docker(self, robot: Robot, command: str) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            conn = await self._get_connection(robot)
+            cmd = f"docker exec {DOCKER_CONTAINER} bash -c 'source ~/.bashrc && {command}'"
+            logger.info("Executing: %s", cmd)
+            self._emit(f"WS-{robot.id}: running '{command}'")
+            result = await conn.run(cmd, timeout=30)
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            if stdout:
+                logger.info("stdout: %s", stdout)
+                self._emit(f"WS-{robot.id}: {stdout[:120]}")
+            if stderr:
+                logger.warning("stderr: %s", stderr)
+                self._emit(f"WS-{robot.id} err: {stderr[:120]}")
+            return stdout or stderr or "(no output)"
+        except Exception as e:
+            logger.error("Command '%s' failed: %s", command, e)
+            self._emit(f"WS-{robot.id}: FAILED '{command}' — {e}")
+            robot.status = RobotStatus.OFFLINE
+            return f"ERROR: {e}"
+
+    async def _boot_robots(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._boot_single(r) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _boot_single(self, robot: Robot) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            conn = await self._get_connection(robot)
+
+            # Check if already running
+            check = await conn.run(
+                f"docker ps --filter name={DOCKER_CONTAINER} -q",
+                timeout=10,
+            )
+            if check.stdout.strip():
+                msg = "Container already running — skipping boot"
+                logger.info(msg)
+                self._emit(f"WS-{robot.id}: {msg}")
+                robot.status = RobotStatus.BOOTED
+                return msg
+
+            # Remove any exited container with the same name
+            await conn.run(
+                f"docker rm -f {DOCKER_CONTAINER} 2>/dev/null || true",
+                timeout=10,
+            )
+
+            logger.info("Starting Docker container in detached mode")
+            self._emit(f"WS-{robot.id}: starting Docker container...")
+
+            # piper_start uses `docker run -it` which blocks and needs a TTY.
+            # Instead, run in detached mode (-d) with --entrypoint overridden
+            # to `sleep` so the container stays alive, then launch the real
+            # entrypoint via docker exec.
+            boot_cmd = (
+                "bash -lc 'source ~/.bashrc && docker run -d"
+                " --privileged --net=host --runtime=nvidia --gpus all"
+                f" --name {DOCKER_CONTAINER}"
+                " --entrypoint sleep"
+                " -e NVIDIA_DRIVER_CAPABILITIES=all"
+                ' -e DISPLAY=$DISPLAY'
+                " -v /tmp/.X11-unix/:/tmp/.X11-unix/:rw"
+                ' -v $PIPER_DOCKER_DIR/../user_data/:/CS4803ARM_Lab/user_data/'
+                ' -v $PIPER_DOCKER_DIR/../assets/:/CS4803ARM_Lab/assets/'
+                ' -v $PIPER_DOCKER_DIR/../user_data/piper_ros/:/piper_ros/'
+                " -v /home/data_collection/dhe83/:/datasets/"
+                " -v /dev:/dev"
+                " -w /CS4803ARM_Lab/user_data/data_collection"
+                " firefall/cluster_piper_env:v1"
+                " infinity'"
+            )
+            result = await conn.run(boot_cmd, timeout=30)
+            stdout = result.stdout.strip()
+            stderr = result.stderr.strip()
+            if stdout:
+                logger.info("docker run output: %s", stdout)
+                self._emit(f"WS-{robot.id}: {stdout[:80]}")
+            if stderr:
+                logger.warning("docker run stderr: %s", stderr)
+                self._emit(f"WS-{robot.id}: {stderr[:80]}")
+
+            # Verify container came up
+            await asyncio.sleep(2)
+            check = await conn.run(
+                f"docker ps --filter name={DOCKER_CONTAINER} -q",
+                timeout=10,
+            )
+            if not check.stdout.strip():
+                logger.warning("Container failed to start")
+                self._emit(f"WS-{robot.id}: container failed to start")
+                return "Boot failed — container not detected after docker run"
+
+            # Run the entrypoint inside the container
+            self._emit(f"WS-{robot.id}: container up, running entrypoint...")
+            entrypoint = "/CS4803ARM_Lab/user_data/piper_ros/entrypoint.sh"
+            await conn.run(
+                f"docker exec -d {DOCKER_CONTAINER} bash -c '{entrypoint}'",
+                timeout=15,
+            )
+
+            logger.info("Container started successfully")
+            self._emit(f"WS-{robot.id}: boot successful")
+            robot.status = RobotStatus.BOOTED
+            return "Boot successful"
+        except Exception as e:
+            logger.error("Boot failed: %s", e)
+            self._emit(f"WS-{robot.id}: boot FAILED — {e}")
+            robot.status = RobotStatus.OFFLINE
+            return f"ERROR: {e}"
+
+    async def _shutdown_robots(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._shutdown_single(r) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _shutdown_single(self, robot: Robot) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            conn = await self._get_connection(robot)
+            self._emit(f"WS-{robot.id}: stopping Docker container...")
+            result = await conn.run(
+                f"docker rm -f {DOCKER_CONTAINER}",
+                timeout=15,
+            )
+            stderr = result.stderr.strip()
+            if stderr:
+                logger.warning("shutdown stderr: %s", stderr)
+                self._emit(f"WS-{robot.id}: {stderr[:80]}")
+            logger.info("Container stopped and removed")
+            self._emit(f"WS-{robot.id}: shutdown complete")
+            robot.status = RobotStatus.OFFLINE
+            return "Shutdown successful"
+        except Exception as e:
+            logger.error("Shutdown failed: %s", e)
+            self._emit(f"WS-{robot.id}: shutdown FAILED — {e}")
+            return f"ERROR: {e}"
+
+    # ── helpers ──────────────────────────────────────────────────
+
+    def _emit(self, msg: str):
+        """Send a log line to the dashboard UI callback."""
+        if self._on_log:
+            self._on_log(msg)
+
+    @staticmethod
+    def _make_logger(name: str, filepath: str) -> logging.Logger:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.DEBUG)
+        if not logger.handlers:
+            handler = logging.FileHandler(filepath)
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+            )
+            logger.addHandler(handler)
+        return logger
+
+    @property
+    def system_logger(self) -> logging.Logger:
+        return self._system_logger
