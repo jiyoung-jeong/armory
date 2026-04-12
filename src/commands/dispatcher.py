@@ -48,8 +48,16 @@ class CommandDispatcher:
         return self.ssh.boot_robots(robots, callback)
 
     def shutdown(self, robots: list[Robot], callback: Callable | None = None):
-        """Stop and remove Docker containers on selected robots."""
-        return self.ssh.shutdown_robots(robots, callback)
+        """Disable first, kill tunnels, then stop Docker containers."""
+        return self.ssh.submit(self._shutdown_safely(robots, callback))
+
+    def start_tunnel(self, robots: list[Robot], callback: Callable | None = None):
+        """Start SSH tunnels on selected workstations, outside Docker."""
+        return self.ssh.start_tunnels(robots, callback)
+
+    def kill_tunnel(self, robots: list[Robot], callback: Callable | None = None):
+        """Kill SSH tunnels on selected workstations, outside Docker."""
+        return self.ssh.kill_tunnels(robots, callback)
 
     # ── sequential compound commands ────────────────────────────
 
@@ -76,3 +84,50 @@ class CommandDispatcher:
         await self.ssh._run_on_robots(booted, "p goto reset")
         # Step 2: p disable
         await self.ssh._run_on_robots(booted, "p disable", callback)
+
+    async def _shutdown_safely(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        active = [r for r in robots if r.status != RobotStatus.OFFLINE]
+        if not active:
+            if callback:
+                callback({r.id: "Skipped — robot offline" for r in robots})
+            return
+
+        # Safeguard: never remove Docker until the robot command stack is disabled.
+        reset_results = await self.ssh._run_on_robots(active, "p goto reset")
+        disable_results = await self.ssh._run_on_robots(active, "p disable")
+        disabled = [
+            robot
+            for robot in active
+            if self._result_ok(reset_results.get(robot.id))
+            and self._result_ok(disable_results.get(robot.id))
+        ]
+        tunnel_results = await self.ssh._kill_tunnels(disabled)
+        shutdown_results = await self.ssh._shutdown_robots(disabled)
+
+        results = {}
+        for robot in active:
+            if robot not in disabled:
+                results[robot.id] = (
+                    f"Reset: {reset_results.get(robot.id, 'unknown')}; "
+                    f"Disable: {disable_results.get(robot.id, 'unknown')}; "
+                    "Shutdown skipped — disable safeguard failed"
+                )
+                continue
+
+            results[robot.id] = (
+                f"Reset: {reset_results.get(robot.id, 'unknown')}; "
+                f"Disable: {disable_results.get(robot.id, 'unknown')}; "
+                f"Tunnel: {tunnel_results.get(robot.id, 'unknown')}; "
+                f"Shutdown: {shutdown_results.get(robot.id, 'unknown')}"
+            )
+        if callback:
+            callback(results)
+        return results
+
+    @staticmethod
+    def _result_ok(result) -> bool:
+        return result is not None and not str(result).startswith("ERROR")

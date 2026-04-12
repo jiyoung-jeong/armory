@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import os
+import re
+import shlex
 import threading
 from typing import Callable
 
@@ -93,6 +95,22 @@ class SSHManager:
     ):
         """Stop and remove the Docker container on multiple robots."""
         return self.submit(self._shutdown_robots(robots, callback))
+
+    def start_tunnels(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Start workstation-level SSH tunnels outside Docker."""
+        return self.submit(self._start_tunnels(robots, callback))
+
+    def kill_tunnels(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Kill workstation-level SSH tunnels outside Docker."""
+        return self.submit(self._kill_tunnels(robots, callback))
 
     # ── internal async methods ──────────────────────────────────
 
@@ -345,12 +363,153 @@ class SSHManager:
             self._emit(f"WS-{robot.id}: shutdown FAILED — {e}")
             return f"ERROR: {e}"
 
+    async def _start_tunnels(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._start_tunnel_single(r) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _kill_tunnels(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._kill_tunnel_single(r) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _start_tunnel_single(self, robot: Robot) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            error = self._tunnel_config_error()
+            if error:
+                self._emit(f"WS-{robot.id}: tunnel not started — {error}")
+                return f"ERROR: {error}"
+
+            conn = await self._get_connection(robot)
+            node = self.config.tunnel_node
+            port = self.config.tunnel_port
+            user = self.config.tunnel_user
+            server = self.config.tunnel_server
+            socket = self._tunnel_control_path()
+            dest = f"{user}@{node}"
+            jump = f"{user}@{server}"
+            forward = f"{port}:{node}:{port}"
+
+            script = (
+                f"mkdir -p {shlex.quote(os.path.dirname(socket))}; "
+                f"if ssh -S {shlex.quote(socket)} -O check {shlex.quote(dest)} "
+                ">/dev/null 2>&1; then "
+                "echo 'Tunnel already running'; exit 0; fi; "
+                f"rm -f {shlex.quote(socket)}; "
+                f"ssh -f -N -M -S {shlex.quote(socket)} "
+                "-o ExitOnForwardFailure=yes "
+                "-o ServerAliveInterval=30 "
+                "-o ServerAliveCountMax=3 "
+                f"-L {shlex.quote(forward)} "
+                f"-J {shlex.quote(jump)} "
+                f"{shlex.quote(dest)}; "
+                "echo 'Tunnel started'"
+            )
+            cmd = self._bash_command(script)
+            logger.info("Starting tunnel with command: %s", cmd)
+            self._emit(f"WS-{robot.id}: starting tunnel {forward} via {jump}")
+            result = await conn.run(cmd, timeout=20)
+            return self._format_tunnel_result(robot, result, "start")
+        except Exception as e:
+            logger.error("Tunnel start failed: %s", e)
+            self._emit(f"WS-{robot.id}: tunnel start FAILED — {e}")
+            return f"ERROR: {e}"
+
+    async def _kill_tunnel_single(self, robot: Robot) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            error = self._tunnel_config_error()
+            if error:
+                self._emit(f"WS-{robot.id}: tunnel kill skipped — {error}")
+                return f"ERROR: {error}"
+
+            conn = await self._get_connection(robot)
+            node = self.config.tunnel_node
+            port = self.config.tunnel_port
+            user = self.config.tunnel_user
+            socket = self._tunnel_control_path()
+            dest = f"{user}@{node}"
+            pattern = (
+                f"[s]sh .* -L {port}:{re.escape(node)}:{port} "
+                f".*{re.escape(user)}@{re.escape(node)}"
+            )
+            script = (
+                f"ssh -S {shlex.quote(socket)} -O exit {shlex.quote(dest)} "
+                ">/dev/null 2>&1 || true; "
+                f"rm -f {shlex.quote(socket)}; "
+                "if command -v pkill >/dev/null 2>&1; then "
+                f"pkill -f {shlex.quote(pattern)} >/dev/null 2>&1 || true; "
+                "fi; "
+                "echo 'Tunnel stopped'"
+            )
+            cmd = self._bash_command(script)
+            logger.info("Killing tunnel with command: %s", cmd)
+            self._emit(f"WS-{robot.id}: killing tunnel for {node}:{port}")
+            result = await conn.run(cmd, timeout=15)
+            return self._format_tunnel_result(robot, result, "kill")
+        except Exception as e:
+            logger.error("Tunnel kill failed: %s", e)
+            self._emit(f"WS-{robot.id}: tunnel kill FAILED — {e}")
+            return f"ERROR: {e}"
+
     # ── helpers ──────────────────────────────────────────────────
 
     def _emit(self, msg: str):
         """Send a log line to the dashboard UI callback."""
         if self._on_log:
             self._on_log(msg)
+
+    def _tunnel_config_error(self) -> str | None:
+        node = self.config.tunnel_node.strip()
+        if not node or node == "CHANGE_ME":
+            return "set tunnel.node in config.yaml first"
+        if not self.config.tunnel_server.strip():
+            return "set tunnel.server in config.yaml first"
+        if self.config.tunnel_port <= 0:
+            return "tunnel.port must be positive"
+        return None
+
+    def _tunnel_control_path(self) -> str:
+        safe_node = "".join(
+            ch if ch.isalnum() else "_"
+            for ch in self.config.tunnel_node
+        ).strip("_")
+        return f"/tmp/armory_tunnel_{safe_node}_{self.config.tunnel_port}.sock"
+
+    @staticmethod
+    def _bash_command(script: str) -> str:
+        return f"bash -lc {shlex.quote(script)}"
+
+    def _format_tunnel_result(self, robot: Robot, result, action: str) -> str:
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if result.exit_status != 0:
+            msg = stderr or stdout or f"tunnel {action} failed"
+            self._emit(f"WS-{robot.id}: tunnel {action} FAILED — {msg[:120]}")
+            return f"ERROR: {msg}"
+
+        msg = stdout or f"Tunnel {action} complete"
+        self._emit(f"WS-{robot.id}: {msg}")
+        return msg
 
     @staticmethod
     def _make_logger(name: str, filepath: str) -> logging.Logger:

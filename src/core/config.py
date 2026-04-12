@@ -57,6 +57,12 @@ class Config:
         self.base_ip = ssh_cfg.get("base_ip", "130.207.121")
         self.ip_offset = ssh_cfg.get("ip_offset", 200)
 
+        tunnel_cfg = raw.get("tunnel", {})
+        self.tunnel_node = str(tunnel_cfg.get("node", "") or "")
+        self.tunnel_port = int(tunnel_cfg.get("port", 8080))
+        self.tunnel_user = str(tunnel_cfg.get("user", self.ssh_user) or self.ssh_user)
+        self.tunnel_server = str(tunnel_cfg.get("server", "sky1.cc.gatech.edu") or "")
+
         used_names: set[str] = set()
         self.robots: list[Robot] = []
         for entry in raw.get("workstations", []):

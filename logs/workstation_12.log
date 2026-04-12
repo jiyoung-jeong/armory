@@ -218,3 +218,31 @@ bash: no job control in this shell
 Piper disable sequence complete.
 2026-04-12 16:36:39,970 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
 bash: no job control in this shell
+2026-04-12 17:09:16,808 [INFO] Docker container running — status: booted
+2026-04-12 17:09:53,869 [INFO] Container stopped and removed
+2026-04-12 17:30:27,921 [INFO] Docker container not running — status: offline
+2026-04-12 17:33:12,062 [INFO] Docker container not running — status: offline
+2026-04-12 17:33:38,087 [INFO] Killing tunnel with command: bash -lc 'ssh -S /tmp/armory_tunnel_grom_8999.sock -O exit rbansal66@grom >/dev/null 2>&1 || true; rm -f /tmp/armory_tunnel_grom_8999.sock; if command -v pkill >/dev/null 2>&1; then pkill -f '"'"'[s]sh .* -L 8999:grom:8999 .*rbansal66@grom'"'"' >/dev/null 2>&1 || true; fi; echo '"'"'Tunnel stopped'"'"''
+2026-04-12 17:43:53,105 [INFO] Starting Docker container in detached mode
+2026-04-12 17:43:53,607 [INFO] docker run output: 3cd572bffce2bca6324810697c44e5b30798b786c95cfaf53e166afb494c43c3
+2026-04-12 17:43:56,221 [INFO] Container started successfully
+2026-04-12 17:44:01,078 [INFO] Starting tunnel with command: bash -lc 'mkdir -p /tmp; if ssh -S /tmp/armory_tunnel_grom_8999.sock -O check rbansal66@grom >/dev/null 2>&1; then echo '"'"'Tunnel already running'"'"'; exit 0; fi; rm -f /tmp/armory_tunnel_grom_8999.sock; ssh -f -N -M -S /tmp/armory_tunnel_grom_8999.sock -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 8999:grom:8999 -J rbansal66@sky1.cc.gatech.edu rbansal66@grom; echo '"'"'Tunnel started'"'"''
+2026-04-12 17:44:21,179 [ERROR] Tunnel start failed: 
+2026-04-12 17:44:37,194 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p enable'
+2026-04-12 17:44:38,402 [INFO] stdout: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-12 17:44:38,402 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /piper_sdk/piper_sdk/can_activate.sh can0 1000000: No such file or directory
+2026-04-12 17:44:38,706 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-12 17:44:40,619 [INFO] stdout: Go to init complete.
+2026-04-12 17:44:40,619 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:46:24,878 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-12 17:46:26,584 [INFO] stdout: Go to init complete.
+2026-04-12 17:46:26,584 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:50:08,444 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-12 17:50:09,954 [INFO] stdout: Go to init complete.
+2026-04-12 17:50:09,954 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell

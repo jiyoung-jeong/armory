@@ -87,3 +87,8 @@ bash: no job control in this shell
 Piper disable sequence complete.
 2026-04-12 16:36:40,071 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
 bash: no job control in this shell
+2026-04-12 17:09:18,117 [INFO] Docker container running — status: booted
+2026-04-12 17:09:57,863 [INFO] Container stopped and removed
+2026-04-12 17:30:29,533 [INFO] Docker container not running — status: offline
+2026-04-12 17:33:14,582 [INFO] Docker container not running — status: offline
+2026-04-12 17:33:39,095 [INFO] Killing tunnel with command: bash -lc 'ssh -S /tmp/armory_tunnel_grom_8999.sock -O exit rbansal66@grom >/dev/null 2>&1 || true; rm -f /tmp/armory_tunnel_grom_8999.sock; if command -v pkill >/dev/null 2>&1; then pkill -f '"'"'[s]sh .* -L 8999:grom:8999 .*rbansal66@grom'"'"' >/dev/null 2>&1 || true; fi; echo '"'"'Tunnel stopped'"'"''

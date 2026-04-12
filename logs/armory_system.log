@@ -2342,3 +2342,191 @@ Piper disable sequence complete.
 Piper disable sequence complete.
 2026-04-12 16:36:40,071 [INFO] 'Disable' complete.
 2026-04-12 17:02:38,281 [INFO] Enable cancelled.
+2026-04-12 17:09:11,666 [INFO] ARMory dashboard started.
+2026-04-12 17:09:11,666 [INFO] Querying workstation status...
+2026-04-12 17:09:14,692 [INFO] WS-11: container running (booted)
+2026-04-12 17:09:16,808 [INFO] WS-12: container running (booted)
+2026-04-12 17:09:18,117 [INFO] WS-13: container running (booted)
+2026-04-12 17:09:18,923 [INFO] Current operation still running. Controls will unlock shortly.
+2026-04-12 17:09:19,838 [INFO] WS-14: container running (booted)
+2026-04-12 17:09:19,838 [INFO] All workstations are ready. Runtime controls unlocked.
+2026-04-12 17:09:19,838 [INFO] Status refresh complete.
+2026-04-12 17:09:25,273 [INFO] Selected WS-12.
+2026-04-12 17:09:29,994 [INFO] Robot command menu closed.
+2026-04-12 17:09:30,597 [INFO] Unselected WS-12.
+2026-04-12 17:09:33,362 [INFO] Robot command menu closed.
+2026-04-12 17:09:53,163 [INFO] Running 'Shutdown Docker' on WS-12...
+2026-04-12 17:09:53,466 [INFO] WS-12: stopping Docker container...
+2026-04-12 17:09:53,869 [INFO] WS-12: shutdown complete
+2026-04-12 17:09:53,869 [INFO]   WS-12: Shutdown successful
+2026-04-12 17:09:53,869 [INFO] 'Shutdown Docker' complete for WS-12.
+2026-04-12 17:09:56,955 [INFO] Running 'Shutdown Docker' on WS-13...
+2026-04-12 17:09:57,561 [INFO] WS-13: stopping Docker container...
+2026-04-12 17:09:57,863 [INFO] WS-13: shutdown complete
+2026-04-12 17:09:57,863 [INFO]   WS-13: Shutdown successful
+2026-04-12 17:09:57,863 [INFO] 'Shutdown Docker' complete for WS-13.
+2026-04-12 17:10:00,235 [INFO] Running 'Shutdown Docker' on WS-14...
+2026-04-12 17:10:00,638 [INFO] WS-14: stopping Docker container...
+2026-04-12 17:10:01,046 [INFO] WS-14: shutdown complete
+2026-04-12 17:10:01,046 [INFO]   WS-14: Shutdown successful
+2026-04-12 17:10:01,046 [INFO] 'Shutdown Docker' complete for WS-14.
+2026-04-12 17:10:26,259 [INFO] Running 'Enable' on WS-11...
+2026-04-12 17:10:26,561 [INFO] WS-11: running 'p enable'
+2026-04-12 17:10:27,566 [INFO] WS-11: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-12 17:10:27,566 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-04-12 17:10:27,968 [INFO] WS-11: running 'p goto init'
+2026-04-12 17:10:29,876 [INFO] WS-11: Go to init complete.
+2026-04-12 17:10:29,876 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:10:29,977 [INFO]   WS-11: Go to init complete.
+2026-04-12 17:10:29,977 [INFO] 'Enable' complete for WS-11.
+2026-04-12 17:15:16,069 [INFO] Running 'Disable' on WS-11...
+2026-04-12 17:15:16,272 [INFO] WS-11: running 'p goto reset'
+2026-04-12 17:15:17,880 [INFO] WS-11: Go to reset complete.
+2026-04-12 17:15:17,980 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:15:18,484 [INFO] WS-11: running 'p disable'
+2026-04-12 17:15:19,199 [INFO] WS-11: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-12 17:15:19,199 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:15:19,199 [INFO]   WS-11: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-12 17:15:19,199 [INFO] 'Disable' complete for WS-11.
+2026-04-12 17:15:24,639 [INFO] Running 'Shutdown Docker' on WS-11...
+2026-04-12 17:15:24,943 [INFO] WS-11: stopping Docker container...
+2026-04-12 17:15:25,547 [INFO] WS-11: shutdown complete
+2026-04-12 17:15:25,547 [INFO]   WS-11: Shutdown successful
+2026-04-12 17:15:25,547 [INFO] 'Shutdown Docker' complete for WS-11.
+2026-04-12 17:15:37,790 [INFO] Running 'Boot Docker' on WS-11...
+2026-04-12 17:15:38,495 [INFO] WS-11: starting Docker container...
+2026-04-12 17:15:38,998 [INFO] WS-11: 877784776f1ab36fa4db39da7a067c83c7057e85497fca6890b655167f714d6e
+2026-04-12 17:15:41,208 [INFO] WS-11: container up, running entrypoint...
+2026-04-12 17:15:41,612 [INFO] WS-11: boot successful
+2026-04-12 17:15:41,613 [INFO]   WS-11: Boot successful
+2026-04-12 17:15:41,713 [INFO] 'Boot Docker' complete for WS-11.
+2026-04-12 17:15:55,888 [INFO] Running 'Enable' on WS-11...
+2026-04-12 17:15:55,990 [INFO] WS-11: running 'p enable'
+2026-04-12 17:15:56,996 [INFO] WS-11: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-12 17:15:56,996 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-04-12 17:15:57,198 [INFO] WS-11: running 'p goto init'
+2026-04-12 17:15:59,006 [INFO] WS-11: Go to init complete.
+2026-04-12 17:15:59,107 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:15:59,207 [INFO]   WS-11: Go to init complete.
+2026-04-12 17:15:59,207 [INFO] 'Enable' complete for WS-11.
+2026-04-12 17:16:05,278 [INFO] Running 'Goto Init' on WS-11...
+2026-04-12 17:16:05,580 [INFO] WS-11: running 'p goto init'
+2026-04-12 17:16:07,290 [INFO] WS-11: Go to init complete.
+2026-04-12 17:16:07,390 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:16:07,391 [INFO]   WS-11: Go to init complete.
+2026-04-12 17:16:07,391 [INFO] 'Goto Init' complete for WS-11.
+2026-04-12 17:20:24,568 [INFO] Robot command menu closed.
+2026-04-12 17:30:22,675 [INFO] ARMory dashboard started.
+2026-04-12 17:30:22,675 [INFO] Querying workstation status...
+2026-04-12 17:30:25,905 [INFO] WS-11: container running (booted)
+2026-04-12 17:30:27,921 [INFO] WS-12: container not running (offline)
+2026-04-12 17:30:29,533 [INFO] WS-13: container not running (offline)
+2026-04-12 17:30:31,149 [INFO] WS-14: container not running (offline)
+2026-04-12 17:30:31,149 [INFO] Status refresh complete.
+2026-04-12 17:30:38,708 [INFO] Running 'Start Tunnel' on WS-11...
+2026-04-12 17:30:39,212 [INFO] WS-11: starting tunnel 8080:grom:8080 via rbansal66@sky1.cc.gatech.edu
+2026-04-12 17:30:59,505 [INFO] WS-11: tunnel start FAILED — 
+2026-04-12 17:30:59,505 [INFO]   WS-11: ERROR: 
+2026-04-12 17:30:59,505 [INFO] 'Start Tunnel' complete for WS-11.
+2026-04-12 17:33:06,115 [INFO] ARMory dashboard started.
+2026-04-12 17:33:06,115 [INFO] Querying workstation status...
+2026-04-12 17:33:10,651 [INFO] WS-11: container running (booted)
+2026-04-12 17:33:12,163 [INFO] WS-12: container not running (offline)
+2026-04-12 17:33:14,582 [INFO] WS-13: container not running (offline)
+2026-04-12 17:33:16,190 [INFO] WS-14: container not running (offline)
+2026-04-12 17:33:16,190 [INFO] Status refresh complete.
+2026-04-12 17:33:37,479 [INFO] Killing SSH tunnel on 4 workstation(s)...
+2026-04-12 17:33:37,784 [INFO] WS-11: killing tunnel for grom:8999
+2026-04-12 17:33:38,086 [INFO] WS-11: tunnel kill FAILED — tunnel kill failed
+2026-04-12 17:33:38,087 [INFO] WS-12: killing tunnel for grom:8999
+2026-04-12 17:33:39,095 [INFO] WS-12: tunnel kill FAILED — tunnel kill failed
+2026-04-12 17:33:39,095 [INFO] WS-13: killing tunnel for grom:8999
+2026-04-12 17:33:39,398 [INFO] WS-13: tunnel kill FAILED — tunnel kill failed
+2026-04-12 17:33:39,499 [INFO] WS-14: killing tunnel for grom:8999
+2026-04-12 17:33:39,702 [INFO] WS-14: tunnel kill FAILED — tunnel kill failed
+2026-04-12 17:33:39,702 [INFO]   WS-11: ERROR: tunnel kill failed
+2026-04-12 17:33:39,702 [INFO]   WS-12: ERROR: tunnel kill failed
+2026-04-12 17:33:39,702 [INFO]   WS-13: ERROR: tunnel kill failed
+2026-04-12 17:33:39,802 [INFO]   WS-14: ERROR: tunnel kill failed
+2026-04-12 17:33:39,802 [INFO] Kill Tunnel complete.
+2026-04-12 17:34:55,822 [INFO] Running 'Start Tunnel' on WS-11...
+2026-04-12 17:34:56,326 [INFO] WS-11: starting tunnel 8999:grom:8999 via rbansal66@sky1.cc.gatech.edu
+2026-04-12 17:35:16,714 [INFO] WS-11: tunnel start FAILED — 
+2026-04-12 17:35:16,714 [INFO]   WS-11: ERROR: 
+2026-04-12 17:35:16,714 [INFO] 'Start Tunnel' complete for WS-11.
+2026-04-12 17:36:01,807 [INFO] Running 'Goto Init' on WS-11...
+2026-04-12 17:36:02,109 [INFO] WS-11: running 'p goto init'
+2026-04-12 17:36:03,917 [INFO] WS-11: Go to init complete.
+2026-04-12 17:36:03,917 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:36:03,918 [INFO]   WS-11: Go to init complete.
+2026-04-12 17:36:03,918 [INFO] 'Goto Init' complete for WS-11.
+2026-04-12 17:43:52,299 [INFO] Running 'Boot Docker' on WS-12...
+2026-04-12 17:43:53,105 [INFO] WS-12: starting Docker container...
+2026-04-12 17:43:53,607 [INFO] WS-12: 3cd572bffce2bca6324810697c44e5b30798b786c95cfaf53e166afb494c43c3
+2026-04-12 17:43:56,018 [INFO] WS-12: container up, running entrypoint...
+2026-04-12 17:43:56,220 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:43:56,221 [INFO] WS-12: boot successful
+2026-04-12 17:43:56,221 [INFO]   WS-12: Boot successful
+2026-04-12 17:43:56,221 [INFO] 'Boot Docker' complete for WS-12.
+2026-04-12 17:44:00,675 [INFO] Running 'Start Tunnel' on WS-12...
+2026-04-12 17:44:01,078 [INFO] WS-12: starting tunnel 8999:grom:8999 via rbansal66@sky1.cc.gatech.edu
+2026-04-12 17:44:04,600 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:07,712 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:08,215 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:08,617 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:10,832 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:11,032 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:14,346 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:17,362 [INFO] Current operation still running. Robot command menu is locked.
+2026-04-12 17:44:21,180 [INFO] WS-12: tunnel start FAILED — 
+2026-04-12 17:44:21,180 [INFO]   WS-12: ERROR: 
+2026-04-12 17:44:21,280 [INFO] 'Start Tunnel' complete for WS-12.
+2026-04-12 17:44:36,691 [INFO] Running 'Enable' on WS-12...
+2026-04-12 17:44:37,194 [INFO] WS-12: running 'p enable'
+2026-04-12 17:44:38,402 [INFO] WS-12: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-12 17:44:38,402 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-04-12 17:44:38,706 [INFO] WS-12: running 'p goto init'
+2026-04-12 17:44:40,619 [INFO] WS-12: Go to init complete.
+2026-04-12 17:44:40,619 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:44:40,619 [INFO]   WS-12: Go to init complete.
+2026-04-12 17:44:40,619 [INFO] 'Enable' complete for WS-12.
+2026-04-12 17:46:24,676 [INFO] Running 'Goto Init' on WS-12...
+2026-04-12 17:46:24,878 [INFO] WS-12: running 'p goto init'
+2026-04-12 17:46:26,584 [INFO] WS-12: Go to init complete.
+2026-04-12 17:46:26,584 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:46:26,584 [INFO]   WS-12: Go to init complete.
+2026-04-12 17:46:26,584 [INFO] 'Goto Init' complete for WS-12.
+2026-04-12 17:50:08,342 [INFO] Running 'Goto Init' on WS-12...
+2026-04-12 17:50:08,444 [INFO] WS-12: running 'p goto init'
+2026-04-12 17:50:09,954 [INFO] WS-12: Go to init complete.
+2026-04-12 17:50:09,954 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:50:09,954 [INFO]   WS-12: Go to init complete.
+2026-04-12 17:50:09,954 [INFO] 'Goto Init' complete for WS-12.
+2026-04-12 17:50:12,614 [INFO] Running 'Goto Init' on WS-11...
+2026-04-12 17:50:12,918 [INFO] WS-11: running 'p goto init'
+2026-04-12 17:50:14,624 [INFO] WS-11: Go to init complete.
+2026-04-12 17:50:14,624 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 17:50:14,624 [INFO]   WS-11: Go to init complete.
+2026-04-12 17:50:14,624 [INFO] 'Goto Init' complete for WS-11.
+2026-04-12 17:54:56,354 [INFO] Robot command menu closed.

@@ -34,6 +34,8 @@ MIN_HEIGHT = 24
 
 CORE_COMMANDS = [
     ("6", "Boot Fleet"),
+    ("T", "Start Tunnel"),
+    ("X", "Kill Tunnel"),
     ("7", "Shutdown"),
     ("R", "Refresh"),
     ("Q", "Quit"),
@@ -48,6 +50,19 @@ RUNTIME_COMMANDS = [
 ]
 
 RUNTIME_KEYS = {key for key, _ in RUNTIME_COMMANDS}
+ENTER_KEYS = {curses.KEY_ENTER, 10, 13}
+
+TARGET_COMMANDS = [
+    ("6", "Boot Docker", "boot"),
+    ("T", "Start Tunnel", "start_tunnel"),
+    ("X", "Kill Tunnel", "kill_tunnel"),
+    ("7", "Shutdown Docker", "shutdown"),
+    ("5", "Connect to Server", "connect"),
+    ("1", "Enable", "enable"),
+    ("2", "Disable", "disable"),
+    ("3", "Goto Init", "goto_init"),
+    ("4", "Goto Zero", "goto_zero"),
+]
 
 
 class Dashboard:
@@ -62,6 +77,8 @@ class Dashboard:
         self._lock = threading.Lock()
         self._last_busy_notice = 0.0
         self._runtime_unlocked_announced = False
+        self._focused_robot_idx = 0
+        self._selected_robot_ids: set[int] = set()
 
     # ── public entry point ──────────────────────────────────────
 
@@ -107,6 +124,22 @@ class Dashboard:
         if ch == "Q":
             return True
 
+        if key in (curses.KEY_UP, curses.KEY_BTAB) or ch == "K":
+            self._move_robot_focus(-1)
+            return False
+        if key in (curses.KEY_DOWN, ord("\t")) or ch == "J":
+            self._move_robot_focus(1)
+            return False
+        if ch == " ":
+            self._toggle_focused_robot()
+            return False
+        if key in ENTER_KEYS:
+            if self._busy:
+                self._log("Current operation still running. Robot command menu is locked.")
+                return False
+            self._open_robot_command_menu()
+            return False
+
         if self._busy:
             now = time.time()
             if now - self._last_busy_notice > 1.5:
@@ -123,6 +156,10 @@ class Dashboard:
 
         if ch == "R":
             self._refresh_status()
+        elif ch == "T":
+            self._do_start_tunnel()
+        elif ch == "X":
+            self._do_kill_tunnel()
         elif ch == "1":
             self._broadcast_with_confirm("Enable", self.dispatcher.enable)
         elif ch == "2":
@@ -200,17 +237,21 @@ class Dashboard:
         self.dispatcher.boot(targets, callback=on_done)
 
     def _do_shutdown(self):
-        """Shutdown targets all non-offline robots."""
+        """Disable, kill tunnels, then shutdown all non-offline robots."""
         active = [r for r in self.config.robots if r.status != RobotStatus.OFFLINE]
         if not active:
             self._log("No active robots to shut down.")
             return
-        if not self._confirm(f"Shutdown Docker on {len(active)} workstation(s)?"):
+        if not self._confirm(
+            f"Disable, kill tunnel, then shutdown {len(active)} workstation(s)?"
+        ):
             self._log("Shutdown cancelled.")
             return
 
         self._busy = True
-        self._log(f"Shutting down {len(active)} workstation(s)...")
+        self._log(
+            f"Disabling, killing tunnels, and shutting down {len(active)} workstation(s)..."
+        )
 
         def on_done(results=None):
             with self._lock:
@@ -222,6 +263,52 @@ class Dashboard:
             self._log("Shutdown complete.")
 
         self.dispatcher.shutdown(active, callback=on_done)
+
+    def _do_start_tunnel(self):
+        """Start SSH tunnels on every configured workstation."""
+        targets = list(self.config.robots)
+        if not targets:
+            self._log("No workstations configured for tunnel start.")
+            return
+        if not self._confirm(f"Start SSH tunnel on {len(targets)} workstation(s)?"):
+            self._log("Start Tunnel cancelled.")
+            return
+
+        self._busy = True
+        self._log(f"Starting SSH tunnel on {len(targets)} workstation(s)...")
+
+        def on_done(results=None):
+            with self._lock:
+                self._busy = False
+            if results:
+                for rid, out in results.items():
+                    self._log(f"  WS-{rid}: {str(out)[:80]}")
+            self._log("Start Tunnel complete.")
+
+        self.dispatcher.start_tunnel(targets, callback=on_done)
+
+    def _do_kill_tunnel(self):
+        """Kill SSH tunnels on every configured workstation."""
+        targets = list(self.config.robots)
+        if not targets:
+            self._log("No workstations configured for tunnel kill.")
+            return
+        if not self._confirm(f"Kill SSH tunnel on {len(targets)} workstation(s)?"):
+            self._log("Kill Tunnel cancelled.")
+            return
+
+        self._busy = True
+        self._log(f"Killing SSH tunnel on {len(targets)} workstation(s)...")
+
+        def on_done(results=None):
+            with self._lock:
+                self._busy = False
+            if results:
+                for rid, out in results.items():
+                    self._log(f"  WS-{rid}: {str(out)[:80]}")
+            self._log("Kill Tunnel complete.")
+
+        self.dispatcher.kill_tunnel(targets, callback=on_done)
 
     def _do_connect_to_server(self):
         if not self._confirm("Connect all booted robots to server?"):
@@ -236,6 +323,160 @@ class Dashboard:
         self.dispatcher.connect_to_server(booted)
         self._announce_runtime_state()
         self._log(f"Connected {len(booted)} robot(s) to server (simulated).")
+
+    def _execute_target_command(
+        self,
+        action: str,
+        name: str,
+        targets: list,
+    ) -> bool:
+        """Execute a command against the selected/focused robot set."""
+        eligible = self._eligible_targets(action, targets)
+        skipped = len(targets) - len(eligible)
+        target_label = self._format_robot_ids(eligible)
+
+        if not eligible:
+            self._log(
+                f"No eligible robot(s) for '{name}' in "
+                f"{self._format_robot_ids(targets)}."
+            )
+            return False
+
+        if skipped:
+            self._log(f"Skipped {skipped} ineligible selected robot(s) for '{name}'.")
+
+        if action == "connect":
+            self.dispatcher.connect_to_server(eligible)
+            self._announce_runtime_state()
+            self._log(f"Connected {target_label} to server (simulated).")
+            return True
+
+        dispatch = getattr(self.dispatcher, action)
+        self._busy = True
+        self._log(f"Running '{name}' on {target_label}...")
+
+        def on_done(results=None):
+            with self._lock:
+                self._busy = False
+            if results:
+                for rid, out in results.items():
+                    self._log(f"  WS-{rid}: {str(out)[:80]}")
+            self._announce_runtime_state()
+            self._log(f"'{name}' complete for {target_label}.")
+
+        dispatch(eligible, callback=on_done)
+        return True
+
+    def _eligible_targets(self, action: str, targets: list) -> list:
+        if action in ("boot", "start_tunnel", "kill_tunnel"):
+            return targets
+        if action == "connect":
+            return [r for r in targets if r.status == RobotStatus.BOOTED]
+        if action == "shutdown":
+            return [r for r in targets if r.status != RobotStatus.OFFLINE]
+        return [r for r in targets if r.status != RobotStatus.OFFLINE]
+
+    def _open_robot_command_menu(self):
+        targets = self._target_robots()
+        if not targets:
+            self._log("No robot selected.")
+            return
+
+        stdscr = self._stdscr
+        h, w = stdscr.getmaxyx()
+        box_w = min(74, w - 6)
+        box_h = min(max(14, len(TARGET_COMMANDS) + 7), h - 4)
+        start_y = max(1, h // 2 - box_h // 2)
+        start_x = max(2, w // 2 - box_w // 2)
+        win = curses.newwin(box_h, box_w, start_y, start_x)
+        win.bkgd(" ", curses.color_pair(PAIR_SURFACE))
+
+        stdscr.nodelay(False)
+        notice = ""
+        try:
+            while True:
+                self._draw_robot_command_menu(win, box_h, box_w, targets, notice)
+                key = stdscr.getch()
+                ch = chr(key).upper() if 0 <= key < 256 else ""
+
+                if ch in ("Q", "N") or key == 27:
+                    self._log("Robot command menu closed.")
+                    return
+
+                for command_key, label, action in TARGET_COMMANDS:
+                    if ch != command_key:
+                        continue
+                    if not self._eligible_targets(action, targets):
+                        curses.beep()
+                        notice = f"Unavailable: {label} ({self._target_disabled_reason(action)})"
+                        break
+                    if self._execute_target_command(action, label, targets):
+                        return
+        finally:
+            stdscr.nodelay(True)
+
+    def _draw_robot_command_menu(
+        self,
+        win: curses.window,
+        h: int,
+        w: int,
+        targets: list,
+        notice: str = "",
+    ):
+        win.erase()
+        win.bkgd(" ", curses.color_pair(PAIR_SURFACE))
+        self._draw_box(win, 0, 0, h, w, "Robot Command Menu")
+
+        target_label = self._format_robot_ids(targets)
+        self._center_text(
+            win,
+            2,
+            1,
+            w - 2,
+            f"Target: {target_label}",
+            curses.color_pair(PAIR_LOG) | curses.A_BOLD,
+        )
+        self._center_text(
+            win,
+            3,
+            1,
+            w - 2,
+            notice or "Press a command key. Disabled commands stay locked.",
+            curses.color_pair(PAIR_NOTICE if notice else PAIR_MUTED),
+        )
+
+        row = 5
+        for key, label, action in TARGET_COMMANDS:
+            if row >= h - 2:
+                break
+
+            available = bool(self._eligible_targets(action, targets))
+            attr = curses.color_pair(PAIR_CMD if available else PAIR_MUTED)
+            key_attr = curses.color_pair(PAIR_HIGHLIGHT if available else PAIR_MUTED) | curses.A_BOLD
+            suffix = "" if available else f" ({self._target_disabled_reason(action)})"
+
+            self._add_text(win, row, 4, "[", attr)
+            self._add_text(win, row, 5, key, key_attr)
+            self._add_text(win, row, 6, f"] {label}{suffix}"[: w - 9], attr)
+            row += 1
+
+        self._center_text(
+            win,
+            h - 2,
+            1,
+            w - 2,
+            "[Q] Cancel",
+            curses.color_pair(PAIR_NOTICE),
+        )
+        win.refresh()
+
+    @staticmethod
+    def _target_disabled_reason(action: str) -> str:
+        if action == "connect":
+            return "needs booted"
+        if action in ("boot", "start_tunnel", "kill_tunnel"):
+            return "unavailable"
+        return "needs active"
 
     # ── confirmation dialog ─────────────────────────────────────
 
@@ -302,6 +543,7 @@ class Dashboard:
             return
 
         stdscr.erase()
+        self._clamp_robot_focus()
 
         content_w = min(w - 2, 124)
         content_h = min(h - 1, 34)
@@ -378,46 +620,69 @@ class Dashboard:
 
         total = len(self.config.robots)
         ready = self._ready_robot_count()
+        selected = len(self._selected_robot_ids)
         self._center_text(
             stdscr,
             y + 1,
             x + 1,
             w - 2,
-            f"{ready}/{total} workstations ready",
+            f"{ready}/{total} ready | {selected} selected",
             curses.color_pair(PAIR_NOTICE),
         )
 
         show_ip = h >= (len(self.config.robots) * 2 + 5)
         row = y + 3
-        for robot in self.config.robots:
-            if row >= y + h - 1:
+        for idx, robot in enumerate(self.config.robots):
+            if row >= y + h - 2:
                 break
 
+            focused = idx == self._focused_robot_idx
+            selected = robot.id in self._selected_robot_ids
             status_text = robot.status.value.upper()
             pair = self._status_pair(robot.status)
-            label = f"WS-{robot.id}  {robot.name}"
+            focus_marker = ">" if focused else " "
+            select_marker = "*" if selected else " "
+            label = f"{focus_marker}{select_marker} WS-{robot.id}  {robot.name}"
             status_x = x + w - len(status_text) - 3
             label_w = max(0, status_x - (x + 2) - 1)
+            row_attr = curses.A_REVERSE if focused else 0
+            label_pair = PAIR_HIGHLIGHT if selected else PAIR_CMD
 
             self._add_text(
                 stdscr,
                 row,
                 x + 2,
                 label[:label_w],
-                curses.color_pair(PAIR_CMD) | curses.A_BOLD,
+                curses.color_pair(label_pair) | curses.A_BOLD | row_attr,
             )
-            self._add_text(stdscr, row, status_x, status_text, curses.color_pair(pair) | curses.A_BOLD)
+            self._add_text(
+                stdscr,
+                row,
+                status_x,
+                status_text,
+                curses.color_pair(pair) | curses.A_BOLD | row_attr,
+            )
             row += 1
 
-            if show_ip and row < y + h - 1:
+            if show_ip and row < y + h - 2:
                 self._add_text(
                     stdscr,
                     row,
                     x + 2,
                     robot.ip[: w - 4],
-                    curses.color_pair(PAIR_MUTED),
+                    curses.color_pair(PAIR_MUTED) | row_attr,
                 )
                 row += 1
+
+        if h >= 8:
+            self._center_text(
+                stdscr,
+                y + h - 2,
+                x + 1,
+                w - 2,
+                "Up/Down focus | Space select | Enter command",
+                curses.color_pair(PAIR_MUTED),
+            )
 
     def _draw_core_panel(self, y: int, x: int, h: int, w: int, show_notice: bool = False):
         stdscr = self._stdscr
@@ -526,6 +791,66 @@ class Dashboard:
 
     def _runtime_controls_unlocked(self) -> bool:
         return bool(self.config.robots) and self._ready_robot_count() == len(self.config.robots)
+
+    def _clamp_robot_focus(self):
+        if not self.config.robots:
+            self._focused_robot_idx = 0
+            self._selected_robot_ids.clear()
+            return
+
+        self._focused_robot_idx = max(
+            0,
+            min(self._focused_robot_idx, len(self.config.robots) - 1),
+        )
+        valid_ids = {robot.id for robot in self.config.robots}
+        self._selected_robot_ids.intersection_update(valid_ids)
+
+    def _move_robot_focus(self, delta: int):
+        self._clamp_robot_focus()
+        if not self.config.robots:
+            return
+        self._focused_robot_idx = (self._focused_robot_idx + delta) % len(self.config.robots)
+
+    def _toggle_focused_robot(self):
+        robot = self._focused_robot()
+        if robot is None:
+            self._log("No robot available to select.")
+            return
+
+        if robot.id in self._selected_robot_ids:
+            self._selected_robot_ids.remove(robot.id)
+            self._log(f"Unselected WS-{robot.id}.")
+            return
+
+        self._selected_robot_ids.add(robot.id)
+        self._log(f"Selected WS-{robot.id}.")
+
+    def _focused_robot(self):
+        self._clamp_robot_focus()
+        if not self.config.robots:
+            return None
+        return self.config.robots[self._focused_robot_idx]
+
+    def _target_robots(self) -> list:
+        self._clamp_robot_focus()
+        if self._selected_robot_ids:
+            return [
+                robot
+                for robot in self.config.robots
+                if robot.id in self._selected_robot_ids
+            ]
+
+        robot = self._focused_robot()
+        return [robot] if robot is not None else []
+
+    @staticmethod
+    def _format_robot_ids(robots: list) -> str:
+        if not robots:
+            return "none"
+        labels = [f"WS-{robot.id}" for robot in robots]
+        if len(labels) <= 5:
+            return ", ".join(labels)
+        return f"{', '.join(labels[:5])}, +{len(labels) - 5} more"
 
     def _ready_robot_count(self) -> int:
         return sum(
