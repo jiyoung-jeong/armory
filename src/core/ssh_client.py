@@ -190,7 +190,7 @@ class SSHManager:
         logger = self._loggers[robot.id]
         try:
             conn = await self._get_connection(robot)
-            cmd = f"docker exec {DOCKER_CONTAINER} bash -c 'source ~/.bashrc && {command}'"
+            cmd = f"docker exec {DOCKER_CONTAINER} bash -ic 'source ~/.bashrc && {command}'"
             logger.info("Executing: %s", cmd)
             self._emit(f"WS-{robot.id}: running '{command}'")
             result = await conn.run(cmd, timeout=30)

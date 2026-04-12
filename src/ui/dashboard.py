@@ -303,17 +303,19 @@ class Dashboard:
 
         stdscr.erase()
 
-        content_w = min(w - 4, 116)
-        content_h = min(h - 2, 28)
+        content_w = min(w - 2, 124)
+        content_h = min(h - 1, 34)
         origin_x = max(0, (w - content_w) // 2)
         origin_y = max(0, (h - content_h) // 2)
 
         header_h = 2
         gap = 1
-        log_h = max(5, min(7, content_h // 4))
+        desired_log_h = max(7, min(10, content_h // 3))
+        min_body_h = 12 if self._runtime_controls_unlocked() else 10
+        log_h = min(desired_log_h, content_h - header_h - (gap * 2) - min_body_h)
         body_h = content_h - header_h - log_h - (gap * 2)
 
-        side_w = min(40, max(34, content_w // 3))
+        side_w = min(44, max(36, content_w // 3))
         right_w = content_w - side_w - gap
 
         self._draw_header(origin_y, origin_x, content_w)
@@ -322,7 +324,7 @@ class Dashboard:
         right_x = origin_x + side_w + gap
         right_y = origin_y + header_h + gap
         if self._runtime_controls_unlocked():
-            fleet_h = min(6, body_h - 5)
+            fleet_h = min(6, body_h - gap - 6)
             fleet_h = max(5, fleet_h)
             runtime_h = body_h - fleet_h - gap
             self._draw_core_panel(right_y, right_x, fleet_h, right_w)

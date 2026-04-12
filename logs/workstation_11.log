@@ -99,3 +99,177 @@ Run 'docker run --help' for more information
 2026-04-10 11:36:56,828 [INFO] docker run output: cba338f805c1940381b0fdb27fdb151aeb0b399fe788b9e606285a438d8c5ca1
 2026-04-10 11:36:59,443 [INFO] Container started successfully
 2026-04-10 11:39:58,004 [INFO] Container stopped and removed
+2026-04-10 11:43:24,098 [INFO] Docker container not running — status: offline
+2026-04-10 11:45:04,317 [ERROR] Status check failed: SSH connection closed
+2026-04-10 11:45:27,531 [INFO] Docker container not running — status: offline
+2026-04-10 12:17:40,439 [INFO] Docker container not running — status: offline
+2026-04-10 12:17:53,553 [INFO] Starting Docker container in detached mode
+2026-04-10 12:17:54,161 [INFO] docker run output: 4e8bbf6ee1bece9d9047ffed281d4eaba4315ae70da1be2858eb770bbbadc1c7
+2026-04-10 12:17:56,784 [INFO] Container started successfully
+2026-04-10 12:20:09,971 [INFO] Docker container running — status: booted
+2026-04-10 12:20:50,730 [INFO] Container stopped and removed
+2026-04-10 14:29:21,349 [INFO] Docker container not running — status: offline
+2026-04-10 14:29:34,897 [INFO] Starting Docker container in detached mode
+2026-04-10 14:29:35,810 [INFO] docker run output: 3519284ac875f1519daa2781f54b7ea69b14b12906dbdb065c35342b9ffe8854
+2026-04-10 14:29:38,537 [INFO] Container started successfully
+2026-04-10 14:36:53,645 [INFO] Container stopped and removed
+2026-04-11 16:13:36,979 [INFO] Docker container not running — status: offline
+2026-04-11 16:13:54,705 [INFO] Docker container not running — status: offline
+2026-04-11 16:14:00,219 [INFO] Starting Docker container in detached mode
+2026-04-11 16:14:01,127 [INFO] docker run output: bf38287cbf1fad318f4ac5148407b739a7221ff2ea06a8c745b3b24a0cc933df
+2026-04-11 16:14:03,542 [INFO] Container started successfully
+2026-04-11 16:14:14,720 [INFO] Executing: docker exec piper_env bash -c 'source ~/.bashrc && p enable'
+2026-04-11 16:14:15,326 [WARNING] stderr: bash: line 1: p: command not found
+2026-04-11 16:14:15,831 [INFO] Executing: docker exec piper_env bash -c 'source ~/.bashrc && p goto init'
+2026-04-11 16:14:16,135 [WARNING] stderr: bash: line 1: p: command not found
+2026-04-11 16:32:18,621 [INFO] Docker container running — status: booted
+2026-04-11 16:32:24,924 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p enable'
+2026-04-11 16:32:25,732 [INFO] stdout: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-11 16:32:25,833 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /piper_sdk/piper_sdk/can_activate.sh can0 1000000: No such file or directory
+2026-04-11 16:32:26,539 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-11 16:32:28,351 [INFO] stdout: Go to init complete.
+2026-04-11 16:32:28,351 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:32:41,405 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto zero'
+2026-04-11 16:32:42,915 [INFO] stdout: Go to zero complete.
+2026-04-11 16:32:43,015 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:32:52,072 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-11 16:32:53,683 [INFO] stdout: Go to init complete.
+2026-04-11 16:32:53,683 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:33:00,812 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto zero'
+2026-04-11 16:33:02,526 [INFO] stdout: Go to zero complete.
+2026-04-11 16:33:02,526 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:33:06,392 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-11 16:33:08,203 [INFO] stdout: Go to init complete.
+2026-04-11 16:33:08,203 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:33:23,373 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto zero'
+2026-04-11 16:33:25,083 [INFO] stdout: Go to zero complete.
+2026-04-11 16:33:25,083 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:34:29,718 [INFO] Docker container running — status: booted
+2026-04-11 16:34:33,705 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto reset'
+2026-04-11 16:34:35,312 [INFO] stdout: Go to reset complete.
+2026-04-11 16:34:35,312 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:34:35,414 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p disable'
+2026-04-11 16:34:36,822 [INFO] stdout: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-11 16:34:36,822 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:38:50,311 [INFO] Docker container running — status: booted
+2026-04-11 16:38:56,077 [INFO] Container stopped and removed
+2026-04-11 16:57:50,387 [INFO] Docker container not running — status: offline
+2026-04-11 16:57:53,982 [INFO] Starting Docker container in detached mode
+2026-04-11 16:57:54,586 [INFO] docker run output: 0a9fdfb3a59e7e307d6f83e7cad2e289e6fb2cc60a5776bc4ea1d159730a9c05
+2026-04-11 16:57:57,297 [INFO] Container started successfully
+2026-04-11 16:58:12,042 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p enable'
+2026-04-11 16:58:12,947 [INFO] stdout: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-11 16:58:12,947 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /piper_sdk/piper_sdk/can_activate.sh can0 1000000: No such file or directory
+2026-04-11 16:58:13,451 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-11 16:58:15,057 [INFO] stdout: Go to init complete.
+2026-04-11 16:58:15,057 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:58:57,754 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto zero'
+2026-04-11 16:58:59,360 [INFO] stdout: Go to zero complete.
+2026-04-11 16:58:59,461 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 16:59:02,604 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-11 16:59:04,712 [INFO] stdout: Go to init complete.
+2026-04-11 16:59:04,712 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 18:41:44,282 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto zero'
+2026-04-11 18:41:46,088 [INFO] stdout: Go to zero complete.
+2026-04-11 18:41:46,289 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 18:41:48,387 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto reset'
+2026-04-11 18:41:49,993 [INFO] stdout: Go to reset complete.
+2026-04-11 18:41:50,093 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 18:41:50,295 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p disable'
+2026-04-11 18:41:51,199 [INFO] stdout: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-11 18:41:51,199 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 18:42:04,744 [INFO] Container stopped and removed
+2026-04-11 18:43:27,363 [INFO] Docker container not running — status: offline
+2026-04-11 18:46:28,098 [INFO] Starting Docker container in detached mode
+2026-04-11 18:46:29,204 [INFO] docker run output: 22e7c13643f98ef8249c41be3fde7055e124b04586a4be63a626cd06887801ad
+2026-04-11 18:46:31,822 [INFO] Container started successfully
+2026-04-11 18:55:57,229 [INFO] Docker container running — status: booted
+2026-04-11 18:56:02,253 [INFO] Container already running — skipping boot
+2026-04-11 18:58:35,121 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p enable'
+2026-04-11 18:58:35,928 [INFO] stdout: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-11 18:58:35,928 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /piper_sdk/piper_sdk/can_activate.sh can0 1000000: No such file or directory
+2026-04-11 18:58:36,434 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-11 18:58:38,246 [INFO] stdout: Go to init complete.
+2026-04-11 18:58:38,246 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 19:10:46,662 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto zero'
+2026-04-11 19:10:48,580 [INFO] stdout: Go to zero complete.
+2026-04-11 19:10:48,580 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 19:10:53,799 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto reset'
+2026-04-11 19:10:55,610 [INFO] stdout: Go to reset complete.
+2026-04-11 19:10:55,610 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 19:10:56,214 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p disable'
+2026-04-11 19:10:57,222 [INFO] stdout: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-11 19:10:57,223 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-11 19:11:05,106 [INFO] Container stopped and removed
+2026-04-12 16:30:32,073 [INFO] Docker container not running — status: offline
+2026-04-12 16:31:00,743 [INFO] Starting Docker container in detached mode
+2026-04-12 16:31:01,551 [INFO] docker run output: aebc0e778753385522fbcd3740dcf8bc942e9ea702fcd4074bb8c7a981e2b4f1
+2026-04-12 16:31:03,966 [INFO] Container started successfully
+2026-04-12 16:31:37,894 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p enable'
+2026-04-12 16:31:38,702 [INFO] stdout: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-12 16:31:38,802 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /piper_sdk/piper_sdk/can_activate.sh can0 1000000: No such file or directory
+2026-04-12 16:31:42,322 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-12 16:31:44,136 [INFO] stdout: Go to init complete.
+2026-04-12 16:31:44,136 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 16:35:04,549 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto reset'
+2026-04-12 16:35:06,263 [INFO] stdout: Go to reset complete.
+2026-04-12 16:35:06,263 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 16:35:08,880 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p disable'
+2026-04-12 16:35:09,887 [INFO] stdout: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-12 16:35:09,887 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 16:35:36,002 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p enable'
+2026-04-12 16:35:37,010 [INFO] stdout: 使能成功!!!!
+Piper enable sequence complete.
+2026-04-12 16:35:37,010 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /piper_sdk/piper_sdk/can_activate.sh can0 1000000: No such file or directory
+2026-04-12 16:35:38,526 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto init'
+2026-04-12 16:35:40,238 [INFO] stdout: Go to init complete.
+2026-04-12 16:35:40,439 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 16:36:33,627 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p goto reset'
+2026-04-12 16:36:35,238 [INFO] stdout: Go to reset complete.
+2026-04-12 16:36:35,238 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-04-12 16:36:37,350 [INFO] Executing: docker exec piper_env bash -ic 'source ~/.bashrc && p disable'
+2026-04-12 16:36:39,064 [INFO] stdout: 失能成功!!!!
+Piper disable sequence complete.
+2026-04-12 16:36:39,064 [WARNING] stderr: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell

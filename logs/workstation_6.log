@@ -58,3 +58,18 @@ Digest: sha256:e0b753ad54496af56d82d9230372960c7281cca6d6ce08818da876588ef0f95c
 Status: Downloaded newer image for firefall/cluster_piper_env:v1
 2026-04-10 11:37:22,851 [INFO] Container started successfully
 2026-04-10 11:39:55,989 [INFO] Container stopped and removed
+2026-04-10 11:43:15,637 [INFO] Docker container not running — status: offline
+2026-04-10 11:45:02,811 [INFO] Docker container not running — status: offline
+2026-04-10 11:45:19,766 [INFO] Docker container not running — status: offline
+2026-04-10 12:17:32,176 [INFO] Docker container not running — status: offline
+2026-04-10 12:17:50,828 [INFO] Starting Docker container in detached mode
+2026-04-10 12:17:51,333 [INFO] docker run output: adab2f396c477d255f6806616a4ee8f73630cdef87f3e45b85a333560dcd43e1
+2026-04-10 12:17:54,464 [INFO] Container started successfully
+2026-04-10 12:20:00,602 [INFO] Docker container running — status: booted
+2026-04-10 12:20:48,511 [INFO] Container stopped and removed
+2026-04-10 14:29:13,291 [INFO] Docker container not running — status: offline
+2026-04-10 14:29:31,668 [INFO] Starting Docker container in detached mode
+2026-04-10 14:29:32,476 [INFO] docker run output: 80af49f32157317c82bbd085a6c126cf1845bd09a7bbf020a8e7561258137912
+2026-04-10 14:29:35,809 [INFO] Container started successfully
+2026-04-10 14:36:52,232 [INFO] Container stopped and removed
+2026-04-11 16:13:35,422 [INFO] Docker container not running — status: offline
