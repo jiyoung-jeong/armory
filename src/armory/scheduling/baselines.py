@@ -2,8 +2,8 @@ import multiprocessing as mp
 import random
 import time
 
-from openpi.scheduling import RequestScheduler
-from openpi.serving.schemas import SlotRequest
+from armory.scheduling import RequestScheduler
+from armory.serving.schemas import SlotRequest
 
 
 class GreedyScheduler(RequestScheduler):

@@ -5,11 +5,11 @@ import dataclasses
 import multiprocessing as mp
 import time
 
-from openpi.scheduling.latency import LatencyTracker
-from openpi.serving.schemas import AckNotification
-from openpi.serving.schemas import CompletionNotification
-from openpi.serving.schemas import SchedulerDecision
-from openpi.serving.schemas import SlotRequest
+from armory.scheduling.latency import LatencyTracker
+from armory.serving.schemas import AckNotification
+from armory.serving.schemas import CompletionNotification
+from armory.serving.schemas import SchedulerDecision
+from armory.serving.schemas import SlotRequest
 
 
 class RequestScheduler(ABC):

@@ -16,8 +16,8 @@ import numpy as np
 from openpi_client.schemas import ServerMetadata
 import plotly.graph_objects as go
 
-from openpi.serving.metrics.store import MetricsStore
-from openpi.serving.metrics.store import Snapshot
+from armory.serving.metrics.store import MetricsStore
+from armory.serving.metrics.store import Snapshot
 
 # ---------------------------------------------------------------------------
 # Plotly dark theme helpers

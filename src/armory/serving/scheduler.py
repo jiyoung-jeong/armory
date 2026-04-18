@@ -8,18 +8,18 @@ import signal
 from openpi_client.messages import ResetRequest
 import zmq
 
-from openpi.scheduling import RequestScheduler
-from openpi.scheduling.baselines import GreedyScheduler
-from openpi.scheduling.baselines import RandomBatchScheduler
-from openpi.scheduling.baselines import RoundRobinScheduler
-from openpi.scheduling.lookahead import LookaheadScheduler
-from openpi.scheduling.receding_horizon_ilp import RecedingHorizonILPScheduler
-from openpi.serving.schemas import AckNotification
-from openpi.serving.schemas import BatchProfile
-from openpi.serving.schemas import CompletionNotification
-from openpi.serving.schemas import SlotRequest
-from openpi.serving.schemas import WarmupSeed
-from openpi.shared import logging_config
+from armory.scheduling import RequestScheduler
+from armory.scheduling.baselines import GreedyScheduler
+from armory.scheduling.baselines import RandomBatchScheduler
+from armory.scheduling.baselines import RoundRobinScheduler
+from armory.scheduling.lookahead import LookaheadScheduler
+from armory.scheduling.receding_horizon_ilp import RecedingHorizonILPScheduler
+from armory.serving.schemas import AckNotification
+from armory.serving.schemas import BatchProfile
+from armory.serving.schemas import CompletionNotification
+from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import WarmupSeed
+from armory.core import logging_config
 
 logger = logging.getLogger(__name__)
 

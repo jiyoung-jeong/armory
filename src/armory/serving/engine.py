@@ -8,17 +8,17 @@ import signal
 import time
 
 import numpy as np
-from openpi_client.messages import InferRequest
-from openpi_client.messages import InferResponse
-from openpi_client.messages import InferType
-from openpi_client.messages import RTCParams
+from armory.messages.messages import InferRequest
+from armory.messages.messages import InferResponse
+from armory.messages.messages import InferType
+from armory.messages.messages import RTCParams
 import zmq
 
-from openpi.serving.schemas import BatchProfile
-from openpi.serving.schemas import CompletionNotification
-from openpi.serving.schemas import SlotRequest
-from openpi.serving.slots import RobotSlots
-from openpi.shared import logging_config
+from armory.serving.schemas import BatchProfile
+from armory.serving.schemas import CompletionNotification
+from armory.serving.schemas import SlotRequest
+from armory.serving.slots import RobotSlots
+from armory.core import logging_config
 
 logger = logging.getLogger(__name__)
 

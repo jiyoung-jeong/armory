@@ -12,7 +12,7 @@ import tyro
 from openpi.policies import policy as _policy
 from openpi.policies import policy_config as _policy_config
 from openpi.policies.policy import EnvMode
-from openpi.serving.server import PolicyServer
+from armory.serving.server import PolicyServer
 from openpi.shared import logging_config
 from openpi.training import config as _config
 

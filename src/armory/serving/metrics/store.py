@@ -9,21 +9,21 @@ import threading
 import time
 
 import numpy as np
-from openpi_client.messages import EpisodeEnd
-from openpi_client.messages import EpisodeStart
-from openpi_client.messages import InferResponse
-from openpi_client.messages import ResponseAck
+from armory.messages.messages import EpisodeEnd
+from armory.messages.messages import EpisodeStart
+from armory.messages.messages import InferResponse
+from armory.messages.messages import ResponseAck
 from openpi_client.schemas import JSONDataclass
 
-from openpi.serving.metrics.schemas import BatchSummary
-from openpi.serving.metrics.schemas import Episode
-from openpi.serving.metrics.schemas import RequestRecord
-from openpi.serving.metrics.schemas import ResponseRecord
-from openpi.serving.metrics.schemas import Robot
-from openpi.serving.metrics.schemas import RobotID
-from openpi.serving.metrics.schemas import window_filter
-from openpi.serving.schemas import SchedulerDecision
-from openpi.serving.schemas import SlotRequest
+from armory.serving.metrics.schemas import BatchSummary
+from armory.serving.metrics.schemas import Episode
+from armory.serving.metrics.schemas import RequestRecord
+from armory.serving.metrics.schemas import ResponseRecord
+from armory.serving.metrics.schemas import Robot
+from armory.serving.metrics.schemas import RobotID
+from armory.serving.metrics.schemas import window_filter
+from armory.serving.schemas import SchedulerDecision
+from armory.serving.schemas import SlotRequest
 
 logger = logging.getLogger(__name__)
 

@@ -12,9 +12,9 @@ from typing import Any
 
 import gurobipy as gp
 
-from openpi.scheduling import RequestScheduler
-from openpi.serving.schemas import SchedulerDecision
-from openpi.serving.schemas import SlotRequest
+from armory.scheduling import RequestScheduler
+from armory.serving.schemas import SchedulerDecision
+from armory.serving.schemas import SlotRequest
 
 logger = logging.getLogger(__name__)
 

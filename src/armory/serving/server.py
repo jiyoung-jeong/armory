@@ -37,33 +37,33 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi import WebSocket
 from fastapi.concurrency import asynccontextmanager
-from openpi_client import msgpack_numpy
-from openpi_client.messages import ConnectRequest
-from openpi_client.messages import ConnectResponse
-from openpi_client.messages import EpisodeEnd
-from openpi_client.messages import EpisodeStart
-from openpi_client.messages import InferRequest
-from openpi_client.messages import InferResponse
-from openpi_client.messages import ResetRequest
-from openpi_client.messages import ResponseAck
-from openpi_client.messages import WarmupPong
+from armory.core import msgpack_numpy
+from armory.messages.messages import ConnectRequest
+from armory.messages.messages import ConnectResponse
+from armory.messages.messages import EpisodeEnd
+from armory.messages.messages import EpisodeStart
+from armory.messages.messages import InferRequest
+from armory.messages.messages import InferResponse
+from armory.messages.messages import ResetRequest
+from armory.messages.messages import ResponseAck
+from armory.messages.messages import WarmupPong
 from openpi_client.schemas import ServerMetadata
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
 import uvicorn
 import zmq.asyncio
 
-from openpi.serving.engine import _run_gpu_worker
-from openpi.serving.metrics import MetricsStore
-from openpi.serving.metrics.dash_app import create_dash_app
-from openpi.serving.scheduler import _run_scheduler
-from openpi.serving.schemas import AckNotification
-from openpi.serving.schemas import SchedulerDecision
-from openpi.serving.schemas import SlotRequest
-from openpi.serving.schemas import WarmupSeed
-from openpi.serving.schemas import _request_id_counter
-from openpi.serving.slots import RobotSlots
-from openpi.serving.slots import SlotData
+from armory.serving.engine import _run_gpu_worker
+from armory.serving.metrics import MetricsStore
+from armory.serving.metrics.dash_app import create_dash_app
+from armory.serving.scheduler import _run_scheduler
+from armory.serving.schemas import AckNotification
+from armory.serving.schemas import SchedulerDecision
+from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import WarmupSeed
+from armory.serving.schemas import _request_id_counter
+from armory.serving.slots import RobotSlots
+from armory.serving.slots import SlotData
 
 MAX_ROBOTS = 100
 NUM_WARMUP = 10

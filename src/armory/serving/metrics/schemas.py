@@ -7,8 +7,8 @@ import itertools
 from typing import NamedTuple, TypeAlias, TypeVar
 
 import numpy as np
-from openpi_client.messages import EpisodeEnd
-from openpi_client.messages import EpisodeStart
+from armory.messages.messages import EpisodeEnd
+from armory.messages.messages import EpisodeStart
 
 RobotID: TypeAlias = str
 T = TypeVar("T")

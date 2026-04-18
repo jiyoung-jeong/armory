@@ -5,10 +5,10 @@ from dataclasses import field
 import itertools
 
 import numpy as np
-from openpi_client.messages import InferType
-from openpi_client.messages import RTCParams
-from openpi_client.messages import TrainTimeRTCParams
-from openpi_client.messages import VlashParams
+from armory.messages.messages import InferType
+from armory.messages.messages import RTCParams
+from armory.messages.messages import TrainTimeRTCParams
+from armory.messages.messages import VlashParams
 
 _request_id_counter = itertools.count(1)
 
