@@ -1,4 +1,4 @@
-# Backward-compat shim — import from the canonical source directly.
+# Re-export all message types from the canonical armory.messages module.
 from armory.messages.messages import (  # noqa: F401
     ConnectRequest,
     ConnectResponse,

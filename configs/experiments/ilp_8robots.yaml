@@ -1,0 +1,16 @@
+# Example: receding-horizon ILP with 8 robots on libero_10
+serving:
+  scheduling_algorithm: receding_horizon_ilp
+  max_batch_size: 8
+  ilp_timestep_ms: 10
+  ilp_horizon_steps: 100
+  ilp_execution_fraction: 0.75
+  ilp_solve_timeout_ms: 1000
+  ilp_pack_early_weight: 0.2
+
+sim:
+  task_suite_name: libero_10
+  num_robots: 8
+  num_trials_per_task: 10
+  control_hz: 20
+  execution_horizon: 8

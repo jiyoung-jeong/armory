@@ -5,7 +5,7 @@ import multiprocessing as mp
 from multiprocessing.synchronize import Event
 import signal
 
-from openpi_client.messages import ResetRequest
+from armory.messages.messages import ResetRequest
 import zmq
 
 from armory.scheduling import RequestScheduler

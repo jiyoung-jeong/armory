@@ -3,10 +3,10 @@ import multiprocessing
 import time
 import numpy as np
 from typing import List
-from openpi_client.runtime import subscriber as _subscriber
+from armory_client.runtime import subscriber as _subscriber
 from typing_extensions import override
-from libero.env import LiberoSimEnvironment
-from libero.episodes import Episode
+from sims.libero.env import LiberoSimEnvironment
+from sims.libero.episodes import Episode
 
 
 class ProgressSubscriber(_subscriber.Subscriber):

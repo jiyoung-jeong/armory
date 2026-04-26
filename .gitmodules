@@ -1,3 +1,6 @@
 [submodule "third_party/libero"]
 	path = third_party/libero
 	url = https://github.com/rohan-bansal/LIBERO
+[submodule "third_party/openpi"]
+	path = third_party/openpi
+	url = https://github.com/Physical-Intelligence/openpi.git

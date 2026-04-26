@@ -47,7 +47,7 @@ from armory.messages.messages import InferResponse
 from armory.messages.messages import ResetRequest
 from armory.messages.messages import ResponseAck
 from armory.messages.messages import WarmupPong
-from openpi_client.schemas import ServerMetadata
+from armory.schemas import ServerMetadata
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
 import uvicorn

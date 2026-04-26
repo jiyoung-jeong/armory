@@ -13,7 +13,7 @@ from armory.messages.messages import EpisodeEnd
 from armory.messages.messages import EpisodeStart
 from armory.messages.messages import InferResponse
 from armory.messages.messages import ResponseAck
-from openpi_client.schemas import JSONDataclass
+from armory.schemas import JSONDataclass
 
 from armory.serving.metrics.schemas import BatchSummary
 from armory.serving.metrics.schemas import Episode

@@ -1,0 +1,9 @@
+task_suite_name: libero_10
+num_trials_per_task: 10
+num_robots: 4
+max_steps: 600
+seed: 0
+resize_size: 224
+control_hz: 20
+execution_horizon: 8
+output_dir: data/libero/multi_robot_videos

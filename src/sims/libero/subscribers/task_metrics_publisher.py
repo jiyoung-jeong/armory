@@ -4,16 +4,16 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from openpi_client.client import BidirectionalWebsocket
-from openpi_client.runtime import subscriber as _subscriber
-from openpi_client.schemas import Action
-from openpi_client.schemas import Observation
+from armory_client.client import BidirectionalWebsocket
+from armory_client.runtime import subscriber as _subscriber
+from armory_client.schemas import Action
+from armory_client.schemas import Observation
 from typing_extensions import override
 
 if TYPE_CHECKING:
     from libero.libero import benchmark
 
-    from libero.env import LiberoSimEnvironment
+    from sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
 

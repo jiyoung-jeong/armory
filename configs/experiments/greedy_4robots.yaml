@@ -1,0 +1,11 @@
+# Example: greedy scheduling with 4 robots on libero_10
+serving:
+  scheduling_algorithm: greedy
+  max_batch_size: 4
+
+sim:
+  task_suite_name: libero_10
+  num_robots: 4
+  num_trials_per_task: 10
+  control_hz: 20
+  execution_horizon: 8

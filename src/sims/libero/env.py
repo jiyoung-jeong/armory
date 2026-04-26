@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from openpi_client.runtime import environment as _environment
-from openpi_client.schemas import Action
-from openpi_client.schemas import Observation
+from armory_client.runtime import environment as _environment
+from armory_client.schemas import Action
+from armory_client.schemas import Observation
 import numpy as np
-from openpi_client import image_tools
+from armory_client import image_tools
 from libero.libero.envs import OffScreenRenderEnv
-from libero import utils
+from sims.libero import utils
 from typing import List
 from typing_extensions import override
 

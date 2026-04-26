@@ -6,29 +6,24 @@ import socket
 import sys
 from typing import Literal
 
-from openpi_client.schemas import ServerMetadata
 import tyro
 
-from openpi.policies import policy as _policy
-from openpi.policies import policy_config as _policy_config
-from openpi.policies.policy import EnvMode
+from armory.schemas import ServerMetadata
 from armory.serving.server import PolicyServer
-from openpi.shared import logging_config
-from openpi.training import config as _config
+from armory.core import logging_config
+from openpi_adapter.serve_factory import EnvMode
+from openpi_adapter.serve_factory import create_policy
+from openpi_adapter.serve_factory import get_model_dims
 
-# Import shared utilities
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import DEFAULT_CHECKPOINT
-from utils import create_default_policy
+from utils import DEFAULT_CHECKPOINT  # noqa: E402
 
 
 @dataclasses.dataclass
 class Checkpoint:
     """Load a policy from a trained checkpoint."""
 
-    # Training config name (e.g., "pi0_aloha_sim").
     config: str
-    # Checkpoint directory (e.g., "checkpoints/pi0_aloha_sim/exp/10000").
     dir: str
 
 
@@ -39,104 +34,58 @@ class Default:
 
 @dataclasses.dataclass
 class Args:
-    """Arguments for the serve_policy script."""
+    """Arguments for the serve script."""
 
-    # Environment to serve the policy for. This is only used when serving default policies.
     env: EnvMode = EnvMode.ALOHA_SIM
 
-    # If provided, will be used in case the "prompt" key is not present in the data, or if the model doesn't have a default
-    # prompt.
     default_prompt: str | None = None
 
-    # Port to serve the policy on.
     port: int = 8080
 
-    # Specifies how to load the policy. If not provided, the default policy for the environment will be used.
     policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
 
-    # Batch size to use for inference.
     max_batch_size: int = 1
 
-    # Number of steps to use for sampling.
     num_steps: int = 10
 
-    # Log directory to save the logs to.
     log_dir: str = "logs/server"
 
-    # Scheduling algorithm for batching requests. # TODO: maybe should use enum?
     scheduling_algorithm: Literal["greedy", "lookahead", "round_robin", "random", "receding_horizon_ilp"] = "greedy"
 
-    # Lookahead rollout horizon in milliseconds.
     lookahead_horizon_ms: int = 500
-
-    # Lookahead time discretization in milliseconds.
     lookahead_timestep_ms: int = 50
-
-    # Control frequency used to convert action chunks to wall-clock duration.
     lookahead_control_hz: int = 20
 
-    # ILP discretization step in milliseconds.
     ilp_timestep_ms: int = 10
-
-    # ILP planning horizon in discretized timesteps.
     ilp_horizon_steps: int = 100
-
-    # Fraction of the horizon executed before swapping to the next receding plan.
     ilp_execution_fraction: float = 0.75
-
-    # Per-solve time budget for the ILP backend.
     ilp_solve_timeout_ms: int = 1000
-
-    # Optional action chunk length override for ILP. If unset, uses model action_horizon.
     ilp_action_horizon_steps: int | None = None
-
-    # Secondary ILP tie-break: prioritize earlier scheduling density.
     ilp_pack_early_weight: float = 0.2
-
-    # Secondary ILP tie-break: prioritize robots with older observations.
     ilp_obs_staleness_weight: float = 0
 
-    # Logging level (DEBUG, INFO, WARNING, ERROR).
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
 
-# FIXME: may not be needed
 class _PolicyFactory:
-    """Module-level picklable callable required by spawn multiprocessing."""
+    """Picklable callable required by spawn multiprocessing."""
 
-    def __init__(self, args: Args):
+    def __init__(self, args: Args, config_name: str, checkpoint_dir: str):
         self._args = args
+        self._config_name = config_name
+        self._checkpoint_dir = checkpoint_dir
 
-    def __call__(self) -> _policy.Policy:
-        policy = create_policy(self._args)
-        if "env" not in policy._metadata:  # noqa: SLF001
-            policy._metadata["env"] = self._args.env.value  # noqa: SLF001
-        return policy
-
-
-def create_policy(args: Args) -> _policy.Policy:
-    """Create a policy from the given arguments."""
-    match args.policy:
-        case Checkpoint():
-            return _policy_config.create_trained_policy(
-                _config.get_config(args.policy.config),
-                args.policy.dir,
-                default_prompt=args.default_prompt,
-                sample_kwargs={"num_steps": args.num_steps},
-                use_triton_optimized=(args.env == EnvMode.LIBERO_REALTIME),
-                batch_size=args.max_batch_size,
-            )
-        case Default():
-            print(type(args.policy))
-            return create_default_policy(
-                args.env,
-                batch_size=args.max_batch_size,
-                default_prompt=args.default_prompt,
-                sample_kwargs={"num_steps": args.num_steps},
-            )
+    def __call__(self):
+        return create_policy(
+            self._config_name,
+            self._checkpoint_dir,
+            default_prompt=self._args.default_prompt,
+            sample_kwargs={"num_steps": self._args.num_steps},
+            env_mode=self._args.env,
+        )
 
 
-def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict[str, object] | None:
+def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
     if args.scheduling_algorithm == "lookahead":
         return {
             "horizon_ms": args.lookahead_horizon_ms,
@@ -144,7 +93,6 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict[str
             "action_horizon_steps": action_horizon_steps,
             "control_hz": args.lookahead_control_hz,
         }
-
     if args.scheduling_algorithm == "receding_horizon_ilp":
         ilp_action_horizon = args.ilp_action_horizon_steps or action_horizon_steps or 10
         if ilp_action_horizon < 1:
@@ -158,51 +106,47 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict[str
             "pack_early_weight": args.ilp_pack_early_weight,
             "obs_staleness_weight": args.ilp_obs_staleness_weight,
         }
-
     return None
 
 
 def main(args: Args) -> None:
     log_path = (
         pathlib.Path(args.log_dir)
-        / f"serve_policy_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
+        / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
     )
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_queue, log_listener = logging_config.setup_logging(log_path=log_path, level=getattr(logging, args.log_level))
 
-    # Create policy factory to avoid CUDA context fork issues
-    policy_factory = _PolicyFactory(args)
-
-    # Build metadata without loading the model to avoid CUDA initialization
     match args.policy:
         case Checkpoint():
-            train_config = _config.get_config(args.policy.config)
+            config_name = args.policy.config
             checkpoint_dir = args.policy.dir
         case Default():
             if checkpoint := DEFAULT_CHECKPOINT.get(args.env):
-                train_config = _config.get_config(checkpoint["config"])
+                config_name = checkpoint["config"]
                 checkpoint_dir = checkpoint["dir"]
             else:
                 raise ValueError(f"Unsupported environment mode: {args.env}")
 
-    # Build server metadata
+    action_horizon, action_dim = get_model_dims(config_name)
+
     server_metadata = ServerMetadata(
-        config_name=train_config.name,
+        config_name=config_name,
         checkpoint_dir=checkpoint_dir,
-        action_horizon=train_config.model.action_horizon,
-        action_dim=train_config.model.action_dim,
+        action_horizon=action_horizon,
+        action_dim=action_dim,
         num_steps=args.num_steps,
         max_batch_size=args.max_batch_size,
         env=args.env.value,
         scheduling_algorithm=args.scheduling_algorithm,
     )
 
-    # TODO: this looks sus to me
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    scheduler_kwargs = build_scheduler_kwargs(args, action_horizon_steps=server_metadata.action_horizon)
+    scheduler_kwargs = build_scheduler_kwargs(args, action_horizon_steps=action_horizon)
+    policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
 
     server = PolicyServer(
         metadata=server_metadata,

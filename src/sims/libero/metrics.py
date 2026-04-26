@@ -8,8 +8,8 @@ from matplotlib.patches import Patch
 from dataclasses import asdict
 from rich.console import Console
 from rich.table import Table
-from libero.subscribers.saver import Result
-from openpi_client.schemas import RuntimeMetadata, pathlib, ActionChunk
+from sims.libero.subscribers.saver import Result
+from armory_client.schemas import RuntimeMetadata, pathlib, ActionChunk
 import logging
 
 logger = logging.getLogger(__name__)

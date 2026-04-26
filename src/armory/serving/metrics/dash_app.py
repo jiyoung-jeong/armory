@@ -13,7 +13,7 @@ from dash import ctx
 from dash import dcc
 from dash import html
 import numpy as np
-from openpi_client.schemas import ServerMetadata
+from armory.schemas import ServerMetadata
 import plotly.graph_objects as go
 
 from armory.serving.metrics.store import MetricsStore
