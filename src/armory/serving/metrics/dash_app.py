@@ -13,7 +13,7 @@ from dash import ctx
 from dash import dcc
 from dash import html
 import numpy as np
-from armory.schemas import ServerMetadata
+from armory_client.schemas import ServerMetadata
 import plotly.graph_objects as go
 
 from armory.serving.metrics.store import MetricsStore

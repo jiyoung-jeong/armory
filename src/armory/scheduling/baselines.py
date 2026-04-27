@@ -1,41 +1,106 @@
+import dataclasses
+import itertools
 import multiprocessing as mp
 import random
 import time
 
 from armory.scheduling import RequestScheduler
+from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import SlotRequest
 
 
-class GreedyScheduler(RequestScheduler):
-    """Earliest-deadline-first: sort all pending requests by deadline."""
+def calculate_usable_time(latency_tracker: LatencyTracker, slot_request: SlotRequest, batch_size: int) -> float:
+    total_latency = latency_tracker.total_latency(slot_request.robot_id, batch_size)
+    total_chunk_time = slot_request.execution_horizon / slot_request.control_hz
+    return total_chunk_time - total_latency
+
+
+class FixedSizeGreedyScheduler(RequestScheduler):
+    """Greedy scheduler that always fills to max_batch_size, prioritizing requests with earliest deadlines."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if self._batch_queue.qsize() > 0:
-            return []
-
-        candidates = self._get_schedulable_requests()
-        if not candidates:
+        if self._batch_queue.qsize() > 0 or (candidates := self.schedulable_requests) == []:
             return []
 
         candidates = sorted(candidates, key=lambda r: self._deadlines.get(r.robot_id, r.deadline))
-        earliest_deadline = self._deadlines.get(candidates[0].robot_id, candidates[0].deadline)
-        batch_size = self.get_largest_batch_size(earliest_deadline)
-        return [candidates[:batch_size]]
+        return [candidates[: self._max_batch_size]]
 
-    def get_largest_batch_size(self, deadline: float) -> int:
+
+class TrueMaxBatchScheduler(RequestScheduler):
+    """Always dispatch max_batch_size rows, padding with artificial duplicate requests if needed."""
+
+    def get_next_batches(self) -> list[list[SlotRequest]]:
+        if self._batch_queue.qsize() > 0 or (candidates := self.schedulable_requests) == []:
+            return []
+
+        candidates = sorted(candidates, key=lambda r: self._deadlines.get(r.robot_id, r.deadline))
+        batch = candidates[: self._max_batch_size]
+        if len(batch) == self._max_batch_size:
+            return [batch]
+
+        pad_sources = list(batch)
+        pad_index = 0
+        while len(batch) < self._max_batch_size:
+            source = pad_sources[pad_index % len(pad_sources)]
+            batch.append(dataclasses.replace(source, is_padding=True))
+            pad_index += 1
+        return [batch]
+
+
+class GreedyActionScheduler(RequestScheduler):
+    """Earliest-deadline-first: sort all pending requests by deadline."""
+
+    def get_next_batches(self) -> list[list[SlotRequest]]:
+        if self._batch_queue.qsize() > 0 or (candidates := self.schedulable_requests) == []:
+            return []
+
+        potential_batches = itertools.chain.from_iterable(
+            itertools.combinations(candidates, i) for i in range(1, self._max_batch_size + 1)
+        )
+        return [list(max(potential_batches, key=lambda batch: self.calculate_actions_per_second(batch)))]
+
+    def calculate_actions_per_second(self, batch: tuple[SlotRequest, ...]) -> float:
+        """Return the number of usable actions created per second spent on inference."""
+        return sum(
+            calculate_usable_time(self.latency_tracker, request, len(batch)) for request in batch
+        ) / self.latency_tracker.infer_latency(len(batch))
+
+
+class GreedyDeadlineScheduler(RequestScheduler):
+    """Earliest-deadline-first: sort all pending requests by deadline."""
+
+    def get_next_batches(self) -> list[list[SlotRequest]]:
+        if self._batch_queue.qsize() > 0 or (candidates := self.schedulable_requests) == []:
+            return []
+
+        candidates_and_infer_deadlines = sorted(
+            [
+                (
+                    slot_request,
+                    self._deadlines.get(slot_request.robot_id, slot_request.deadline)
+                    - self.latency_tracker.action_latency(slot_request.robot_id),
+                )
+                for slot_request in candidates
+            ],
+            key=lambda x: x[1],
+        )
+        _, earliest_infer_deadline = candidates_and_infer_deadlines[0]
+        batch_size = self.get_largest_batch_size(earliest_infer_deadline)
+        return [[x[0] for x in candidates_and_infer_deadlines[:batch_size]]]
+
+    def get_largest_batch_size(self, infer_deadline: float) -> int:
         """Return the largest batch size whose profiled latency fits within the time remaining until deadline."""
-        time_remaining_ms = (deadline - time.time()) * 1e3
+        # we can assume inference starts right away because queue is empty
+        time_remaining = infer_deadline - time.time()
         for batch_size in range(self._max_batch_size, 0, -1):
-            if self._batch_profile_ms.get(batch_size, 0) <= time_remaining_ms:
+            if self.latency_tracker.infer_latency(batch_size) <= time_remaining:
                 return batch_size
         return self.most_efficient_batch_size
 
     @property
     def most_efficient_batch_size(self) -> int:
-        """Batch size with the best throughput (requests / ms). Falls back to 1."""
-        if not self._batch_profile_ms:
-            return 1
-        return max(self._batch_profile_ms, key=lambda bs: bs / self._batch_profile_ms[bs])
+        """Batch size with the best throughput (requests / ms)."""
+        return max(range(1, self._max_batch_size + 1), key=lambda bs: bs / self.latency_tracker.infer_latency(bs))
 
 
 class RoundRobinScheduler(RequestScheduler):
@@ -45,9 +110,8 @@ class RoundRobinScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        batch_profile: dict[int, float] | None = None,
     ):
-        super().__init__(batch_queue, max_batch_size, batch_profile)
+        super().__init__(batch_queue, max_batch_size)
         self._rr_index: int = 0
         self._rr_robot_order: list[str] = []
 
@@ -60,7 +124,7 @@ class RoundRobinScheduler(RequestScheduler):
         if self._batch_queue.qsize() > 0:
             return []
 
-        candidate_by_robot = {req.robot_id: req for req in self._get_schedulable_requests()}
+        candidate_by_robot = {req.robot_id: req for req in self.schedulable_requests}
         n_robots = len(self._rr_robot_order)
         if not candidate_by_robot or n_robots == 0:
             return []
@@ -95,7 +159,7 @@ class RandomBatchScheduler(RequestScheduler):
         if self._batch_queue.qsize() > 0:
             return []
 
-        candidates = list(self._get_schedulable_requests())
+        candidates = list(self.schedulable_requests)
         if not candidates:
             return []
 

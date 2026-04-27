@@ -67,10 +67,10 @@ class Runtime:
             self._episode_steps += 1
 
             next_step_time = last_step_time + step_time
-            sleep_duration = (next_step_time - time.perf_counter()) - 0.005
-            if sleep_duration > 0:
-                time.sleep(sleep_duration)
-            while time.perf_counter() - last_step_time < step_time:
+            # sleep_duration = (next_step_time - time.perf_counter()) - 0.005
+            # if sleep_duration > 0:
+            #     time.sleep(sleep_duration)
+            while time.perf_counter() < next_step_time:
                 pass
             last_step_time = time.perf_counter()
 

@@ -17,7 +17,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from armory.messages.messages import InferRequest, InferType, RTCParams
+from armory_client.messages import InferRequest, InferType, RTCParams
 
 logger = logging.getLogger(__name__)
 

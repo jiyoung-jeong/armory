@@ -1,9 +1,12 @@
 """Metrics and plotting utilities for LIBERO experiments."""
 
+import json
 from typing import List, Dict, Callable, Optional, Tuple
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.patches import Patch
 from dataclasses import asdict
 from rich.console import Console
@@ -13,6 +16,23 @@ from armory_client.schemas import RuntimeMetadata, pathlib, ActionChunk
 import logging
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Data Loading
+# =============================================================================
+
+def _episode_step_timestamps(ep: dict) -> List[float]:
+    ts = ep.get("step_timestamps") or []
+    if ts:
+        return [float(t) for t in ts]
+
+    requests = ep.get("requests") or []
+    return [
+        float(req.get("request_timestamp"))
+        for req in requests
+        if req.get("request_timestamp")
+    ]
+
 
 # =============================================================================
 # Data Loading
@@ -115,6 +135,30 @@ def load_experiment_duration(output_path: pathlib.Path) -> Optional[float]:
     return t_max - t_min
 
 
+def _server_batch_fields(
+    batch,
+) -> Tuple[object, List[str], List[int], Optional[float], Optional[float], int]:
+    """Parse old 5-field and new 6-field server batch records."""
+    if isinstance(batch, dict):
+        robot_ids = batch.get("robot_ids") or []
+        request_ids = batch.get("request_ids") or []
+        batch_size = int(batch.get("batch_size") or len(robot_ids))
+        return (
+            batch.get("batch_id"),
+            robot_ids,
+            request_ids,
+            batch.get("inference_start_time"),
+            batch.get("inference_end_time"),
+            batch_size,
+        )
+
+    batch_id, robot_ids, request_ids, start, end = batch[:5]
+    batch_size = (
+        int(batch[5]) if len(batch) >= 6 and batch[5] is not None else len(robot_ids)
+    )
+    return batch_id, robot_ids, request_ids, start, end, batch_size
+
+
 def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
     """Load per-episode no-action metrics from saved cost histories.
 
@@ -135,10 +179,22 @@ def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
 
         result = Result.from_json(metadata_file)
         costs = np.load(cost_history_file)
-        starvation_steps = int(np.isnan(costs).sum())
+        nan_mask = np.isnan(costs)
+        starvation_steps = int(nan_mask.sum())
         total_steps = int(costs.shape[0])
         assert total_steps > 0, "cost_history should contain at least one step"
         assert control_hz is not None and control_hz > 0
+
+        # Starvation excluding leading NaNs (before the robot's first action).
+        non_nan_idx = np.flatnonzero(~nan_mask)
+        if non_nan_idx.size > 0:
+            first = int(non_nan_idx[0])
+            post_first_observed = total_steps - first
+            post_first_starvation = int(nan_mask[first:].sum())
+        else:
+            post_first_observed = 0
+            post_first_starvation = 0
+
         row = {
             "robot_idx": result.robot_idx,
             "episode_idx": result.episode_idx,
@@ -147,6 +203,8 @@ def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
             "starvation_steps": starvation_steps,
             "observed_steps": total_steps,
             "planner_starvation_seconds": starvation_steps / control_hz,
+            "post_first_starvation_steps": post_first_starvation,
+            "post_first_observed_steps": post_first_observed,
         }
 
         rows.append(row)
@@ -613,13 +671,20 @@ def generate_actions_left_heatmap(
     )  # cap at 400 inches (~60k px at 150 dpi)
     fig, ax = plt.subplots(figsize=(fig_width, max(4, n_robots * 0.6)))
 
+    vmax = int(np.nanmax(matrix)) if not np.all(np.isnan(matrix)) else 1
+    # Black for 0 (starvation), then RdYlGn for 1..vmax
+    rdylgn = matplotlib.colormaps["RdYlGn"].resampled(vmax)
+    cmap_colors = [(0.0, 0.0, 0.0, 1.0)] + [rdylgn(i) for i in range(vmax)]
+    cmap = mcolors.ListedColormap(cmap_colors)
+
     im = ax.imshow(
         matrix,
         aspect="auto",
-        cmap="RdYlGn",
+        cmap=cmap,
         interpolation="nearest",
         origin="lower",
         vmin=0,
+        vmax=vmax,
     )
 
     # Episode boundary markers (thin white lines)
@@ -848,6 +913,246 @@ def generate_staleness_plot(output_path: pathlib.Path) -> None:
     logger.info(f"Saved {plots_dir / 'staleness_distribution.png'}")
 
 
+def generate_batch_size_plot(output_path: pathlib.Path) -> None:
+    """Distribution of action chunk execution horizons (batch sizes)."""
+
+    with open(output_path / "server_metrics_history.json", "r") as f:
+        data = json.load(f)
+
+    # FIXME: should use JSONDataclass loading
+    batch_sizes = [_server_batch_fields(batch)[5] for batch in data["batches"]]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(batch_sizes, bins=30, color="steelblue", alpha=0.7, edgecolor="black")
+    ax.set_title("Batch Sizes chosen by Server", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Batch Size", fontsize=12)
+    ax.set_ylabel("Frequency", fontsize=12)
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plots_dir = output_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(plots_dir / "batch_size_distribution.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"Saved {plots_dir / 'batch_size_distribution.png'}")
+
+
+def generate_server_timings_plot(output_path: pathlib.Path) -> None:
+    """Plot distributions of step interval, client->server, inference, server->client."""
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        logger.warning("No server_metrics_history.json; skipping server timings plot")
+        return
+    data = json.loads(history_path.read_text())
+
+    step_intervals: List[float] = []
+    inbound: List[float] = []
+    outbound: List[float] = []
+    for robot in data.get("robots", {}).values():
+        for ep in robot.get("episodes", []):
+            ts = _episode_step_timestamps(ep)
+            if len(ts) >= 2:
+                step_intervals.extend(
+                    (np.diff(np.asarray(ts, dtype=float)) * 1000.0).tolist()
+                )
+            for req in ep.get("requests", []):
+                ra = req.get("server_arrival_time")
+                send_ts = req.get("request_timestamp")
+                if ra and send_ts:
+                    inbound.append((ra - send_ts) * 1000.0)
+            for resp in ep.get("responses", []):
+                rcv = resp.get("receive_time", 0.0) or 0.0
+                snd = resp.get("server_send_time", 0.0) or 0.0
+                if rcv > 0 and snd > 0:
+                    outbound.append((rcv - snd) * 1000.0)
+
+    infer: List[float] = []
+    for b in data.get("batches", []):
+        _, _, _, start, end, _ = _server_batch_fields(b)
+        if start and end and end >= start:
+            infer.append((end - start) * 1000.0)
+
+    timings = {
+        "step interval (client-local ms)": np.asarray(step_intervals),
+        "client->server transport delay (ms)": np.asarray(inbound),
+        "inference time (ms)": np.asarray(infer),
+        "server->client delay (ms)": np.asarray(outbound),
+    }
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    assert len(timings) == axes.size
+    for ax, (label, arr) in zip(axes.flat, timings.items()):
+        if arr.size == 0:
+            ax.set_title(f"{label} (no data)")
+            ax.set_axis_off()
+            continue
+        hi = float(np.percentile(arr, 99.5))
+        ax.hist(
+            np.clip(arr, None, hi),
+            bins=100,
+            color="steelblue",
+            edgecolor="black",
+            alpha=0.8,
+        )
+        ax.set_xlabel(label)
+        ax.set_ylabel("count")
+        ax.set_title(
+            f"n={arr.size}  p50={np.percentile(arr, 50):.1f}  p95={np.percentile(arr, 95):.1f}  "
+            f"p99={np.percentile(arr, 99):.1f}  max={arr.max():.1f}",
+            fontsize=9,
+        )
+        for p, c in [(50, "green"), (95, "orange"), (99, "red")]:
+            ax.axvline(np.percentile(arr, p), color=c, linestyle="--", linewidth=1)
+    fig.tight_layout()
+
+    out = output_path / "plots" / "server_timings.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    logger.info("Saved server timings plot to %s", out)
+
+
+def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
+    """Plot server timings over wall-clock time to check temporal alignment of spikes."""
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        logger.warning(
+            "No server_metrics_history.json; skipping server timings over time plot"
+        )
+        return
+    data = json.loads(history_path.read_text())
+
+    step_t: List[float] = []
+    step_v: List[float] = []
+    step_robot: List[str] = []
+    inbound_t: List[float] = []
+    inbound_v: List[float] = []
+    inbound_robot: List[str] = []
+    outbound_t: List[float] = []
+    outbound_v: List[float] = []
+    outbound_robot: List[str] = []
+
+    for robot_id, robot in data.get("robots", {}).items():
+        for ep in robot.get("episodes", []):
+            ts = _episode_step_timestamps(ep)
+            for i in range(1, len(ts)):
+                step_t.append(float(ts[i]))
+                step_v.append((float(ts[i]) - float(ts[i - 1])) * 1000.0)
+                step_robot.append(robot_id)
+            for req in ep.get("requests", []):
+                ra = req.get("server_arrival_time")
+                send_ts = req.get("request_timestamp")
+                if ra and send_ts:
+                    inbound_t.append(float(send_ts))
+                    inbound_v.append((float(ra) - float(send_ts)) * 1000.0)
+                    inbound_robot.append(robot_id)
+            for resp in ep.get("responses", []):
+                rcv = resp.get("receive_time", 0.0) or 0.0
+                snd = resp.get("server_send_time", 0.0) or 0.0
+                if rcv > 0 and snd > 0:
+                    outbound_t.append(float(snd))
+                    outbound_v.append((float(rcv) - float(snd)) * 1000.0)
+                    outbound_robot.append(robot_id)
+
+    infer_t: List[float] = []
+    infer_v: List[float] = []
+    infer_bs: List[int] = []
+    for b in data.get("batches", []):
+        _, _, _, start, end, batch_size = _server_batch_fields(b)
+        if start and end and end >= start:
+            infer_t.append(float(start))
+            infer_v.append((float(end) - float(start)) * 1000.0)
+            infer_bs.append(batch_size)
+
+    all_times = step_t + inbound_t + outbound_t + infer_t
+    if not all_times:
+        logger.warning("No server timing samples; skipping over-time plot")
+        return
+    t0 = min(all_times)
+
+    def _rel(ts: List[float]) -> np.ndarray:
+        return np.asarray(ts, dtype=float) - t0
+
+    series = [
+        (
+            "step interval (client-local ms)",
+            _rel(step_t),
+            np.asarray(step_v),
+            step_robot,
+            None,
+        ),
+        (
+            "client->server transport delay (ms)",
+            _rel(inbound_t),
+            np.asarray(inbound_v),
+            inbound_robot,
+            None,
+        ),
+        (
+            "inference time (ms)",
+            _rel(infer_t),
+            np.asarray(infer_v),
+            None,
+            np.asarray(infer_bs),
+        ),
+        (
+            "server->client delay (ms)",
+            _rel(outbound_t),
+            np.asarray(outbound_v),
+            outbound_robot,
+            None,
+        ),
+    ]
+
+    robot_ids = sorted({*step_robot, *inbound_robot, *outbound_robot})
+    cmap = matplotlib.colormaps["tab20" if len(robot_ids) > 10 else "tab10"]
+    robot_color = {r: cmap(i % cmap.N) for i, r in enumerate(robot_ids)}
+
+    fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
+    assert len(series) == axes.size
+    for ax, (label, t, v, robots, bs) in zip(axes, series):
+        if t.size == 0:
+            ax.set_title(f"{label} (no data)")
+            ax.set_ylabel(label)
+            continue
+        if bs is not None:
+            sc = ax.scatter(t, v, c=bs, cmap="viridis", s=6, alpha=0.7)
+            cbar = fig.colorbar(sc, ax=ax, pad=0.01)
+            cbar.set_label("batch size", fontsize=8)
+        else:
+            colors = [robot_color[r] for r in robots]  # type: ignore[index]
+            ax.scatter(t, v, c=colors, s=4, alpha=0.5, linewidths=0)
+        ax.set_ylabel(label, fontsize=9)
+        hi = float(np.percentile(v, 99.5))
+        ax.set_ylim(0, max(hi * 1.1, 1.0))
+        ax.grid(True, alpha=0.3)
+        ax.set_title(
+            f"n={v.size}  p50={np.percentile(v, 50):.1f}  "
+            f"p95={np.percentile(v, 95):.1f}  p99={np.percentile(v, 99):.1f}  "
+            f"max={v.max():.1f} (y clipped at p99.5)",
+            fontsize=9,
+        )
+
+    axes[-1].set_xlabel("time since first sample (s)")
+    if robot_ids:
+        handles = [Patch(facecolor=robot_color[r], label=r) for r in robot_ids]
+        fig.legend(
+            handles=handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.0),
+            ncol=min(len(robot_ids), 10),
+            fontsize=8,
+            frameon=False,
+        )
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+
+    out = output_path / "plots" / "server_timings_over_time.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    logger.info("Saved server timings over time plot to %s", out)
+
+
 def generate_all_plots(output_path: pathlib.Path) -> None:
     """Generate all plots."""
     logger.info("Generating plots...")
@@ -858,6 +1163,9 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     generate_actions_left_heatmap(output_path)
     generate_starvation_plot(output_path)
     generate_staleness_plot(output_path)
+    generate_batch_size_plot(output_path)
+    generate_server_timings_plot(output_path)
+    generate_server_timings_over_time_plot(output_path)
     logger.info("Done!")
 
 
@@ -890,10 +1198,15 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     aggregation_spec["starvation_steps"] = "sum"
     aggregation_spec["observed_steps"] = "sum"
     aggregation_spec["planner_starvation_seconds"] = "sum"
+    aggregation_spec["post_first_starvation_steps"] = "sum"
+    aggregation_spec["post_first_observed_steps"] = "sum"
 
     summary = df.groupby(["task_suite_name", "task_id"]).agg(aggregation_spec)
     summary["planner_starvation_rate"] = (
         summary["starvation_steps"] / summary["observed_steps"]
+    )
+    summary["post_first_starvation_rate"] = (
+        summary["post_first_starvation_steps"] / summary["post_first_observed_steps"]
     )
     summary.reset_index().to_csv(output_path / "summary.csv", index=False)
 
@@ -949,6 +1262,13 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     total_starvation_steps = int(df["starvation_steps"].sum())
     total_observed_steps = int(df["observed_steps"].sum())
     overall_starvation_rate = total_starvation_steps / total_observed_steps
+    total_post_first_starvation_steps = int(df["post_first_starvation_steps"].sum())
+    total_post_first_observed_steps = int(df["post_first_observed_steps"].sum())
+    overall_post_first_starvation_rate = (
+        total_post_first_starvation_steps / total_post_first_observed_steps
+        if total_post_first_observed_steps > 0
+        else 0.0
+    )
     console.print(
         f"\n[bold green]Total success rate: {summary['success'].mean():.2%}[/bold green]"
     )
@@ -957,6 +1277,10 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     )
     console.print(
         f"[bold yellow]Planner starvation rate: {overall_starvation_rate:.2%}[/bold yellow]"
+    )
+    console.print(
+        f"[bold yellow]Planner starvation rate (excl. pre-first-action): "
+        f"{overall_post_first_starvation_rate:.2%}[/bold yellow]"
     )
     console.print(
         f"[bold yellow]Planner starvation time: {df['planner_starvation_seconds'].sum():.2f}s[/bold yellow]"

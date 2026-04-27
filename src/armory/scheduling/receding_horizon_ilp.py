@@ -84,7 +84,6 @@ class RecedingHorizonILPScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        batch_profile: dict[int, float] | None = None,
         *,
         tick_ms: int = 10,
         horizon_steps: int = 160,
@@ -94,7 +93,7 @@ class RecedingHorizonILPScheduler(RequestScheduler):
         pack_early_weight: float = 1.0,
         obs_staleness_weight: float = 0.1,
     ) -> None:
-        super().__init__(batch_queue, max_batch_size, batch_profile)
+        super().__init__(batch_queue, max_batch_size)
 
         assert tick_ms >= 1, "tick_ms must be >= 1"
         assert horizon_steps >= 1, "horizon_steps must be >= 1"
@@ -147,7 +146,7 @@ class RecedingHorizonILPScheduler(RequestScheduler):
     def update(self, request: SlotRequest) -> None:
         # ignore deadlines, maybe a todo
         self._latest_requests[request.robot_id] = request
-        self.latency.update_obs(request.robot_id, request.arrival_timestamp, request.request_timestamp)
+        self.latency_tracker.update_obs(request.robot_id, request.arrival_timestamp, request.request_timestamp)
 
     def schedule(self) -> None:
         if self._batch_queue.qsize() > 0:
@@ -164,10 +163,8 @@ class RecedingHorizonILPScheduler(RequestScheduler):
         annotated: list[SlotRequest] = []
         for request in candidate:
             self._latest_scheduled_requests[request.robot_id] = request
-            d_ms = self.latency.total_delivery_ms(request.robot_id, batch_size)
-            step_ms = 1000.0 / request.control_hz
-            d_steps = round(d_ms / step_ms) if d_ms is not None else 0
-            annotated.append(dataclasses.replace(request, estimated_d_param=d_steps))
+            total_latency_steps = self.latency_tracker.total_latency(request.robot_id, batch_size) / request.control_hz
+            annotated.append(dataclasses.replace(request, estimated_d_param=total_latency_steps))
 
         self._batch_queue.put_nowait(annotated)
         self._register_dispatched_batch(now_tick, tuple(annotated))
@@ -203,7 +200,7 @@ class RecedingHorizonILPScheduler(RequestScheduler):
         if now_tick < self._server_available_tick:
             return None
 
-        schedulable = {request.robot_id: request for request in self._get_schedulable_requests()}
+        schedulable = {request.robot_id: request for request in self.schedulable_requests}
         if not schedulable:
             return None
 
@@ -441,28 +438,17 @@ class RecedingHorizonILPScheduler(RequestScheduler):
                 )
             )
 
-    def _infer_ms(self, batch_size: int) -> float:
-        value = self.latency.infer_ms(batch_size)
-        if value is None:
-            value = self._batch_profile_ms.get(batch_size)
-        if value is None:
-            raise RuntimeError(
-                f"Missing inference latency estimate for batch_size={batch_size}. "
-                "Warmup profile and runtime EMA are both unavailable."
-            )
-        return value
-
     def _infer_ticks(self, batch_size: int) -> int:
-        return self._to_ticks(self._infer_ms(batch_size), minimum=1)
+        return self._to_ticks(self.latency_tracker.infer_latency(batch_size), minimum=1)
 
     def _send_ticks(self, robot_id: str) -> int:
-        value = self.latency.obs_network_ms(robot_id)
+        value = self.latency_tracker.observation_latency(robot_id)
         if value is None:
             return 0
         return self._to_ticks(max(0.0, value))
 
     def _recv_ticks(self, robot_id: str) -> int:
-        value = self.latency.action_delivery_ms(robot_id)
+        value = self.latency_tracker.action_latency(robot_id)
         if value is None:
             return 0
         return self._to_ticks(max(0.0, value))
@@ -496,12 +482,12 @@ class RecedingHorizonILPScheduler(RequestScheduler):
             return 0.0
         return (time.monotonic() - self._solve_kickoff_monotonic) * 1000.0
 
-    def _record_metric(self, metric_name: str, duration_ms: float) -> None:
+    def _record_metric(self, metric_name: str, duration: float) -> None:
         self._decisions.append(
             SchedulerDecision(
                 scheduler_name=self.__class__.__name__,
                 metric_name=metric_name,
-                duration_ms=duration_ms,
+                duration=duration,
                 recorded_at=time.time(),
             )
         )

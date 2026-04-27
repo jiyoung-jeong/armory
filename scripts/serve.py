@@ -8,9 +8,9 @@ from typing import Literal
 
 import tyro
 
-from armory.schemas import ServerMetadata
+from armory_client.schemas import ServerMetadata
 from armory.serving.server import PolicyServer
-from armory.core import logging_config
+from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
 from openpi_adapter.serve_factory import create_policy
 from openpi_adapter.serve_factory import get_model_dims
@@ -50,7 +50,7 @@ class Args:
 
     log_dir: str = "logs/server"
 
-    scheduling_algorithm: Literal["greedy", "lookahead", "round_robin", "random", "receding_horizon_ilp"] = "greedy"
+    scheduling_algorithm: str = "greedy-deadline"
 
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50

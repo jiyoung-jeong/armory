@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field
 import itertools
+from typing import NamedTuple
 
 import numpy as np
-from armory.messages.messages import InferType
-from armory.messages.messages import RTCParams
-from armory.messages.messages import TrainTimeRTCParams
-from armory.messages.messages import VlashParams
+from armory_client.messages import InferResponse
+from armory_client.messages import InferType
+from armory_client.messages import RTCParams
+from armory_client.messages import TrainTimeRTCParams
+from armory_client.messages import VlashParams
 
 _request_id_counter = itertools.count(1)
 
@@ -31,6 +33,7 @@ class SlotRequest:
     noise: np.ndarray | None
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
+    is_padding: bool = False  # true for artificial slots used only to pad GPU batch size
 
 
 @dataclass(frozen=True)
@@ -41,7 +44,7 @@ class CompletionNotification:
     action_start_step: int
     request_id: int
     batch_size: int
-    inference_duration_ms: float
+    inference_duration: float
 
 
 @dataclass(frozen=True)
@@ -56,9 +59,9 @@ class AckNotification:
 
 @dataclass(frozen=True)
 class BatchProfile:
-    """Latency profile per batch size (ms). Sent once from GPU to scheduler after warmup."""
+    """Latency profile per batch size (seconds). Sent once from GPU to scheduler after warmup."""
 
-    latency_ms: dict[int, float]
+    latencies: dict[int, float]
 
 
 @dataclass
@@ -68,14 +71,27 @@ class WarmupSeed:
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 
 
+class RequestBatch(NamedTuple):
+    requests: list[SlotRequest]
+    batch_id: int
+
+
+class ResponseBatch(NamedTuple):
+    responses: list[InferResponse]
+    batch_id: int
+    batch_size: int | None = None
+
+
 @dataclass
 class SchedulerDecision:
     """A scheduler decision: a batch scheduling event."""
 
     scheduler_name: str
     metric_name: str
-    duration_ms: float
+    duration: float
     recorded_at: float
+    batch_id: int
+    requests: list[dict] = field(default_factory=list)
     candidates: list[dict] = field(default_factory=list)
     scheduled: list[dict] = field(default_factory=list)
 

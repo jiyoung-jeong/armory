@@ -67,7 +67,7 @@ class TaskMetricsPublisher(_subscriber.Subscriber):
                 self._task_suite_name,
                 self._task_id,
             )
-
+            
     @override
     def on_episode_end(self) -> None:
         duration_s = time.perf_counter() - self._episode_start_perf

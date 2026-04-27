@@ -43,7 +43,6 @@ from sims.libero.subscribers.progress_subscriber import ProgressSubscriber
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class Args:
     #################################################################################################################
