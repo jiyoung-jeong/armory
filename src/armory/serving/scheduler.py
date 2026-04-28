@@ -9,12 +9,12 @@ from armory_client.messages import ResetRequest
 import zmq
 
 from armory.scheduling import RequestScheduler
-from armory.scheduling.baselines import FixedSizeGreedyScheduler
+from armory.scheduling.baselines import MaxBatchScheduler
 from armory.scheduling.baselines import GreedyActionScheduler
 from armory.scheduling.baselines import GreedyDeadlineScheduler
 from armory.scheduling.baselines import RandomBatchScheduler
 from armory.scheduling.baselines import RoundRobinScheduler
-from armory.scheduling.baselines import TrueMaxBatchScheduler
+from armory.scheduling.baselines import FixedMaxBatchScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
 from armory.scheduling.receding_horizon_ilp import RecedingHorizonILPScheduler
 from armory.serving.schemas import AckNotification
@@ -39,9 +39,8 @@ def _recv_batch_profile(result_sock: zmq.Socket) -> dict[int, float]:
 
 
 SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
-    "fixed-size-greedy": FixedSizeGreedyScheduler,
-    "true-max-batch": TrueMaxBatchScheduler,
-    "max-batch": TrueMaxBatchScheduler,
+    "max-batch": MaxBatchScheduler,
+    "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-action": GreedyActionScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
     "lookahead": LookaheadScheduler,

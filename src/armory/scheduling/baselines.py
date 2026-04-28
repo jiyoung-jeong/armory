@@ -15,7 +15,7 @@ def calculate_usable_time(latency_tracker: LatencyTracker, slot_request: SlotReq
     return total_chunk_time - total_latency
 
 
-class FixedSizeGreedyScheduler(RequestScheduler):
+class MaxBatchScheduler(RequestScheduler):
     """Greedy scheduler that always fills to max_batch_size, prioritizing requests with earliest deadlines."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
@@ -26,7 +26,7 @@ class FixedSizeGreedyScheduler(RequestScheduler):
         return [candidates[: self._max_batch_size]]
 
 
-class TrueMaxBatchScheduler(RequestScheduler):
+class FixedMaxBatchScheduler(RequestScheduler):
     """Always dispatch max_batch_size rows, padding with artificial duplicate requests if needed."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:

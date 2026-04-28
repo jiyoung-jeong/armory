@@ -92,27 +92,63 @@ def _run_gpu_worker(
     _action_shape: tuple[int, int] | None = None
     _last_served_request_id: dict[str, int] = {}  # robot_id -> last sd.request_id sent as a response
 
-    def _make_rtc_params(robot_id: str, start_step: int, d_param: int) -> RTCParams | None:
+    def _make_rtc_params(
+        robot_id: str,
+        request_id: int,
+        observation_step: int,
+        action_start_step: int,
+        execution_horizon: int,
+        d_param: float,
+    ) -> RTCParams | None:
         nonlocal _action_shape
         last = _last_infer_step.get(robot_id)
-        if last is not None and start_step < last:
+        if last is not None and observation_step < last:
             _last_infer_step.pop(robot_id, None)
             _prev_actions.pop(robot_id, None)
             last = None
-        s = start_step - last if last is not None else 0
+        s = observation_step - last if last is not None else 0
         prev = _prev_actions.get(robot_id)
         if prev is None and _action_shape is not None:
             prev = np.zeros(_action_shape, dtype=np.float32)
         if prev is None:
+            logger.info(
+                "RTC params unavailable for first chunk: robot=%s request_id=%d "
+                "obs_step=%d action_start_step=%d d=%.2f",
+                robot_id,
+                request_id,
+                observation_step,
+                action_start_step,
+                d_param,
+            )
             return None
-        logger.debug(
-            "Built RTC params for robot=%s start_step=%d s=%d d=%d prev_action_shape=%s",
+
+        action_horizon = int(prev.shape[0])
+        action_lag = observation_step - action_start_step
+        rtc_window = s + float(d_param)
+        log_message = (
+            "RTC timing check: robot=%s request_id=%d obs_step=%d "
+            "action_start_step=%d obs_minus_action_start=%d last_rtc_obs_step=%s "
+            "s=%d d=%.2f s_plus_d=%.2f action_horizon=%d execution_horizon=%d "
+            "prev_action_shape=%s"
+        )
+        log_args = (
             robot_id,
-            start_step,
+            request_id,
+            observation_step,
+            action_start_step,
+            action_lag,
+            str(last),
             s,
             d_param,
+            rtc_window,
+            action_horizon,
+            execution_horizon,
             tuple(prev.shape),
         )
+        if action_lag > 1 or rtc_window > action_horizon or float(d_param) > action_horizon:
+            logger.warning(log_message, *log_args)
+        else:
+            logger.debug(log_message, *log_args)
         return RTCParams(prev_action=prev, s_param=s, d_param=d_param)
 
     while True:
@@ -153,7 +189,14 @@ def _run_gpu_worker(
                 request_timestamp=sd.request_timestamp,
                 deadline=sd.deadline,
                 infer_type=sd.infer_type,
-                params=_make_rtc_params(sr.robot_id, sd.observation_step, sr.estimated_d_param)
+                params=_make_rtc_params(
+                    sr.robot_id,
+                    sd.request_id,
+                    sd.observation_step,
+                    sd.action_start_step,
+                    sd.execution_horizon,
+                    sr.estimated_d_param,
+                )
                 if sd.infer_type == InferType.INFERENCE_TIME_RTC
                 else sd.params,
                 noise=sd.noise,

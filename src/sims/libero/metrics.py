@@ -81,6 +81,53 @@ def load_actions_left(
     }
 
 
+def _load_control_hz(output_path: pathlib.Path, fallback: float = 20.0) -> float:
+    """Load control frequency from runtime metadata, falling back when absent."""
+    runtime_metadata_path = output_path / "runtime_metadata.json"
+    if runtime_metadata_path.exists():
+        control_hz = RuntimeMetadata.from_json(runtime_metadata_path).control_hz
+        if control_hz is not None and float(control_hz) > 0:
+            return float(control_hz)
+    return float(fallback)
+
+
+def _build_actions_left_matrix(
+    output_path: pathlib.Path,
+    control_hz: Optional[float] = None,
+) -> Tuple[List[str], np.ndarray, List[List[int]], float]:
+    """Align per-episode actions_left traces onto a shared wall-clock grid."""
+    by_robot = load_actions_left(output_path)
+    resolved_control_hz = float(control_hz or _load_control_hz(output_path))
+    if not by_robot:
+        return [], np.empty((0, 0), dtype=float), [], resolved_control_hz
+
+    robots = sorted(by_robot.keys(), key=int, reverse=True)
+
+    # Global t0: earliest episode start across all robots.
+    t0 = min(start_time for eps in by_robot.values() for start_time, _ in eps)
+
+    episode_boundaries: list[list[int]] = []
+    robot_offsets: list[list[tuple[int, np.ndarray]]] = []
+    for robot in robots:
+        offsets = []
+        for start_time, arr in by_robot[robot]:
+            col = round((start_time - t0) * resolved_control_hz)
+            offsets.append((col, arr))
+        robot_offsets.append(offsets)
+
+    max_len = max(col + len(arr) for offsets in robot_offsets for col, arr in offsets)
+    matrix = np.full((len(robots), max_len), np.nan, dtype=float)
+
+    for i, offsets in enumerate(robot_offsets):
+        boundaries = []
+        for col, arr in offsets:
+            matrix[i, col : col + len(arr)] = arr
+            boundaries.append(col)
+        episode_boundaries.append(boundaries)
+
+    return robots, matrix, episode_boundaries, resolved_control_hz
+
+
 def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
     """Load all action_chunks.parquet files with task metadata."""
     action_chunk_files = list(output_path.glob("**/action_chunks.parquet"))
@@ -626,7 +673,7 @@ def generate_steps_plot(output_path: pathlib.Path) -> None:
 
 
 def generate_actions_left_heatmap(
-    output_path: pathlib.Path, control_hz: int = 20
+    output_path: pathlib.Path, control_hz: Optional[float] = None
 ) -> None:
     """Heatmap of actions_left[step, robot] using ground-truth queue lengths.
 
@@ -635,43 +682,22 @@ def generate_actions_left_heatmap(
     of using request_timestamp to place each step at its real wall-clock position).
     Episode boundaries are marked with vertical lines.
     """
-    by_robot = load_actions_left(output_path)
-    if not by_robot:
+    robots, matrix, episode_boundaries, control_hz = _build_actions_left_matrix(
+        output_path, control_hz
+    )
+    if matrix.size == 0:
         logger.warning("No actions_left.npy data found")
         return
 
-    robots = sorted(list(by_robot.keys()), reverse=True)
     n_robots = len(robots)
-
-    # Global t0: earliest episode start across all robots
-    t0 = min(start_time for eps in by_robot.values() for start_time, _ in eps)
-
-    # Compute per-robot column offsets from timestamps, then build matrix
-    episode_boundaries: list[list[int]] = []
-    robot_offsets: list[list[tuple[int, np.ndarray]]] = []
-    for robot in robots:
-        offsets = []
-        for start_time, arr in by_robot[robot]:
-            col = round((start_time - t0) * control_hz)
-            offsets.append((col, arr))
-        robot_offsets.append(offsets)
-
-    max_len = max(col + len(arr) for offsets in robot_offsets for col, arr in offsets)
-    matrix = np.full((n_robots, max_len), np.nan)
-
-    for i, offsets in enumerate(robot_offsets):
-        boundaries = []
-        for col, arr in offsets:
-            matrix[i, col : col + len(arr)] = arr
-            boundaries.append(col)
-        episode_boundaries.append(boundaries)
+    max_len = matrix.shape[1]
 
     fig_width = min(
-        400, max(12, max_len // 20)
+        400, max(12, max_len / max(control_hz, 1.0))
     )  # cap at 400 inches (~60k px at 150 dpi)
     fig, ax = plt.subplots(figsize=(fig_width, max(4, n_robots * 0.6)))
 
-    vmax = int(np.nanmax(matrix)) if not np.all(np.isnan(matrix)) else 1
+    vmax = max(1, int(np.nanmax(matrix))) if not np.all(np.isnan(matrix)) else 1
     # Black for 0 (starvation), then RdYlGn for 1..vmax
     rdylgn = matplotlib.colormaps["RdYlGn"].resampled(vmax)
     cmap_colors = [(0.0, 0.0, 0.0, 1.0)] + [rdylgn(i) for i in range(vmax)]
@@ -703,7 +729,7 @@ def generate_actions_left_heatmap(
 
     ax.set_yticks(range(n_robots))
     ax.set_yticklabels([f"robot_{r}" for r in robots], fontsize=8)
-    tick_interval = control_hz  # one tick per second
+    tick_interval = max(1, int(round(control_hz)))  # one tick per second
     x_ticks = np.arange(0, max_len, tick_interval)
     ax.set_xticks(x_ticks)
     ax.set_xticklabels([f"{t // tick_interval}s" for t in x_ticks], fontsize=6)
@@ -833,6 +859,92 @@ def generate_starvation_plot(output_path: pathlib.Path) -> None:
     fig.savefig(plots_dir / "starvation_rate.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"Saved {plots_dir / 'starvation_rate.png'}")
+
+
+def generate_starvation_variance_plot(
+    output_path: pathlib.Path, control_hz: Optional[float] = None
+) -> None:
+    """Plot cumulative starvation rate per robot and its cross-robot variance."""
+    robots, matrix, _, control_hz = _build_actions_left_matrix(output_path, control_hz)
+    if matrix.size == 0:
+        logger.warning("No actions_left.npy data found for starvation variance plot")
+        return
+
+    valid_mask = ~np.isnan(matrix)
+    starved_mask = valid_mask & (matrix <= 0)
+    cumulative_observed = np.cumsum(valid_mask, axis=1)
+    cumulative_starved = np.cumsum(starved_mask, axis=1)
+    cumulative_rates = np.divide(
+        cumulative_starved,
+        cumulative_observed,
+        out=np.full(matrix.shape, np.nan, dtype=float),
+        where=cumulative_observed > 0,
+    )
+    starvation_variance = np.nanvar(cumulative_rates, axis=0)
+    time_seconds = np.arange(matrix.shape[1], dtype=float) / max(control_hz, 1.0)
+
+    fig, (ax_rates, ax_var) = plt.subplots(
+        2,
+        1,
+        figsize=(14, 8),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3, 1.5]},
+    )
+    fig.suptitle(
+        "Starvation Fairness Across Robots Over Time",
+        fontsize=14,
+        fontweight="bold",
+    )
+
+    colors = plt.cm.tab20(np.linspace(0, 1, max(len(robots), 2)))
+    plot_order = np.argsort([int(robot) for robot in robots])
+    for color_idx, row_idx in enumerate(plot_order):
+        robot = robots[row_idx]
+        ax_rates.plot(
+            time_seconds,
+            cumulative_rates[row_idx],
+            linewidth=1.5,
+            color=colors[color_idx % len(colors)],
+            label=f"robot_{robot}",
+        )
+
+    ax_rates.set_ylabel("Cumulative starvation rate", fontsize=12)
+    ax_rates.set_ylim(0, 1)
+    ax_rates.grid(True, alpha=0.3)
+    ax_rates.legend(
+        loc="upper right",
+        ncol=min(max(1, len(robots)), 5),
+        fontsize=8,
+        frameon=False,
+    )
+
+    ax_var.plot(
+        time_seconds,
+        starvation_variance,
+        color="darkred",
+        linewidth=2,
+    )
+    ax_var.fill_between(
+        time_seconds,
+        starvation_variance,
+        color="tomato",
+        alpha=0.2,
+    )
+    ax_var.set_xlabel("Wall-clock time (s)", fontsize=12)
+    ax_var.set_ylabel("Variance", fontsize=12)
+    ax_var.set_ylim(bottom=0)
+    ax_var.grid(True, alpha=0.3)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    plots_dir = output_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        plots_dir / "starvation_variance_over_time.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+    logger.info(f"Saved {plots_dir / 'starvation_variance_over_time.png'}")
 
 
 def generate_staleness_plot(output_path: pathlib.Path) -> None:
@@ -1162,6 +1274,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     generate_per_robot_success_rate_plot(output_path)
     generate_actions_left_heatmap(output_path)
     generate_starvation_plot(output_path)
+    generate_starvation_variance_plot(output_path)
     generate_staleness_plot(output_path)
     generate_batch_size_plot(output_path)
     generate_server_timings_plot(output_path)

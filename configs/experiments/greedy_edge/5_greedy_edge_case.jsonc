@@ -1,0 +1,54 @@
+{
+  "experiment": {
+    "action_chunk_broker_type": "rtc",
+    "num_robots": 5,
+    "trials_per_robot": 5
+  },
+  "toxiproxy": {
+    "api_url": "http://127.0.0.1:8474",
+    "listen_host": "127.0.0.1",
+    "listen_port_base": 15000,
+    "server_args": []
+  },
+  "sampling": {
+    "default_seed": 7,
+    "resample_every_requests": 1
+  },
+  "robots": {
+    "robot_0": {
+      "execution_horizon": 6,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_1": {
+      "execution_horizon": 6,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_2": {
+      "execution_horizon": 6,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_3": {
+      "execution_horizon": 6,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_4": {
+      "execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    }
+  }
+}

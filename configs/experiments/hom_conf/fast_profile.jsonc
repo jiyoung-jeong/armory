@@ -1,0 +1,7 @@
+{
+    "uplink_median_ms": 5.0,
+    "uplink_sigma": 0.15,
+    "downlink_median_ms": 5.0,
+    "downlink_sigma": 0.15,
+    "execution_horizon": 10
+}

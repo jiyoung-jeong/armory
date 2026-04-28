@@ -4,15 +4,19 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 import dataclasses
 import itertools
+import logging
 import multiprocessing as mp
 import time
 
+from armory_client.messages import InferType
 from armory.scheduling.latency import EMALatencyTracker
 from armory.serving.schemas import AckNotification
 from armory.serving.schemas import CompletionNotification
 from armory.serving.schemas import RequestBatch
 from armory.serving.schemas import SchedulerDecision
 from armory.serving.schemas import SlotRequest
+
+logger = logging.getLogger(__name__)
 
 
 class RequestScheduler(ABC):
@@ -100,9 +104,30 @@ class RequestScheduler(ABC):
                         request.request_timestamp + request.execution_horizon / request.control_hz
                     )
                     self._latest_scheduled_requests[request.robot_id] = request
+                observation_latency = self.latency_tracker.observation_latency(request.robot_id)
+                inference_latency = self.latency_tracker.infer_latency(batch_size)
+                action_latency = self.latency_tracker.action_latency(request.robot_id)
                 total_latency_steps = (
-                    self.latency_tracker.total_latency(request.robot_id, batch_size) * request.control_hz
+                    (observation_latency + inference_latency + action_latency) * request.control_hz
                 )
+                if request.infer_type == InferType.INFERENCE_TIME_RTC and not request.is_padding:
+                    logger.info(
+                        "RTC d estimate: robot=%s request_id=%d batch_size=%d "
+                        "obs_step=%d action_start_step=%d control_hz=%.2f "
+                        "obs_latency_ms=%.1f infer_latency_ms=%.1f "
+                        "action_latency_ms=%.1f d_steps=%.2f execution_horizon=%d",
+                        request.robot_id,
+                        request.request_id,
+                        batch_size,
+                        request.observation_step,
+                        request.action_start_step,
+                        request.control_hz,
+                        observation_latency * 1000,
+                        inference_latency * 1000,
+                        action_latency * 1000,
+                        total_latency_steps,
+                        request.execution_horizon,
+                    )
                 # FIXME: only pass inference + action latency, can determine observation latency when processing
                 annotated.append(dataclasses.replace(request, estimated_d_param=total_latency_steps))
 
