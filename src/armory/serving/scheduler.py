@@ -12,6 +12,8 @@ from armory.scheduling import RequestScheduler
 from armory.scheduling.baselines import MaxBatchScheduler
 from armory.scheduling.baselines import GreedyActionScheduler
 from armory.scheduling.baselines import GreedyDeadlineScheduler
+from armory.scheduling.baselines import UsefulActionScheduler
+from armory.scheduling.baselines import RelativeSlackEDFScheduler
 from armory.scheduling.baselines import DemandWeightedDebtEDFScheduler
 from armory.scheduling.baselines import RandomBatchScheduler
 from armory.scheduling.baselines import RoundRobinScheduler
@@ -44,6 +46,8 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-action": GreedyActionScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
+    "useful-action": UsefulActionScheduler,
+    "relative-slack-edf": RelativeSlackEDFScheduler,
     "demand-weighted-debt-edf": DemandWeightedDebtEDFScheduler,
     "lookahead": LookaheadScheduler,
     "round-robin": RoundRobinScheduler,
