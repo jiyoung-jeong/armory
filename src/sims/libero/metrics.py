@@ -803,12 +803,11 @@ def generate_per_robot_success_rate_plot(output_path: pathlib.Path) -> None:
     logger.info(f"Saved {plots_dir / 'per_robot_success_rate.png'}")
 
 
-def generate_starvation_plot(output_path: pathlib.Path) -> None:
-    """Per-robot starvation rate bar chart."""
+def _load_robot_starvation_rates(output_path: pathlib.Path) -> pd.DataFrame:
+    """Aggregate per-robot starvation rates from saved episode metrics."""
     starvation_df = load_planner_starvation_metrics(output_path)
     if starvation_df.empty:
-        logger.warning("No starvation data found")
-        return
+        return pd.DataFrame()
 
     robot_starvation = (
         starvation_df.groupby("robot_idx")[["starvation_steps", "observed_steps"]]
@@ -819,6 +818,15 @@ def generate_starvation_plot(output_path: pathlib.Path) -> None:
     robot_starvation["starvation_rate"] = (
         robot_starvation["starvation_steps"] / robot_starvation["observed_steps"]
     )
+    return robot_starvation
+
+
+def generate_starvation_plot(output_path: pathlib.Path) -> None:
+    """Per-robot starvation rate bar chart."""
+    robot_starvation = _load_robot_starvation_rates(output_path)
+    if robot_starvation.empty:
+        logger.warning("No starvation data found")
+        return
 
     rates = robot_starvation["starvation_rate"].values
     robot_labels = robot_starvation["robot_idx"].astype(str).tolist()
@@ -859,6 +867,63 @@ def generate_starvation_plot(output_path: pathlib.Path) -> None:
     fig.savefig(plots_dir / "starvation_rate.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info(f"Saved {plots_dir / 'starvation_rate.png'}")
+
+
+def generate_starvation_tail_metrics_plot(output_path: pathlib.Path) -> None:
+    """Bar chart of tail starvation metrics across robots."""
+    robot_starvation = _load_robot_starvation_rates(output_path)
+    if robot_starvation.empty:
+        logger.warning("No starvation data found for tail metrics plot")
+        return
+
+    rates = robot_starvation["starvation_rate"].to_numpy(dtype=float)
+    max_starvation = float(np.max(rates))
+    var90 = float(np.percentile(rates, 90))
+    cvar90 = float(np.mean(rates[rates >= var90]))
+
+    metric_names = ["Max Starvation", "CVaR_90 Starvation"]
+    metric_values = [max_starvation, cvar90]
+    colors = ["firebrick", "darkorange"]
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(
+        metric_names,
+        metric_values,
+        color=colors,
+        edgecolor="black",
+        alpha=0.85,
+    )
+
+    for bar, value in zip(bars, metric_values):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            bar.get_height() + 0.01,
+            f"{value:.1%}",
+            ha="center",
+            va="bottom",
+            fontsize=10,
+            fontweight="bold",
+        )
+
+    ax.set_ylabel("Starvation Rate", fontsize=12)
+    ax.set_title(
+        "Starvation Tail Metrics Across Robots",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_ylim(0, min(1.0, max(metric_values) * 1.25 + 0.05))
+    ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    plots_dir = output_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        plots_dir / "starvation_tail_metrics.png",
+        dpi=150,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
+    logger.info(f"Saved {plots_dir / 'starvation_tail_metrics.png'}")
 
 
 def generate_starvation_variance_plot(
@@ -1274,6 +1339,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     generate_per_robot_success_rate_plot(output_path)
     generate_actions_left_heatmap(output_path)
     generate_starvation_plot(output_path)
+    generate_starvation_tail_metrics_plot(output_path)
     generate_starvation_variance_plot(output_path)
     generate_staleness_plot(output_path)
     generate_batch_size_plot(output_path)
