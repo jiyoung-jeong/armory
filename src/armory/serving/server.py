@@ -67,7 +67,7 @@ from armory.serving.schemas import _request_id_counter
 from armory.serving.slots import RobotSlots
 from armory.serving.slots import SlotData
 
-MAX_ROBOTS = 100
+MAX_ROBOTS = 5
 NUM_WARMUP = 100
 logger = logging.getLogger(__name__)
 

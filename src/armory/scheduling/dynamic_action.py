@@ -54,7 +54,7 @@ class DynamicActionScheduler(RequestScheduler):
         self._service_debt.setdefault(request.robot_id, 0.0)
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if self._batch_queue.qsize() > 0 or (candidates := self.schedulable_requests) == []:
+        if not self._batch_queue.empty() or (candidates := self.schedulable_requests) == []:
             return []
 
         now = time.time()
