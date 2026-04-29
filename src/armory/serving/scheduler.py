@@ -12,10 +12,10 @@ from armory.scheduling import RequestScheduler
 from armory.scheduling.baselines import MaxBatchScheduler
 from armory.scheduling.baselines import GreedyActionScheduler
 from armory.scheduling.baselines import GreedyDeadlineScheduler
-from armory.scheduling.baselines import DynamicActionScheduler
 from armory.scheduling.baselines import RandomBatchScheduler
 from armory.scheduling.baselines import RoundRobinScheduler
 from armory.scheduling.baselines import FixedMaxBatchScheduler
+from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
 from armory.serving.schemas import AckNotification
 from armory.serving.schemas import BatchProfile
