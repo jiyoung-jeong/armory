@@ -106,7 +106,6 @@ dependencies = [
     "grpcio==1.80.0",
     "grpcio-status==1.80.0",
     "grpclib==0.4.9",
-    "gurobipy==13.0.1",
     "gviz-api==1.10.0",
     "gym==0.25.2",
     "gym-aloha==0.1.3",

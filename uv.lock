@@ -249,7 +249,6 @@ dependencies = [
     { name = "grpcio" },
     { name = "grpcio-status" },
     { name = "grpclib" },
-    { name = "gurobipy" },
     { name = "gviz-api" },
     { name = "gym" },
     { name = "gym-aloha" },
@@ -583,7 +582,6 @@ requires-dist = [
     { name = "grpcio", specifier = "==1.80.0" },
     { name = "grpcio-status", specifier = "==1.80.0" },
     { name = "grpclib", specifier = "==0.4.9" },
-    { name = "gurobipy", specifier = "==13.0.1" },
     { name = "gviz-api", specifier = "==1.10.0" },
     { name = "gym", specifier = "==0.25.2" },
     { name = "gym-aloha", specifier = "==0.1.3" },
@@ -1964,17 +1962,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5b/28/5a2c299ec82a876a252c5919aa895a6f1d1d35c96417c5ce4a4660dc3a80/grpclib-0.4.9.tar.gz", hash = "sha256:cc589c330fa81004c6400a52a566407574498cb5b055fa927013361e21466c46", size = 84798, upload-time = "2025-12-14T22:23:14.349Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/90/b0cbbd9efcc82816c58f31a34963071aa19fb792a212a5d9caf8e0fc3097/grpclib-0.4.9-py3-none-any.whl", hash = "sha256:7762ec1c8ed94dfad597475152dd35cbd11aecaaca2f243e29702435ca24cf0e", size = 77063, upload-time = "2025-12-14T22:23:13.224Z" },
-]
-
-[[package]]
-name = "gurobipy"
-version = "13.0.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/0b/43f39e5949d174c7f3012c193bed45739e89e9f77e038a2c81036179fa77/gurobipy-13.0.1-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:387985004b40a89baf5bf34bc7578493cb90316a1bbdb5ca2a8735a6f8cae5f1", size = 16065077, upload-time = "2026-01-21T10:34:22.396Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/b7/728eda07a720adb16a8450f9431ba473fda6039e59d3fa3079da917dcf4d/gurobipy-13.0.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c6b301c9604f89e7ec5ede50e4036ee04482fd9f02e6b071447acbaf051e5e6a", size = 15067747, upload-time = "2026-01-21T10:34:41.931Z" },
-    { url = "https://files.pythonhosted.org/packages/6c/17/9e76076ed3d5643f2e0a19c025ba4d2b43c64c1618f5e51b2e4f9b4d7427/gurobipy-13.0.1-cp311-cp311-manylinux_2_26_aarch64.whl", hash = "sha256:012f7f036f20caf8a2c72c9fce38ca5443b8d2a4257c69c33202757c05c5f6a4", size = 87421386, upload-time = "2026-01-21T10:36:02.997Z" },
-    { url = "https://files.pythonhosted.org/packages/ae/d5/15ef920216da623b4b95ce6404e76bf82add8c68c374ee49625cde5d3189/gurobipy-13.0.1-cp311-cp311-win_amd64.whl", hash = "sha256:935eff65884627cf94fe66d86a0ce48cd97abb836b8fc1591f22b4b405e5c586", size = 11371354, upload-time = "2026-01-21T10:36:16.675Z" },
 ]
 
 [[package]]
