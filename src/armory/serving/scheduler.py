@@ -12,14 +12,11 @@ from armory.scheduling import RequestScheduler
 from armory.scheduling.baselines import MaxBatchScheduler
 from armory.scheduling.baselines import GreedyActionScheduler
 from armory.scheduling.baselines import GreedyDeadlineScheduler
-from armory.scheduling.baselines import UsefulActionScheduler
-from armory.scheduling.baselines import RelativeSlackEDFScheduler
-from armory.scheduling.baselines import DemandWeightedDebtEDFScheduler
+from armory.scheduling.baselines import DynamicActionScheduler
 from armory.scheduling.baselines import RandomBatchScheduler
 from armory.scheduling.baselines import RoundRobinScheduler
 from armory.scheduling.baselines import FixedMaxBatchScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
-from armory.scheduling.receding_horizon_ilp import RecedingHorizonILPScheduler
 from armory.serving.schemas import AckNotification
 from armory.serving.schemas import BatchProfile
 from armory.serving.schemas import CompletionNotification
@@ -46,13 +43,10 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-action": GreedyActionScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
-    "useful-action": UsefulActionScheduler,
-    "relative-slack-edf": RelativeSlackEDFScheduler,
-    "demand-weighted-debt-edf": DemandWeightedDebtEDFScheduler,
+    "dynamic-action": UsefulActionScheduler,
     "lookahead": LookaheadScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,
-    "receding_horizon_ilp": RecedingHorizonILPScheduler,
 }
 
 
@@ -70,8 +64,7 @@ def _run_scheduler(
 ) -> None:
     """Owns all robot state; dispatches batches to GPU via mp.Queue.
 
-    GPU sends InferResponses directly to WS (not via this process), so ILP solving here
-    cannot delay client response delivery. This process only receives small CompletionNotifications
+    GPU sends InferResponses directly to WS (not via this process). This process only receives small CompletionNotifications
     from GPU for state bookkeeping.
     """
 

@@ -52,17 +52,14 @@ class Args:
 
     scheduling_algorithm: str = "greedy-deadline"
 
+    useful_action_weight: float = 0.0 # rewards action
+    useful_tardiness_weight: float = 0.0 # penalizes length of unusable chunk
+    useful_slack_weight: float = 0.0 # rewards slack
+    useful_deficit_weight: float = 4.0 # rewards underserved
+
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
     lookahead_control_hz: int = 20
-
-    ilp_timestep_ms: int = 10
-    ilp_horizon_steps: int = 100
-    ilp_execution_fraction: float = 0.75
-    ilp_solve_timeout_ms: int = 1000
-    ilp_action_horizon_steps: int | None = None
-    ilp_pack_early_weight: float = 0.2
-    ilp_obs_staleness_weight: float = 0
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -86,6 +83,13 @@ class _PolicyFactory:
 
 
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
+    if args.scheduling_algorithm in {"useful-action", "marginal-utility", "slack-aware-deficit"}:
+        return {
+            "useful_action_weight": args.useful_action_weight,
+            "tardiness_weight": args.useful_tardiness_weight,
+            "slack_weight": args.useful_slack_weight,
+            "deficit_weight": args.useful_deficit_weight,
+        }
     if args.scheduling_algorithm == "lookahead":
         return {
             "horizon_ms": args.lookahead_horizon_ms,
@@ -93,19 +97,7 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
             "action_horizon_steps": action_horizon_steps,
             "control_hz": args.lookahead_control_hz,
         }
-    if args.scheduling_algorithm == "receding_horizon_ilp":
-        ilp_action_horizon = args.ilp_action_horizon_steps or action_horizon_steps or 10
-        if ilp_action_horizon < 1:
-            ilp_action_horizon = 10
-        return {
-            "tick_ms": args.ilp_timestep_ms,
-            "horizon_steps": args.ilp_horizon_steps,
-            "execution_fraction": args.ilp_execution_fraction,
-            "solve_timeout_ms": args.ilp_solve_timeout_ms,
-            "action_horizon_steps": ilp_action_horizon,
-            "pack_early_weight": args.ilp_pack_early_weight,
-            "obs_staleness_weight": args.ilp_obs_staleness_weight,
-        }
+
     return None
 
 

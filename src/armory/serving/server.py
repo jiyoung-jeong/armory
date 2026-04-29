@@ -1,7 +1,7 @@
 """
 3 processes:
     WS main process     - FastAPI ASGI app
-    Scheduler process   - collects requests from WS main; runs ILP; dispatches batches to GPU
+    Scheduler process   - collects requests from WS main; runs scheduler; dispatches batches to GPU
     GPU process         - loads weights; runs batches; sends responses directly to WS main
 
 ZMQ topology (all ipc://, unique per server instance):
@@ -12,7 +12,7 @@ ZMQ topology (all ipc://, unique per server instance):
     Scheduler ──[mp.Queue: list[SlotRequest]]───────► GPU
     GPU      ──slots.read()──────────────────────────► mp.RawArray shared memory
 
-    GPU responses bypass the scheduler entirely so ILP solving cannot delay client delivery.
+    GPU responses bypass the scheduler entirely scheduler solving cannot delay client delivery.
     A single _router_task in WS main reads from gpu_out_ep and dispatches to per-robot queues.
     Large numpy arrays (observations) cross zero process boundaries via ZMQ.
 """

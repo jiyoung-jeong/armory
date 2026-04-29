@@ -58,8 +58,7 @@ def _run_gpu_worker(
     """Loads model, then loops: recv batch → read obs from shared memory → infer → send results.
 
     Sends InferResponse objects directly to WS (gpu_out_ep) and small CompletionNotifications
-    to the scheduler (result_ep) for state updates. These are decoupled so ILP solving in the
-    scheduler cannot delay response delivery to clients.
+    to the scheduler (result_ep) for state updates.
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -241,7 +240,7 @@ def _run_gpu_worker(
             if not sr.is_padding:
                 _last_served_request_id[sr.robot_id] = sd.request_id
 
-        # Send responses directly to WS — not via scheduler, so ILP latency doesn't affect clients
+        # Send responses directly to WS — not via scheduler
         response_sock.send_pyobj(
             ResponseBatch(responses=responses, batch_id=batch.batch_id, batch_size=actual_batch_size)
         )
