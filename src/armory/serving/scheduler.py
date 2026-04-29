@@ -5,21 +5,24 @@ import multiprocessing as mp
 from multiprocessing.synchronize import Event
 import signal
 
-from openpi_client.messages import ResetRequest
+from armory_client.messages import ResetRequest
 import zmq
 
 from armory.scheduling import RequestScheduler
-from armory.scheduling.baselines import GreedyScheduler
+from armory.scheduling.baselines import MaxBatchScheduler
+from armory.scheduling.baselines import GreedyActionScheduler
+from armory.scheduling.baselines import GreedyDeadlineScheduler
+from armory.scheduling.baselines import DynamicActionScheduler
 from armory.scheduling.baselines import RandomBatchScheduler
 from armory.scheduling.baselines import RoundRobinScheduler
+from armory.scheduling.baselines import FixedMaxBatchScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
-from armory.scheduling.receding_horizon_ilp import RecedingHorizonILPScheduler
 from armory.serving.schemas import AckNotification
 from armory.serving.schemas import BatchProfile
 from armory.serving.schemas import CompletionNotification
 from armory.serving.schemas import SlotRequest
 from armory.serving.schemas import WarmupSeed
-from armory.core import logging_config
+from armory.utils import logging_config
 
 logger = logging.getLogger(__name__)
 
@@ -31,23 +34,23 @@ def _recv_batch_profile(result_sock: zmq.Socket) -> dict[int, float]:
         if result_sock.poll(timeout=100):
             msg = result_sock.recv_pyobj()
             if isinstance(msg, BatchProfile):
-                logger.info(
-                    "Received batch profile: {%s}",
-                    ", ".join(f"{k}: {v:.1f}ms" for k, v in sorted(msg.latency_ms.items())),
-                )
-                return msg.latency_ms
+                return msg.latencies
             logger.warning("Unexpected message before batch profile: %s", type(msg).__name__)
 
 
-_SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
-    "greedy": GreedyScheduler,
+SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
+    "max-batch": MaxBatchScheduler,
+    "fixed-max-batch": FixedMaxBatchScheduler,
+    "greedy-action": GreedyActionScheduler,
+    "greedy-deadline": GreedyDeadlineScheduler,
+    "dynamic-action": DynamicActionScheduler,
     "lookahead": LookaheadScheduler,
-    "round_robin": RoundRobinScheduler,
+    "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,
-    "receding_horizon_ilp": RecedingHorizonILPScheduler,
 }
 
 
+# FIXME: underscore method is a weird naming convention
 def _run_scheduler(
     sched_in_ep: str,
     result_ep: str,
@@ -61,8 +64,7 @@ def _run_scheduler(
 ) -> None:
     """Owns all robot state; dispatches batches to GPU via mp.Queue.
 
-    GPU sends InferResponses directly to WS (not via this process), so ILP solving here
-    cannot delay client response delivery. This process only receives small CompletionNotifications
+    GPU sends InferResponses directly to WS (not via this process). This process only receives small CompletionNotifications
     from GPU for state bookkeeping.
     """
 
@@ -91,10 +93,12 @@ def _run_scheduler(
 
     logger.info("Scheduler starting (algorithm=%s)", algorithm)
 
-    cls = _SCHEDULER_REGISTRY.get(algorithm)
+    cls = SCHEDULER_REGISTRY.get(algorithm)
     if cls is None:
-        raise ValueError(f"Unknown scheduling algorithm {algorithm!r}, expected one of: {list(_SCHEDULER_REGISTRY)}")
-
+        raise ValueError(
+            f"Unknown scheduling algorithm {algorithm!r}. "
+            f"Available: {sorted(SCHEDULER_REGISTRY)}"
+        )
     ctx = zmq.Context()
 
     req_sock = ctx.socket(zmq.PULL)
@@ -103,10 +107,12 @@ def _run_scheduler(
     result_sock = ctx.socket(zmq.PULL)
     result_sock.bind(result_ep)  # GPU connects
 
-    batch_profile = _recv_batch_profile(result_sock)
-
     extra_kwargs: dict = dict(scheduler_kwargs or {})
-    scheduler = cls(batch_queue, max_batch_size=max_batch_size, batch_profile=batch_profile, **extra_kwargs)
+    scheduler = cls(batch_queue, max_batch_size=max_batch_size, **extra_kwargs)
+
+    batch_profile = _recv_batch_profile(result_sock)
+    for batch_size, latency in batch_profile.items():
+        scheduler.latency_tracker.update_infer(batch_size, latency)
 
     poller = zmq.Poller()
     poller.register(req_sock, zmq.POLLIN)
@@ -117,6 +123,18 @@ def _run_scheduler(
 
     while True:
         poller.poll(timeout=1)
+
+        # Drain completions first so _in_flight is up-to-date before we
+        # process new requests and decide whether to schedule.
+        while result_sock.poll(0):
+            msg = result_sock.recv_pyobj(zmq.NOBLOCK)
+            if isinstance(msg, list):
+                for item in msg:
+                    if isinstance(item, CompletionNotification):
+                        scheduler.update_completion(item)
+                # Any list from the GPU (including an empty [] sent when the
+                # batch was skipped) signals that the batch slot is free.
+                scheduler.notify_batch_complete()
 
         while req_sock.poll(0):
             msg = req_sock.recv_pyobj(zmq.NOBLOCK)
@@ -131,26 +149,21 @@ def _run_scheduler(
                 logger.debug("Received ack notification: %s", msg)
             elif isinstance(msg, WarmupSeed):
                 for arrival_ts, request_ts in msg.obs_samples:
-                    scheduler.latency.update_obs(msg.robot_id, arrival_ts, request_ts)
+                    scheduler.latency_tracker.update_obs(msg.robot_id, arrival_ts, request_ts)
                 for client_receive_time, server_send_time in msg.delivery_samples:
-                    scheduler.latency.update_action_delivery(msg.robot_id, client_receive_time, server_send_time)
+                    scheduler.latency_tracker.update_action_delivery(
+                        msg.robot_id, client_receive_time, server_send_time
+                    )
                 logger.info(
-                    "Seeded latency for robot %s from warmup, obs_network_ms: %f, action_delivery_ms: %f",
+                    "Seeded latency for robot %s from warmup, observation_latency: %f, action_latency: %f",
                     msg.robot_id,
-                    scheduler.latency.obs_network_ms(msg.robot_id),
-                    scheduler.latency.action_delivery_ms(msg.robot_id),
+                    scheduler.latency_tracker.observation_latency(msg.robot_id),
+                    scheduler.latency_tracker.action_latency(msg.robot_id),
                 )
             else:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
 
-        while result_sock.poll(0):
-            msg = result_sock.recv_pyobj(zmq.NOBLOCK)
-            if isinstance(msg, list):
-                for item in msg:
-                    if isinstance(item, CompletionNotification):
-                        scheduler.update_completion(item)
-
-        if not batch_queue.full():
+        if scheduler.in_flight == 0:
             scheduler.schedule()
             if scheduler_metrics_queue is not None:
                 samples = scheduler.flush_decisions()

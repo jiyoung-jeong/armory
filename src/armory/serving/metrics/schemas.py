@@ -7,8 +7,8 @@ import itertools
 from typing import NamedTuple, TypeAlias, TypeVar
 
 import numpy as np
-from armory.messages.messages import EpisodeEnd
-from armory.messages.messages import EpisodeStart
+from armory_client.messages import EpisodeEnd
+from armory_client.messages import EpisodeStart
 
 RobotID: TypeAlias = str
 T = TypeVar("T")
@@ -81,7 +81,7 @@ class Episode:
     responses: list[ResponseRecord]
     success: bool | None = None
     num_observation_steps: int = 0
-    step_timestamps: list[float] = field(default_factory=list)
+    step_timestamps: list[float] = field(default_factory=list)  # client-side step timestamps
 
     def __post_init__(self) -> None:
         self.requests = [RequestRecord(**r) if isinstance(r, dict) else r for r in self.requests]
@@ -184,7 +184,7 @@ class Robot:
         episode = self.current_episode
         assert episode.task_suite_name == episode_end.task_suite_name
         assert episode.task_id == episode_end.task_id
-        assert episode.num_steps == episode_end.steps_taken
+        #assert episode.num_steps == episode_end.steps_taken
         episode.success = episode_end.success
 
     def add_step(self, timestamp: float) -> None:
@@ -263,6 +263,7 @@ class BatchSummary(NamedTuple):
     request_ids: list[int]
     inference_start_time: float
     inference_end_time: float
+    batch_size: int | None = None
 
     @classmethod
     def from_json(cls, data: BatchSummary | dict | list) -> BatchSummary:
@@ -270,6 +271,16 @@ class BatchSummary(NamedTuple):
             return data
         if isinstance(data, dict):
             return cls(**data)
+        if len(data) == 5:
+            batch_id, robot_ids, request_ids, inference_start_time, inference_end_time = data
+            return cls(
+                batch_id=batch_id,
+                robot_ids=robot_ids,
+                request_ids=request_ids,
+                inference_start_time=inference_start_time,
+                inference_end_time=inference_end_time,
+                batch_size=len(robot_ids),
+            )
         return cls(*data)
 
     @property

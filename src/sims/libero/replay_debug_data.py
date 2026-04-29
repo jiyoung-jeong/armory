@@ -37,13 +37,13 @@ import imageio
 import matplotlib.pyplot as plt
 import numpy as np
 from libero.libero import benchmark
-from openpi_client.schemas import Action, LiberoObservation
+from armory_client.schemas import Action, LiberoObservation
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from openpi_client import websocket_client_policy as _websocket_client_policy
-from libero import utils
-from libero.env import LiberoSimEnvironment
+from armory_client import websocket_client_policy as _websocket_client_policy
+from sims.libero import utils
+from sims.libero.env import LiberoSimEnvironment
 
 LIBERO_ENV_RESOLUTION = 256
 

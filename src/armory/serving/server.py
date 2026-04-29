@@ -1,7 +1,7 @@
 """
 3 processes:
     WS main process     - FastAPI ASGI app
-    Scheduler process   - collects requests from WS main; runs ILP; dispatches batches to GPU
+    Scheduler process   - collects requests from WS main; runs scheduler; dispatches batches to GPU
     GPU process         - loads weights; runs batches; sends responses directly to WS main
 
 ZMQ topology (all ipc://, unique per server instance):
@@ -12,7 +12,7 @@ ZMQ topology (all ipc://, unique per server instance):
     Scheduler ──[mp.Queue: list[SlotRequest]]───────► GPU
     GPU      ──slots.read()──────────────────────────► mp.RawArray shared memory
 
-    GPU responses bypass the scheduler entirely so ILP solving cannot delay client delivery.
+    GPU responses bypass the scheduler entirely scheduler solving cannot delay client delivery.
     A single _router_task in WS main reads from gpu_out_ep and dispatches to per-robot queues.
     Large numpy arrays (observations) cross zero process boundaries via ZMQ.
 """
@@ -37,17 +37,18 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi import WebSocket
 from fastapi.concurrency import asynccontextmanager
-from armory.core import msgpack_numpy
-from armory.messages.messages import ConnectRequest
-from armory.messages.messages import ConnectResponse
-from armory.messages.messages import EpisodeEnd
-from armory.messages.messages import EpisodeStart
-from armory.messages.messages import InferRequest
-from armory.messages.messages import InferResponse
-from armory.messages.messages import ResetRequest
-from armory.messages.messages import ResponseAck
-from armory.messages.messages import WarmupPong
-from openpi_client.schemas import ServerMetadata
+from armory_client import msgpack_numpy
+from armory_client.messages import ConnectRequest
+from armory_client.messages import ConnectResponse
+from armory_client.messages import EpisodeEnd
+from armory_client.messages import EpisodeStart
+from armory_client.messages import EpisodeStep
+from armory_client.messages import InferRequest
+from armory_client.messages import InferResponse
+from armory_client.messages import ResetRequest
+from armory_client.messages import ResponseAck
+from armory_client.messages import WarmupPong
+from armory_client.schemas import ServerMetadata
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
 import uvicorn
@@ -58,6 +59,7 @@ from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
 from armory.serving.scheduler import _run_scheduler
 from armory.serving.schemas import AckNotification
+from armory.serving.schemas import ResponseBatch
 from armory.serving.schemas import SchedulerDecision
 from armory.serving.schemas import SlotRequest
 from armory.serving.schemas import WarmupSeed
@@ -66,7 +68,7 @@ from armory.serving.slots import RobotSlots
 from armory.serving.slots import SlotData
 
 MAX_ROBOTS = 100
-NUM_WARMUP = 10
+NUM_WARMUP = 100
 logger = logging.getLogger(__name__)
 
 _uid = uuid.uuid4().hex[:8]
@@ -97,9 +99,9 @@ async def _router_task(
     logger.info("Router task starting")
     while True:
         try:
-            responses: list[InferResponse] = await response_sock.recv_pyobj()
-            metrics_store.record_batch(responses)
-            for response in responses:
+            batch: ResponseBatch = await response_sock.recv_pyobj()
+            metrics_store.record_batch(batch)
+            for response in batch.responses:
                 queue = response_queues.get(response.robot_id)
                 if queue is not None:
                     await queue.put(response)
@@ -376,7 +378,7 @@ def create_app(
                             state.metrics_store.record_episode_start(robot_id, EpisodeStart(**msg))
                             continue
                         case "episode_step":
-                            state.metrics_store.record_episode_step(robot_id, time.time())
+                            state.metrics_store.record_episode_step(robot_id, EpisodeStep(**msg))
                             continue
                         case "episode_end":
                             state.metrics_store.record_episode_end(robot_id, EpisodeEnd(**msg))

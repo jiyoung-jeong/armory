@@ -14,14 +14,13 @@ class LookaheadScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        batch_profile: dict[int, float] | None = None,
         *,
         horizon_ms: int = 1000,
         timestep_ms: int = 50,
         action_horizon_steps: int = 10,
         control_hz: int = 20,
     ) -> None:
-        super().__init__(batch_queue, max_batch_size, batch_profile)
+        super().__init__(batch_queue, max_batch_size)
         assert timestep_ms > 0, "timestep_ms must be positive"
         assert horizon_ms > 0, "horizon_ms must be positive"
         assert action_horizon_steps > 0, "action_horizon_steps must be positive"
@@ -68,7 +67,7 @@ class LookaheadScheduler(RequestScheduler):
         if self._batch_queue.qsize() > 0 or now < self._server_available_at:
             return []
 
-        schedulable = self._get_schedulable_requests()
+        schedulable = self.schedulable_requests
         if not schedulable:
             return []
 
@@ -169,13 +168,14 @@ class LookaheadScheduler(RequestScheduler):
         return min(self._horizon_ticks + self._chunk_ticks, self._to_ticks((valid_until - now) * 1000.0))
 
     def _latency_ms(self, batch_size: int) -> float:
-        latency_ms = self._batch_profile_ms.get(batch_size)
+        latency_ms = self.latency_tracker.infer_latency(batch_size) * 1000.0
         if latency_ms is None:
             raise ValueError(f"Missing batch profile entry for batch_size={batch_size}")
         return latency_ms
 
-    def _to_ticks(self, duration_ms: float) -> int:
-        return max(1, math.ceil(duration_ms / self._timestep_ms))
+    def _to_ticks(self, duration: float) -> int:
+        # FIXME: no longer in ms
+        return max(1, math.ceil(duration / self._timestep_ms))
 
     def _prune_predictions(self, now: float) -> None:
         self._predicted_valid_until = {

@@ -16,7 +16,7 @@ import pathlib
 from typing import Any
 from typing import Dict
 
-from openpi_client.network_emulation import load_experiment_config
+from armory_client.network_emulation import load_experiment_config
 
 NETWORK_FIELDS = (
     "uplink_median_ms",

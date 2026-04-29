@@ -3,19 +3,23 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = ["src/armory", "src/backends/openpi", "src/backends/openpi_client"]
+only-include = ["src/armory", "src/backends/openpi_adapter", "src/sims"]
+dev-mode-dirs = ["src", "src/backends", "third_party/libero", "packages/armory-client/src"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src/armory" = "armory"
-"src/backends/openpi" = "openpi"
-"src/backends/openpi_client" = "openpi_client"
+"src/backends/openpi_adapter" = "openpi_adapter"
+"src/sims" = "sims"
+
+[tool.uv.workspace]
+members = ["packages/armory-client"]
 
 [project]
 name = "armory"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.12"
 dependencies = [
     "absl-py==2.1.0",
     "aiohappyeyeballs==2.6.1",
@@ -102,7 +106,6 @@ dependencies = [
     "grpcio==1.80.0",
     "grpcio-status==1.80.0",
     "grpclib==0.4.9",
-    "gurobipy==13.0.1",
     "gviz-api==1.10.0",
     "gym==0.25.2",
     "gym-aloha==0.1.3",
@@ -160,13 +163,14 @@ dependencies = [
     "lark==1.3.1",
     "lerobot",
     "libero",
+    "openpi",
     "line-profiler==5.0.0",
     "llvmlite==0.47.0",
     "lxml==6.0.4",
     "markdown==3.10.2",
     "markdown-it-py==4.0.0",
     "markupsafe==3.0.3",
-    "matplotlib==3.5.3",
+    "matplotlib==3.9.2",
     "matplotlib-inline==0.2.1",
     "mdurl==0.1.2",
     "mergedeep==1.3.4",
@@ -351,3 +355,5 @@ dependencies = [
 [tool.uv.sources]
 lerobot = { git = "https://github.com/huggingface/lerobot", rev = "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
 libero = { path = "third_party/libero", editable = true }
+openpi = { path = "third_party/openpi", editable = true }
+armory-client = { workspace = true }

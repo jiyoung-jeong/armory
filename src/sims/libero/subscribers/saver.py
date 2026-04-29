@@ -9,10 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Optional, Tuple
 import dataclasses
 from dataclasses import dataclass
-from openpi_client.runtime import subscriber as _subscriber
+from armory_client.runtime import subscriber as _subscriber
 from typing_extensions import override
-from openpi_client.action_chunkers.action_chunk_broker import ActionChunkBroker
-from openpi_client.schemas import (
+from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
+from armory_client.schemas import (
     Timestamp,
     JSONDataclass,
     ActionChunk,
@@ -20,7 +20,7 @@ from openpi_client.schemas import (
     Action,
 )
 from libero.libero import benchmark
-from libero.env import LiberoSimEnvironment
+from sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
 

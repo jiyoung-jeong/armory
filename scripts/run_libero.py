@@ -17,32 +17,31 @@ import time
 
 import numpy as np
 from libero.libero import benchmark
-from openpi_client.client import BidirectionalWebsocket
-from openpi_client.network_emulation import load_experiment_config
-from openpi_client.network_emulation import NetworkEmulationManager
-from openpi_client.network_emulation import RobotNetworkHook
-from openpi_client.network_emulation import WorkerNetworkContext
-from openpi_client.network_emulation import experiment_requires_network_emulation
-from openpi_client.runtime import runtime as _runtime, subscriber as _subscriber
-from openpi_client.runtime.agents import policy_agent as _policy_agent
-from openpi_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
-from openpi_client.schemas import RuntimeMetadata, ServerMetadata
+from armory_client.client import BidirectionalWebsocket
+from armory_client.network_emulation import load_experiment_config
+from armory_client.network_emulation import NetworkEmulationManager
+from armory_client.network_emulation import RobotNetworkHook
+from armory_client.network_emulation import WorkerNetworkContext
+from armory_client.network_emulation import experiment_requires_network_emulation
+from armory_client.runtime import runtime as _runtime, subscriber as _subscriber
+from armory_client.runtime.agents import policy_agent as _policy_agent
+from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory_client.schemas import RuntimeMetadata, ServerMetadata
 import requests
 import tyro
 from dataclasses import dataclass, field
 
-from libero import utils
-from libero import logging_config
-from libero.env import LiberoSimEnvironment
-from libero.episodes import Episode, create_episodes
-from libero.progress_manager import get_progress_manager
-from libero.subscribers.saver import Saver
-from libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
-from libero.metrics import calculate_metrics, generate_all_plots
-from libero.subscribers.progress_subscriber import ProgressSubscriber
+from sims.libero import utils
+from sims.libero import logging_config
+from sims.libero.env import LiberoSimEnvironment
+from sims.libero.episodes import Episode, create_episodes
+from sims.libero.progress_manager import get_progress_manager
+from sims.libero.subscribers.saver import Saver
+from sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
+from sims.libero.metrics import calculate_metrics, generate_all_plots
+from sims.libero.subscribers.progress_subscriber import ProgressSubscriber
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class Args:
