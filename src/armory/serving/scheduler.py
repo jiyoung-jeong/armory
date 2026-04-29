@@ -43,7 +43,7 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-action": GreedyActionScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
-    "dynamic-action": UsefulActionScheduler,
+    "dynamic-action": DynamicActionScheduler,
     "lookahead": LookaheadScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,

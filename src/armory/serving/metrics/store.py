@@ -371,12 +371,12 @@ class MetricsStore(JSONDataclass):
             plan_activation_abs = sorted(
                 sample.recorded_at
                 for sample in self.scheduler_decisions
-                if sample.metric_name == "ilp_plan_activated" and sample.recorded_at <= self.end_time
+                if sample.metric_name == "plan_activated" and sample.recorded_at <= self.end_time
             )
             kickoff_abs = sorted(
                 sample.recorded_at
                 for sample in self.scheduler_decisions
-                if sample.metric_name == "ilp_replan_kickoff" and sample.recorded_at <= self.end_time
+                if sample.metric_name == "replan_kickoff" and sample.recorded_at <= self.end_time
             )
             replan_markers = [
                 {
