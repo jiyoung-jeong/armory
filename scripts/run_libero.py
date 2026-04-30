@@ -35,6 +35,7 @@ from sims.libero import utils
 from sims.libero import logging_config
 from sims.libero.env import LiberoSimEnvironment
 from sims.libero.episodes import Episode, create_episodes
+from sims.libero.mock_env import MockEnvironment
 from sims.libero.progress_manager import get_progress_manager
 from sims.libero.subscribers.saver import Saver
 from sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
@@ -57,6 +58,7 @@ class Args:
     #################################################################################################################
     # LIBERO environment-specific parameters
     #################################################################################################################
+    env: Literal["libero", "mock"] = "libero"
     task_suite_name: str = "libero_10"
     num_trials_per_task: int = 10  # Number of rollouts per task
     max_steps: int = 600  # Maximum number of control steps per episode
@@ -224,18 +226,28 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
             except queue.Empty:
                 break
 
-            raw_env, _ = utils._get_libero_env(
-                task_suite.get_task(episode.task_id),
-                seed=args.seed + robot_idx,
-            )
-            env = LiberoSimEnvironment(
-                env=raw_env,
-                task_description=episode.task.language,
-                initial_states=np.array([episode.initial_state]),
-                resize_size=args.resize_size,
-                max_episode_steps=args.max_steps,
-                control_hz=args.control_hz,
-            )
+            if args.env == "libero":
+                raw_env, _ = utils._get_libero_env(
+                    task_suite.get_task(episode.task_id),
+                    seed=args.seed + robot_idx,
+                )
+                env = LiberoSimEnvironment(
+                    env=raw_env,
+                    task_description=episode.task.language,
+                    initial_states=np.array([episode.initial_state]),
+                    resize_size=args.resize_size,
+                    max_episode_steps=args.max_steps,
+                    control_hz=args.control_hz,
+                )
+            elif args.env == "mock":
+                env = MockEnvironment(
+                    max_episode_steps=args.max_steps,
+                    control_hz=args.control_hz,
+                    task_id=episode.task_id,
+                    episode_idx=episode.idx,
+                )
+            else:
+                raise ValueError(f"Invalid environment: {args.env}")
 
             subscribers: List[_subscriber.Subscriber] = [
                 startup_sync,
