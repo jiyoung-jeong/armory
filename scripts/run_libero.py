@@ -16,7 +16,6 @@ import datetime
 import time
 
 import numpy as np
-from libero.libero import benchmark
 from armory_client.client import BidirectionalWebsocket
 from armory_client.network_emulation import load_experiment_config
 from armory_client.network_emulation import NetworkEmulationManager
@@ -31,10 +30,9 @@ import requests
 import tyro
 from dataclasses import dataclass, field
 
-from sims.libero import utils
 from sims.libero import logging_config
-from sims.libero.env import LiberoSimEnvironment
-from sims.libero.episodes import Episode, create_episodes
+from sims.libero.seeding import seed_everything
+from sims.libero.episodes import Episode, create_episodes, create_mock_episodes
 from sims.libero.mock_env import MockEnvironment
 from sims.libero.progress_manager import get_progress_manager
 from sims.libero.subscribers.saver import Saver
@@ -211,10 +209,15 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     broker = args.action_chunk_broker_type.create(config)
     agent = _policy_agent.PolicyAgent(broker=broker)
 
-    benchmark_dict: Dict[str, Type[benchmark.Benchmark]] = (
-        benchmark.get_benchmark_dict()
-    )
-    task_suite = benchmark_dict[args.task_suite_name]()
+    if args.env == "libero":
+        from libero.libero import benchmark
+        from sims.libero import utils as libero_utils
+        from sims.libero.env import LiberoSimEnvironment
+
+        benchmark_dict: Dict[str, Type[benchmark.Benchmark]] = (
+            benchmark.get_benchmark_dict()
+        )
+        task_suite = benchmark_dict[args.task_suite_name]()
 
     # Single instance reused across episodes so _done persists across iterations.
     startup_sync = _StartupSyncSubscriber()
@@ -227,7 +230,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 break
 
             if args.env == "libero":
-                raw_env, _ = utils._get_libero_env(
+                raw_env, _ = libero_utils._get_libero_env(
                     task_suite.get_task(episode.task_id),
                     seed=args.seed + robot_idx,
                 )
@@ -434,8 +437,11 @@ def main(args: Args) -> None:
             level=logging.DEBUG if args.debug else logging.INFO
         )
 
-    utils.seed_everything(args.seed)
-    episodes = create_episodes(args.task_suite_name, args.num_trials_per_task)
+    seed_everything(args.seed)
+    if args.env == "libero":
+        episodes = create_episodes(args.task_suite_name, args.num_trials_per_task)
+    else:
+        episodes = create_mock_episodes(args.num_trials_per_task * args.num_robots)
 
     server_metadata = fetch_server_metadata(args)
     active_workers = 1 if args.debug else min(args.num_robots, len(episodes))
