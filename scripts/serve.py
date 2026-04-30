@@ -34,13 +34,22 @@ class Default:
     """Use the default policy for the given environment."""
 
 
+profiles = {
+    "l40s_pi05": {
+        1: 0.070,
+        2: 0.135,
+        3: 0.195,
+        4: 0.250,
+    }
+}
+
 @dataclasses.dataclass
 class Mock:
     """Use a lightweight mock policy that does not load weights or use a GPU."""
 
     action_horizon: int = 50
     action_dim: int = 14
-    inference_latency_s: float = 0.0
+    profile: str = "l40s_pi05"
 
 
 @dataclasses.dataclass
@@ -98,10 +107,10 @@ class _PolicyFactory:
 class _MockPolicy:
     """Stub policy implementing the armory engine interface without weights/GPU."""
 
-    def __init__(self, *, env: str, action_horizon: int, action_dim: int, inference_latency_s: float):
+    def __init__(self, *, env: str, action_horizon: int, action_dim: int, inference_latency: dict[int, float]):
         self._action_horizon = action_horizon
         self._action_dim = action_dim
-        self._inference_latency_s = inference_latency_s
+        self._inference_latency = inference_latency
         self.metadata = {"env": env}
 
     def make_infer_request(self) -> InferRequest:
@@ -123,8 +132,10 @@ class _MockPolicy:
         del max_batch_size
 
     def infer_batch(self, requests: list[InferRequest]) -> list[dict[str, Any]]:
-        if self._inference_latency_s > 0:
-            time.sleep(self._inference_latency_s)
+        inference_latency = self._inference_latency[len(requests)]
+        now = time.time()
+        while time.time() - now < inference_latency:
+            time.sleep(0.001)
         actions = np.zeros((self._action_horizon, self._action_dim), dtype=np.float32)
         return [
             {"actions": actions, "noise": None, "rtc_prev_actions": actions}
@@ -135,18 +146,19 @@ class _MockPolicy:
 class _MockPolicyFactory:
     """Picklable factory for the mock policy."""
 
-    def __init__(self, *, env: str, action_horizon: int, action_dim: int, inference_latency_s: float):
+    def __init__(self, *, env: str, action_horizon: int, action_dim: int, profile: str):
         self._env = env
         self._action_horizon = action_horizon
         self._action_dim = action_dim
-        self._inference_latency_s = inference_latency_s
+        self._profile = profile
+        self._inference_latency = profiles[profile]
 
     def __call__(self) -> _MockPolicy:
         return _MockPolicy(
             env=self._env,
             action_horizon=self._action_horizon,
             action_dim=self._action_dim,
-            inference_latency_s=self._inference_latency_s,
+            inference_latency=self._inference_latency,
         )
 
 
@@ -220,7 +232,7 @@ def main(args: Args) -> None:
             env=args.env.value,
             action_horizon=action_horizon,
             action_dim=action_dim,
-            inference_latency_s=args.policy.inference_latency_s,
+            profile=args.policy.profile,
         )
     else:
         policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
