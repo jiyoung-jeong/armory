@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from dataclasses import field
 import itertools
@@ -159,9 +159,14 @@ class Robot:
 
     robot_id: str
     episodes: list[Episode]
+    # Requests/responses received before any EpisodeStart (robots that don't send episode data).
+    orphan_requests: list[RequestRecord] = field(default_factory=list)
+    orphan_responses: list[ResponseRecord] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.episodes = [Episode(**e) if isinstance(e, dict) else e for e in self.episodes]
+        self.orphan_requests = [RequestRecord(**r) if isinstance(r, dict) else r for r in self.orphan_requests]
+        self.orphan_responses = [ResponseRecord(**r) if isinstance(r, dict) else r for r in self.orphan_responses]
 
     @property
     def current_episode(self) -> Episode:
@@ -192,15 +197,30 @@ class Robot:
         self.current_episode.step_timestamps.append(timestamp)
 
     def add_request(self, request: RequestRecord) -> None:
-        self.current_episode.requests.append(request)
+        if self.episodes:
+            self.current_episode.requests.append(request)
+        else:
+            self.orphan_requests.append(request)
 
     def add_response(self, response: ResponseRecord) -> None:
-        self.current_episode.responses.append(response)
+        if self.episodes:
+            self.current_episode.responses.append(response)
+        else:
+            self.orphan_responses.append(response)
 
     def get_request(self, request_id: int) -> RequestRecord:
         # NOTE: can only be called when store is live
-        # search backward on current request
-        return next(r for r in reversed(self.current_episode.requests) if r.request_id == request_id)
+        if self.episodes:
+            for r in reversed(self.current_episode.requests):
+                if r.request_id == request_id:
+                    return r
+        return next(r for r in reversed(self.orphan_requests) if r.request_id == request_id)
+
+    def iter_responses(self) -> Iterator[ResponseRecord]:
+        """Yield all responses across episodes and the orphan bucket."""
+        for episode in self.episodes:
+            yield from episode.responses
+        yield from self.orphan_responses
 
     @property
     def total_steps(self) -> int:
@@ -211,14 +231,18 @@ class Robot:
         return sum(np.sum(e.actions_left_history == 0) for e in self.episodes)
 
     def get_requests(self, start_timestamp: float, end_timestamp: float) -> list[RequestRecord]:
-        return list(
+        episode_reqs = list(
             itertools.chain.from_iterable(e.get_requests(start_timestamp, end_timestamp) for e in self.episodes)
         )
+        orphan = window_filter(self.orphan_requests, lambda r: r.request_timestamp, (start_timestamp, end_timestamp))
+        return episode_reqs + orphan
 
     def get_responses(self, start_timestamp: float, end_timestamp: float) -> list[ResponseRecord]:
-        return list(
+        episode_resps = list(
             itertools.chain.from_iterable(e.get_responses(start_timestamp, end_timestamp) for e in self.episodes)
         )
+        orphan = window_filter(self.orphan_responses, lambda r: r.receive_time, (start_timestamp, end_timestamp))
+        return episode_resps + orphan
 
     def get_actions_left_timed(self, start_ts: float, end_ts: float) -> tuple[np.ndarray, np.ndarray]:
         """Return (timestamps, actions_left_values) for steps in [start_ts, end_ts), with nan separators between episodes."""
