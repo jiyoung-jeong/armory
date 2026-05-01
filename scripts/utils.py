@@ -27,6 +27,12 @@ def get_gpu_info() -> dict[str, Any]:
         return {"gpu_available": False}
 
 
+GROOT_CHECKPOINT: dict[str, dict] = {
+    "gr00t-n1.7-libero": {
+        "dir": "/coc/flash7/rbansal66/vvla/Isaac-GR00T/checkpoints/GR00T-N1.7-LIBERO/libero_10",
+    },
+}
+
 DEFAULT_CHECKPOINT = {
     EnvMode.ALOHA: {
         "config": "pi05_aloha",

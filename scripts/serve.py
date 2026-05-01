@@ -14,9 +14,10 @@ from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
 from openpi_adapter.serve_factory import create_policy
 from openpi_adapter.serve_factory import get_model_dims
+from gr00t_adapter.serve_factory import create_gr00t_policy, get_gr00t_model_dims, is_groot_model
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import DEFAULT_CHECKPOINT  # noqa: E402
+from utils import DEFAULT_CHECKPOINT, GROOT_CHECKPOINT  # noqa: E402
 
 
 @dataclasses.dataclass
@@ -36,7 +37,12 @@ class Default:
 class Args:
     """Arguments for the serve script."""
 
-    env: EnvMode = EnvMode.ALOHA_SIM
+    env: EnvMode = EnvMode.LIBERO
+
+    model: str | None = None
+    """Model to serve. When set to a GR00T model name (e.g. 'gr00t-n1.7-libero'),
+    the GR00T adapter is used instead of OpenPI. When None, the existing pi0/pi05
+    path is used (controlled by --policy and --env)."""
 
     default_prompt: str | None = None
 
@@ -82,6 +88,17 @@ class _PolicyFactory:
         )
 
 
+class _Gr00tPolicyFactory:
+    """Picklable callable for GR00T policies."""
+
+    def __init__(self, model_name: str, checkpoint_dir: str | None):
+        self._model_name = model_name
+        self._checkpoint_dir = checkpoint_dir
+
+    def __call__(self):
+        return create_gr00t_policy(self._model_name, self._checkpoint_dir)
+
+
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
     if args.scheduling_algorithm in {"useful-action", "marginal-utility", "slack-aware-deficit"}:
         return {
@@ -109,36 +126,64 @@ def main(args: Args) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_queue, log_listener = logging_config.setup_logging(log_path=log_path, level=getattr(logging, args.log_level))
 
-    match args.policy:
-        case Checkpoint():
-            config_name = args.policy.config
-            checkpoint_dir = args.policy.dir
-        case Default():
-            if checkpoint := DEFAULT_CHECKPOINT.get(args.env):
-                config_name = checkpoint["config"]
-                checkpoint_dir = checkpoint["dir"]
-            else:
-                raise ValueError(f"Unsupported environment mode: {args.env}")
+    if args.model is not None and is_groot_model(args.model):
+        # ── GR00T path ────────────────────────────────────────────────────
+        model_name = args.model.lower()
+        match args.policy:
+            case Checkpoint():
+                checkpoint_dir = args.policy.dir
+            case Default():
+                checkpoint_dir = GROOT_CHECKPOINT.get(model_name, {}).get("dir")
 
-    action_horizon, action_dim = get_model_dims(config_name)
+        action_horizon, action_dim = get_gr00t_model_dims(model_name)
+        config_name = model_name
 
-    server_metadata = ServerMetadata(
-        config_name=config_name,
-        checkpoint_dir=checkpoint_dir,
-        action_horizon=action_horizon,
-        action_dim=action_dim,
-        num_steps=args.num_steps,
-        max_batch_size=args.max_batch_size,
-        env=args.env.value,
-        scheduling_algorithm=args.scheduling_algorithm,
-    )
+        server_metadata = ServerMetadata(
+            config_name=config_name,
+            checkpoint_dir=checkpoint_dir or "",
+            action_horizon=action_horizon,
+            action_dim=action_dim,
+            num_steps=args.num_steps,
+            max_batch_size=args.max_batch_size,
+            env=args.env.value,
+            scheduling_algorithm=args.scheduling_algorithm,
+        )
+
+        policy_factory = _Gr00tPolicyFactory(model_name, checkpoint_dir)
+
+    else:
+        # ── OpenPI / pi0 / pi05 path (existing behaviour) ─────────────────
+        match args.policy:
+            case Checkpoint():
+                config_name = args.policy.config
+                checkpoint_dir = args.policy.dir
+            case Default():
+                if checkpoint := DEFAULT_CHECKPOINT.get(args.env):
+                    config_name = checkpoint["config"]
+                    checkpoint_dir = checkpoint["dir"]
+                else:
+                    raise ValueError(f"Unsupported environment mode: {args.env}")
+
+        action_horizon, action_dim = get_model_dims(config_name)
+
+        server_metadata = ServerMetadata(
+            config_name=config_name,
+            checkpoint_dir=checkpoint_dir,
+            action_horizon=action_horizon,
+            action_dim=action_dim,
+            num_steps=args.num_steps,
+            max_batch_size=args.max_batch_size,
+            env=args.env.value,
+            scheduling_algorithm=args.scheduling_algorithm,
+        )
+
+        policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
 
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
     scheduler_kwargs = build_scheduler_kwargs(args, action_horizon_steps=action_horizon)
-    policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
 
     server = PolicyServer(
         metadata=server_metadata,
