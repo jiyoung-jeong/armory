@@ -59,6 +59,22 @@ class CommandDispatcher:
         """Kill SSH tunnels on selected workstations, outside Docker."""
         return self.ssh.kill_tunnels(robots, callback)
 
+    def start_listener(self, robots: list[Robot], callback: Callable | None = None):
+        """Start the local data collection listener inside Docker."""
+        return self.ssh.start_data_listeners(robots, callback)
+
+    def start_client(self, robots: list[Robot], callback: Callable | None = None):
+        """Start the Piper client node inside Docker."""
+        return self.ssh.start_clients(robots, callback)
+
+    def kill_listener(self, robots: list[Robot], callback: Callable | None = None):
+        """Stop the local data collection listener inside Docker."""
+        return self.ssh.kill_data_listeners(robots, callback)
+
+    def kill_client(self, robots: list[Robot], callback: Callable | None = None):
+        """Stop the Piper client node inside Docker."""
+        return self.ssh.kill_clients(robots, callback)
+
     # ── sequential compound commands ────────────────────────────
 
     async def _enable(self, robots: list[Robot], callback: Callable | None = None):

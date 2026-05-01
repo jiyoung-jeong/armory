@@ -13,6 +13,8 @@ import asyncssh
 from .config import Config, Robot, RobotStatus
 
 DOCKER_CONTAINER = "piper_env"
+DATA_COLLECTION_DIR = "/CS4803ARM_Lab/user_data/data_collection"
+PIPER_WORKSPACE_DIR = "/CS4803ARM_Lab/user_data/piper_ros"
 
 
 class SSHManager:
@@ -111,6 +113,46 @@ class SSHManager:
     ):
         """Kill workstation-level SSH tunnels outside Docker."""
         return self.submit(self._kill_tunnels(robots, callback))
+
+    def start_data_listeners(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Start the data collection listener inside Docker."""
+        return self.submit(self._start_data_listeners(robots, callback))
+
+    def start_clients(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Start the Piper client node inside Docker."""
+        return self.submit(self._start_clients(robots, callback))
+
+    def kill_data_listeners(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Stop the data collection listener inside Docker."""
+        return self.submit(self._kill_data_listeners(robots, callback))
+
+    def kill_clients(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Stop the Piper client node inside Docker."""
+        return self.submit(self._kill_clients(robots, callback))
+
+    def check_clients(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Check whether Piper client nodes are running inside Docker."""
+        return self.submit(self._check_clients(robots, callback))
 
     # ── internal async methods ──────────────────────────────────
 
@@ -471,6 +513,339 @@ class SSHManager:
             self._emit(f"WS-{robot.id}: tunnel kill FAILED — {e}")
             return f"ERROR: {e}"
 
+    async def _start_data_listeners(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        return await self._start_detached_docker_processes(
+            robots,
+            label="data listener",
+            command="ros2 launch run_follower.launch.py",
+            cwd=DATA_COLLECTION_DIR,
+            log_suffix="listener",
+            callback=callback,
+        )
+
+    async def _start_clients(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        return await self._start_detached_docker_processes(
+            robots,
+            label="Piper client",
+            command="ros2 run piper piper_client",
+            cwd=PIPER_WORKSPACE_DIR,
+            log_suffix="client",
+            callback=callback,
+        )
+
+    async def _kill_data_listeners(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        return await self._kill_detached_docker_processes(
+            robots,
+            label="data listener",
+            command="ros2 launch run_follower.launch.py",
+            log_suffix="listener",
+            callback=callback,
+        )
+
+    async def _kill_clients(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        return await self._kill_detached_docker_processes(
+            robots,
+            label="Piper client",
+            command="ros2 run piper piper_client",
+            log_suffix="client",
+            callback=callback,
+        )
+
+    async def _check_clients(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        return await self._check_detached_docker_processes(
+            robots,
+            command="ros2 run piper piper_client",
+            log_suffix="client",
+            callback=callback,
+        )
+
+    async def _start_detached_docker_processes(
+        self,
+        robots: list[Robot],
+        label: str,
+        command: str,
+        cwd: str,
+        log_suffix: str,
+        callback: Callable | None = None,
+    ):
+        results = {}
+        connections = []
+
+        # Warm connections first, then launch the long-running commands together.
+        for robot in robots:
+            try:
+                connections.append((robot, await self._get_connection(robot)))
+            except Exception as e:
+                self._emit(f"WS-{robot.id}: {label} launch FAILED — {e}")
+                results[robot.id] = f"ERROR: {e}"
+
+        tasks = [
+            self._start_detached_docker_process(
+                robot,
+                conn,
+                label,
+                command,
+                cwd,
+                log_suffix,
+            )
+            for robot, conn in connections
+        ]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip((robot for robot, _ in connections), outputs):
+            results[robot.id] = out
+
+        if callback:
+            callback(results)
+        return results
+
+    async def _start_detached_docker_process(
+        self,
+        robot: Robot,
+        conn: asyncssh.SSHClientConnection,
+        label: str,
+        command: str,
+        cwd: str,
+        log_suffix: str,
+    ) -> str:
+        logger = self._loggers[robot.id]
+        log_path = self._process_log_path(robot, log_suffix)
+        log_dir = os.path.dirname(log_path)
+        container_pid_path = f"/tmp/armory_{log_suffix}.pid"
+        host_pid_path = f"/tmp/armory_{log_suffix}_docker_exec.pid"
+        log_path_q = shlex.quote(log_path)
+        log_dir_q = shlex.quote(log_dir)
+        container_pid_path_q = shlex.quote(container_pid_path)
+        host_pid_path_q = shlex.quote(host_pid_path)
+        docker_filter_q = shlex.quote(f"name={DOCKER_CONTAINER}")
+        container_alive_script = (
+            f"if [ -s {container_pid_path_q} ]; then "
+            f"pid=$(cat {container_pid_path_q}); "
+            "kill -0 \"$pid\" >/dev/null 2>&1; "
+            "else "
+            "exit 1; "
+            "fi"
+        )
+        container_launch_script = (
+            "source ~/.bashrc; "
+            f"cd {shlex.quote(cwd)} || exit 1; "
+            f"echo $$ > {container_pid_path_q}; "
+            f"exec {command}"
+        )
+        container_wrapper = (
+            "if command -v setsid >/dev/null 2>&1; then "
+            f"exec setsid bash -ic {shlex.quote(container_launch_script)}; "
+            "else "
+            f"exec bash -ic {shlex.quote(container_launch_script)}; "
+            "fi"
+        )
+        docker_launch_cmd = (
+            f"docker exec {DOCKER_CONTAINER} bash -lc "
+            f"{shlex.quote(container_wrapper)}"
+        )
+
+        script = (
+            f"mkdir -p {log_dir_q}; "
+            f"touch {log_path_q} || exit 1; "
+            f"if ! docker ps --filter {docker_filter_q} -q | grep -q .; then "
+            f"echo '{DOCKER_CONTAINER} is not running' >&2; "
+            "exit 1; "
+            "fi; "
+            f"if docker exec {DOCKER_CONTAINER} bash -lc "
+            f"{shlex.quote(container_alive_script)}; then "
+            f"pid=$(docker exec {DOCKER_CONTAINER} cat {container_pid_path_q}); "
+            f"echo '{label} already running (pid '\"$pid\"'); log: {log_path}'; "
+            "exit 0; "
+            "fi; "
+            f"docker exec {DOCKER_CONTAINER} rm -f {container_pid_path_q} "
+            ">/dev/null 2>&1 || true; "
+            f"printf '\\n[%s] Starting {label}: {command}\\n' "
+            f"\"$(date '+%F %T')\" >> {log_path_q}; "
+            f"nohup {docker_launch_cmd} >> {log_path_q} 2>&1 < /dev/null & "
+            "host_pid=$!; "
+            f"echo $host_pid > {host_pid_path_q}; "
+            "sleep 0.5; "
+            "if kill -0 \"$host_pid\" >/dev/null 2>&1; then "
+            f"pid=$(docker exec {DOCKER_CONTAINER} cat {container_pid_path_q} 2>/dev/null || echo \"$host_pid\"); "
+            f"echo '{label} started (pid '\"$pid\"'); log: {log_path}'; "
+            "else "
+            f"rm -f {host_pid_path_q}; "
+            f"echo '{label} exited immediately; check log: {log_path}' >&2; "
+            f"tail -n 20 {log_path_q} >&2 || true; "
+            "exit 1; "
+            "fi"
+        )
+        cmd = self._bash_command(script)
+        logger.info("Starting %s with command: %s", label, cmd)
+        self._emit(f"WS-{robot.id}: starting {label}; log {log_path}")
+
+        try:
+            result = await conn.run(cmd, timeout=15)
+            return self._format_process_result(robot, result, label, "launch")
+        except Exception as e:
+            logger.error("%s launch failed: %s", label, e)
+            self._emit(f"WS-{robot.id}: {label} launch FAILED — {e}")
+            return f"ERROR: {e}"
+
+    async def _kill_detached_docker_processes(
+        self,
+        robots: list[Robot],
+        label: str,
+        command: str,
+        log_suffix: str,
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [
+            self._kill_detached_docker_process(robot, label, command, log_suffix)
+            for robot in robots
+        ]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _kill_detached_docker_process(
+        self,
+        robot: Robot,
+        label: str,
+        command: str,
+        log_suffix: str,
+    ) -> str:
+        logger = self._loggers[robot.id]
+        container_pid_path = f"/tmp/armory_{log_suffix}.pid"
+        host_pid_path = f"/tmp/armory_{log_suffix}_docker_exec.pid"
+        log_path = self._process_log_path(robot, log_suffix)
+        log_dir = os.path.dirname(log_path)
+        pattern = self._process_match_pattern(command)
+        log_path_q = shlex.quote(log_path)
+        log_dir_q = shlex.quote(log_dir)
+        container_pid_path_q = shlex.quote(container_pid_path)
+        host_pid_path_q = shlex.quote(host_pid_path)
+        docker_filter_q = shlex.quote(f"name={DOCKER_CONTAINER}")
+        container_stop_script = (
+            f"if [ -s {container_pid_path_q} ]; then "
+            f"pid=$(cat {container_pid_path_q}); "
+            "kill -- -\"$pid\" >/dev/null 2>&1 || kill \"$pid\" >/dev/null 2>&1 || true; "
+            "sleep 0.5; "
+            "kill -9 -- -\"$pid\" >/dev/null 2>&1 || kill -9 \"$pid\" >/dev/null 2>&1 || true; "
+            f"rm -f {container_pid_path_q}; "
+            "fi; "
+            f"pkill -f {shlex.quote(pattern)} >/dev/null 2>&1 || true"
+        )
+        script = (
+            f"mkdir -p {log_dir_q}; "
+            f"touch {log_path_q} || exit 1; "
+            f"printf '\\n[%s] Stopping {label}\\n' "
+            f"\"$(date '+%F %T')\" >> {log_path_q}; "
+            f"if docker ps --filter {docker_filter_q} -q | grep -q .; then "
+            f"docker exec {DOCKER_CONTAINER} bash -lc "
+            f"{shlex.quote(container_stop_script)} >> {log_path_q} 2>&1 || true; "
+            "else "
+            f"echo '{DOCKER_CONTAINER} is not running' >> {log_path_q}; "
+            "fi; "
+            f"if [ -s {host_pid_path_q} ]; then "
+            f"host_pid=$(cat {host_pid_path_q}); "
+            "kill \"$host_pid\" >/dev/null 2>&1 || true; "
+            f"rm -f {host_pid_path_q}; "
+            "fi; "
+            f"echo '{label} stopped; log: {log_path}'"
+        )
+        cmd = self._bash_command(script)
+        logger.info("Stopping %s with command: %s", label, cmd)
+        self._emit(f"WS-{robot.id}: stopping {label}")
+
+        try:
+            result = await (await self._get_connection(robot)).run(cmd, timeout=15)
+            return self._format_process_result(robot, result, label, "stop")
+        except Exception as e:
+            logger.error("%s stop failed: %s", label, e)
+            self._emit(f"WS-{robot.id}: {label} stop FAILED — {e}")
+            return f"ERROR: {e}"
+
+    async def _check_detached_docker_processes(
+        self,
+        robots: list[Robot],
+        command: str,
+        log_suffix: str,
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [
+            self._check_detached_docker_process(robot, command, log_suffix)
+            for robot in robots
+        ]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = False if isinstance(out, Exception) else bool(out)
+        if callback:
+            callback(results)
+        return results
+
+    async def _check_detached_docker_process(
+        self,
+        robot: Robot,
+        command: str,
+        log_suffix: str,
+    ) -> bool:
+        container_pid_path = f"/tmp/armory_{log_suffix}.pid"
+        container_pid_path_q = shlex.quote(container_pid_path)
+        docker_filter_q = shlex.quote(f"name={DOCKER_CONTAINER}")
+        pattern = self._process_match_pattern(command)
+        container_check_script = (
+            f"if [ -s {container_pid_path_q} ]; then "
+            f"pid=$(cat {container_pid_path_q}); "
+            "if kill -0 \"$pid\" >/dev/null 2>&1; then "
+            "echo RUNNING; "
+            "exit 0; "
+            "fi; "
+            f"rm -f {container_pid_path_q}; "
+            "fi; "
+            f"if pgrep -f {shlex.quote(pattern)} >/dev/null 2>&1; then "
+            "echo RUNNING; "
+            "else "
+            "echo STOPPED; "
+            "fi"
+        )
+        script = (
+            f"if ! docker ps --filter {docker_filter_q} -q | grep -q .; then "
+            "echo STOPPED; "
+            "exit 0; "
+            "fi; "
+            f"docker exec {DOCKER_CONTAINER} bash -lc "
+            f"{shlex.quote(container_check_script)}"
+        )
+
+        try:
+            result = await (await self._get_connection(robot)).run(
+                self._bash_command(script),
+                timeout=10,
+            )
+            return result.stdout.strip() == "RUNNING"
+        except Exception:
+            return False
+
     # ── helpers ──────────────────────────────────────────────────
 
     def _emit(self, msg: str):
@@ -495,6 +870,19 @@ class SSHManager:
         ).strip("_")
         return f"/tmp/armory_tunnel_{safe_node}_{self.config.tunnel_port}.sock"
 
+    def _process_log_path(self, robot: Robot, suffix: str) -> str:
+        return os.path.join(
+            self.config.log_dir,
+            f"workstation_{robot.id}-{suffix}.log",
+        )
+
+    @staticmethod
+    def _process_match_pattern(command: str) -> str:
+        """Build a pkill/pgrep pattern that does not match its own shell text."""
+        if not command:
+            return ""
+        return f"[{re.escape(command[0])}]{re.escape(command[1:])}"
+
     @staticmethod
     def _bash_command(script: str) -> str:
         return f"bash -lc {shlex.quote(script)}"
@@ -508,6 +896,24 @@ class SSHManager:
             return f"ERROR: {msg}"
 
         msg = stdout or f"Tunnel {action} complete"
+        self._emit(f"WS-{robot.id}: {msg}")
+        return msg
+
+    def _format_process_result(
+        self,
+        robot: Robot,
+        result,
+        label: str,
+        action: str,
+    ) -> str:
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if result.exit_status != 0:
+            msg = stderr or stdout or f"{label} {action} failed"
+            self._emit(f"WS-{robot.id}: {label} {action} FAILED — {msg[:120]}")
+            return f"ERROR: {msg}"
+
+        msg = stdout or f"{label} {action} requested"
         self._emit(f"WS-{robot.id}: {msg}")
         return msg
 

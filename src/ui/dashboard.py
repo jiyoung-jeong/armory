@@ -42,6 +42,8 @@ CORE_COMMANDS = [
 ]
 
 RUNTIME_COMMANDS = [
+    ("L", "Listener"),
+    ("C", "Client"),
     ("5", "Connect"),
     ("1", "Enable"),
     ("2", "Disable"),
@@ -50,19 +52,6 @@ RUNTIME_COMMANDS = [
 ]
 
 RUNTIME_KEYS = {key for key, _ in RUNTIME_COMMANDS}
-ENTER_KEYS = {curses.KEY_ENTER, 10, 13}
-
-TARGET_COMMANDS = [
-    ("6", "Boot Docker", "boot"),
-    ("T", "Start Tunnel", "start_tunnel"),
-    ("X", "Kill Tunnel", "kill_tunnel"),
-    ("7", "Shutdown Docker", "shutdown"),
-    ("5", "Connect to Server", "connect"),
-    ("1", "Enable", "enable"),
-    ("2", "Disable", "disable"),
-    ("3", "Goto Init", "goto_init"),
-    ("4", "Goto Zero", "goto_zero"),
-]
 
 
 class Dashboard:
@@ -79,6 +68,11 @@ class Dashboard:
         self._runtime_unlocked_announced = False
         self._focused_robot_idx = 0
         self._selected_robot_ids: set[int] = set()
+        self._notice_message = ""
+        self._notice_until = 0.0
+        self._client_running_robot_ids: set[int] = set()
+        self._client_status_pending = False
+        self._emergency_stop_active = False
 
     # ── public entry point ──────────────────────────────────────
 
@@ -124,6 +118,13 @@ class Dashboard:
         if ch == "Q":
             return True
 
+        if self._emergency_stop_active:
+            now = time.time()
+            if now - self._last_busy_notice > 1.5:
+                self._last_busy_notice = now
+                self._log("Emergency client stop is still running.")
+            return False
+
         if key in (curses.KEY_UP, curses.KEY_BTAB) or ch == "K":
             self._move_robot_focus(-1)
             return False
@@ -131,13 +132,10 @@ class Dashboard:
             self._move_robot_focus(1)
             return False
         if ch == " ":
-            self._toggle_focused_robot()
-            return False
-        if key in ENTER_KEYS:
-            if self._busy:
-                self._log("Current operation still running. Robot command menu is locked.")
-                return False
-            self._open_robot_command_menu()
+            if self._clients_running():
+                self._emergency_stop_clients()
+            else:
+                self._toggle_focused_robot()
             return False
 
         if self._busy:
@@ -149,8 +147,9 @@ class Dashboard:
 
         if ch in RUNTIME_KEYS and not self._runtime_controls_unlocked():
             self._log(
-                "Runtime controls stay locked until every workstation is booted "
-                f"({self._ready_robot_count()}/{len(self.config.robots)} ready)."
+                "Runtime controls stay locked until the current target is booted "
+                f"({len(self._eligible_targets('runtime', self._command_targets()))}/"
+                f"{len(self._command_targets())} ready)."
             )
             return False
 
@@ -160,6 +159,19 @@ class Dashboard:
             self._do_start_tunnel()
         elif ch == "X":
             self._do_kill_tunnel()
+        elif ch == "L":
+            self._open_process_menu(
+                "Listener",
+                self.dispatcher.start_listener,
+                self.dispatcher.kill_listener,
+            )
+        elif ch == "C":
+            self._open_process_menu(
+                "Client",
+                self.dispatcher.start_client,
+                self.dispatcher.kill_client,
+                process_key="client",
+            )
         elif ch == "1":
             self._broadcast_with_confirm("Enable", self.dispatcher.enable)
         elif ch == "2":
@@ -189,20 +201,22 @@ class Dashboard:
             self._busy = False
         self._announce_runtime_state()
         self._log("Status refresh complete.")
+        self._refresh_client_status()
 
     def _broadcast_with_confirm(self, name: str, action_fn):
         """Show Y/N confirmation, then execute the broadcast command."""
-        if not self._confirm(f"Execute '{name}' across the ready fleet?"):
+        targets = self._eligible_targets("runtime", self._command_targets())
+        if not targets:
+            self._set_notice(f"'{name}' needs booted or online targets.")
+            self._log(f"No eligible robot(s) for '{name}'.")
+            return
+
+        if not self._confirm(f"Execute '{name}' on {self._target_label(targets)}?"):
             self._log(f"{name} cancelled.")
             return
 
-        active = [r for r in self.config.robots if r.status != RobotStatus.OFFLINE]
-        if not active:
-            self._log(f"No active robots for '{name}'.")
-            return
-
         self._busy = True
-        self._log(f"Executing '{name}' on {len(active)} robot(s)...")
+        self._log(f"Executing '{name}' on {self._target_label(targets)}...")
 
         def on_done(results=None):
             with self._lock:
@@ -213,17 +227,20 @@ class Dashboard:
             self._announce_runtime_state()
             self._log(f"'{name}' complete.")
 
-        action_fn(active, callback=on_done)
+        action_fn(targets, callback=on_done)
 
     def _do_boot(self):
-        """Boot targets all robots regardless of status."""
-        if not self._confirm("Boot Docker on all workstations?"):
+        """Boot selected robots, or all robots when none are selected."""
+        targets = self._command_targets()
+        if not targets:
+            self._log("No workstations configured for boot.")
+            return
+        if not self._confirm(f"Boot Docker on {self._target_label(targets)}?"):
             self._log("Boot cancelled.")
             return
 
-        targets = list(self.config.robots)
         self._busy = True
-        self._log(f"Booting {len(targets)} workstation(s)...")
+        self._log(f"Booting {self._target_label(targets)}...")
 
         def on_done(results=None):
             with self._lock:
@@ -237,20 +254,20 @@ class Dashboard:
         self.dispatcher.boot(targets, callback=on_done)
 
     def _do_shutdown(self):
-        """Disable, kill tunnels, then shutdown all non-offline robots."""
-        active = [r for r in self.config.robots if r.status != RobotStatus.OFFLINE]
+        """Disable, kill tunnels, then shutdown selected/all active robots."""
+        active = self._eligible_targets("shutdown", self._command_targets())
         if not active:
             self._log("No active robots to shut down.")
             return
         if not self._confirm(
-            f"Disable, kill tunnel, then shutdown {len(active)} workstation(s)?"
+            f"Disable, kill tunnel, then shutdown {self._target_label(active)}?"
         ):
             self._log("Shutdown cancelled.")
             return
 
         self._busy = True
         self._log(
-            f"Disabling, killing tunnels, and shutting down {len(active)} workstation(s)..."
+            f"Disabling, killing tunnels, and shutting down {self._target_label(active)}..."
         )
 
         def on_done(results=None):
@@ -265,17 +282,17 @@ class Dashboard:
         self.dispatcher.shutdown(active, callback=on_done)
 
     def _do_start_tunnel(self):
-        """Start SSH tunnels on every configured workstation."""
-        targets = list(self.config.robots)
+        """Start SSH tunnels on selected robots, or all when none are selected."""
+        targets = self._command_targets()
         if not targets:
             self._log("No workstations configured for tunnel start.")
             return
-        if not self._confirm(f"Start SSH tunnel on {len(targets)} workstation(s)?"):
+        if not self._confirm(f"Start SSH tunnel on {self._target_label(targets)}?"):
             self._log("Start Tunnel cancelled.")
             return
 
         self._busy = True
-        self._log(f"Starting SSH tunnel on {len(targets)} workstation(s)...")
+        self._log(f"Starting SSH tunnel on {self._target_label(targets)}...")
 
         def on_done(results=None):
             with self._lock:
@@ -288,17 +305,17 @@ class Dashboard:
         self.dispatcher.start_tunnel(targets, callback=on_done)
 
     def _do_kill_tunnel(self):
-        """Kill SSH tunnels on every configured workstation."""
-        targets = list(self.config.robots)
+        """Kill SSH tunnels on selected robots, or all when none are selected."""
+        targets = self._command_targets()
         if not targets:
             self._log("No workstations configured for tunnel kill.")
             return
-        if not self._confirm(f"Kill SSH tunnel on {len(targets)} workstation(s)?"):
+        if not self._confirm(f"Kill SSH tunnel on {self._target_label(targets)}?"):
             self._log("Kill Tunnel cancelled.")
             return
 
         self._busy = True
-        self._log(f"Killing SSH tunnel on {len(targets)} workstation(s)...")
+        self._log(f"Killing SSH tunnel on {self._target_label(targets)}...")
 
         def on_done(results=None):
             with self._lock:
@@ -310,50 +327,96 @@ class Dashboard:
 
         self.dispatcher.kill_tunnel(targets, callback=on_done)
 
-    def _do_connect_to_server(self):
-        if not self._confirm("Connect all booted robots to server?"):
-            self._log("Connect to Server cancelled.")
-            return
-
-        booted = [r for r in self.config.robots if r.status == RobotStatus.BOOTED]
-        if not booted:
-            self._log("No booted robots to connect.")
-            return
-
-        self.dispatcher.connect_to_server(booted)
-        self._announce_runtime_state()
-        self._log(f"Connected {len(booted)} robot(s) to server (simulated).")
-
-    def _execute_target_command(
+    def _open_process_menu(
         self,
-        action: str,
+        label: str,
+        start_fn,
+        stop_fn,
+        process_key: str | None = None,
+    ):
+        """Show a compact start/stop menu for a runtime process."""
+        targets = self._eligible_targets("runtime", self._command_targets())
+        if not targets:
+            self._set_notice(f"{label} requires booted or online targets.")
+            self._log(f"No booted robots for '{label}'.")
+            return
+
+        stdscr = self._stdscr
+        h, w = stdscr.getmaxyx()
+        box_w = min(56, w - 6)
+        box_h = 8
+        start_y = max(1, h // 2 - box_h // 2)
+        start_x = max(2, w // 2 - box_w // 2)
+        win = curses.newwin(box_h, box_w, start_y, start_x)
+        win.bkgd(" ", curses.color_pair(PAIR_SURFACE))
+
+        stdscr.nodelay(False)
+        try:
+            while True:
+                win.erase()
+                win.bkgd(" ", curses.color_pair(PAIR_SURFACE))
+                self._draw_box(win, 0, 0, box_h, box_w, f"{label} Control")
+                self._center_text(
+                    win,
+                    2,
+                    1,
+                    box_w - 2,
+                    f"Target: {self._target_label(targets)}",
+                    curses.color_pair(PAIR_LOG) | curses.A_BOLD,
+                )
+                self._center_text(
+                    win,
+                    4,
+                    1,
+                    box_w - 2,
+                    "[S] Start   [K] Stop   [Q] Cancel",
+                    curses.color_pair(PAIR_NOTICE),
+                )
+                win.refresh()
+
+                key = stdscr.getch()
+                ch = chr(key).upper() if 0 <= key < 256 else ""
+                if ch == "S":
+                    self._run_targeted_process_action(
+                        f"Start {label}",
+                        start_fn,
+                        targets,
+                        f"Starting {label.lower()}",
+                        process_key=process_key,
+                        is_start=True,
+                    )
+                    return
+                if ch == "K":
+                    self._run_targeted_process_action(
+                        f"Stop {label}",
+                        stop_fn,
+                        targets,
+                        f"Stopping {label.lower()}",
+                        process_key=process_key,
+                        is_start=False,
+                    )
+                    return
+                if ch == "Q" or key == 27:
+                    self._log(f"{label} menu closed.")
+                    return
+        finally:
+            stdscr.nodelay(True)
+
+    def _run_targeted_process_action(
+        self,
         name: str,
+        action_fn,
         targets: list,
-    ) -> bool:
-        """Execute a command against the selected/focused robot set."""
-        eligible = self._eligible_targets(action, targets)
-        skipped = len(targets) - len(eligible)
-        target_label = self._format_robot_ids(eligible)
-
-        if not eligible:
-            self._log(
-                f"No eligible robot(s) for '{name}' in "
-                f"{self._format_robot_ids(targets)}."
-            )
-            return False
-
-        if skipped:
-            self._log(f"Skipped {skipped} ineligible selected robot(s) for '{name}'.")
-
-        if action == "connect":
-            self.dispatcher.connect_to_server(eligible)
-            self._announce_runtime_state()
-            self._log(f"Connected {target_label} to server (simulated).")
-            return True
-
-        dispatch = getattr(self.dispatcher, action)
+        present_participle: str,
+        process_key: str | None = None,
+        is_start: bool = False,
+    ):
         self._busy = True
-        self._log(f"Running '{name}' on {target_label}...")
+        self._log(f"{present_participle} on {self._target_label(targets)}...")
+        if process_key == "client" and is_start:
+            self._client_running_robot_ids.update(robot.id for robot in targets)
+            self._apply_client_robot_status({robot.id for robot in targets})
+            self._set_notice("Clients starting. Space is now emergency-stop.")
 
         def on_done(results=None):
             with self._lock:
@@ -361,122 +424,185 @@ class Dashboard:
             if results:
                 for rid, out in results.items():
                     self._log(f"  WS-{rid}: {str(out)[:80]}")
-            self._announce_runtime_state()
-            self._log(f"'{name}' complete for {target_label}.")
+            if process_key == "client":
+                self._update_client_state_from_results(
+                    targets,
+                    results,
+                    running=is_start,
+                )
+            self._log(f"{name} complete.")
+            if process_key == "client":
+                self._refresh_client_status()
 
-        dispatch(eligible, callback=on_done)
-        return True
+        action_fn(targets, callback=on_done)
+
+    def _do_connect_to_server(self):
+        booted = self._eligible_targets("connect", self._command_targets())
+        if not booted:
+            self._log("No booted robots to connect.")
+            return
+        if not self._confirm(f"Connect {self._target_label(booted)} to server?"):
+            self._log("Connect to Server cancelled.")
+            return
+
+        self.dispatcher.connect_to_server(booted)
+        self._announce_runtime_state()
+        self._log(f"Connected {self._target_label(booted)} to server (simulated).")
 
     def _eligible_targets(self, action: str, targets: list) -> list:
         if action in ("boot", "start_tunnel", "kill_tunnel"):
             return targets
+        if action in ("runtime", "start_listener", "start_client"):
+            return [
+                r
+                for r in targets
+                if r.status in (RobotStatus.BOOTED, RobotStatus.ONLINE)
+            ]
         if action == "connect":
             return [r for r in targets if r.status == RobotStatus.BOOTED]
         if action == "shutdown":
             return [r for r in targets if r.status != RobotStatus.OFFLINE]
         return [r for r in targets if r.status != RobotStatus.OFFLINE]
 
-    def _open_robot_command_menu(self):
-        targets = self._target_robots()
-        if not targets:
-            self._log("No robot selected.")
+    def _refresh_client_status(self):
+        """Refresh the client-running set without blocking the dashboard UI."""
+        if self._client_status_pending:
             return
 
-        stdscr = self._stdscr
-        h, w = stdscr.getmaxyx()
-        box_w = min(74, w - 6)
-        box_h = min(max(14, len(TARGET_COMMANDS) + 7), h - 4)
-        start_y = max(1, h // 2 - box_h // 2)
-        start_x = max(2, w // 2 - box_w // 2)
-        win = curses.newwin(box_h, box_w, start_y, start_x)
-        win.bkgd(" ", curses.color_pair(PAIR_SURFACE))
+        targets = self._eligible_targets("runtime", list(self.config.robots))
+        if not targets:
+            self._client_running_robot_ids.clear()
+            return
 
-        stdscr.nodelay(False)
-        notice = ""
+        self._client_status_pending = True
+        target_ids = {robot.id for robot in targets}
+
+        def on_done(results=None):
+            previous = set(self._client_running_robot_ids)
+            running = {
+                rid
+                for rid, is_running in (results or {}).items()
+                if is_running
+            }
+            with self._lock:
+                self._client_status_pending = False
+                self._client_running_robot_ids.difference_update(target_ids)
+                self._client_running_robot_ids.update(running)
+                self._apply_client_robot_status(running, checked_ids=target_ids)
+
+            if running != previous:
+                if running:
+                    self._set_notice(
+                        f"Clients running on {self._format_robot_ids(self._robots_for_ids(running))}. "
+                        "Space = emergency-stop.",
+                        seconds=4.0,
+                    )
+                    self._log(
+                        "Clients detected on "
+                        f"{self._format_robot_ids(self._robots_for_ids(running))}. "
+                        "Space is emergency-stop."
+                    )
+                elif previous:
+                    self._log("No running clients detected.")
+
+        self.ssh.check_clients(targets, callback=on_done)
+
+    def _emergency_stop_clients(self):
+        """Immediately kill all known running clients; no confirmation by design."""
+        if self._emergency_stop_active:
+            self._log("Emergency client stop is already in progress.")
+            return
+
+        targets = self._client_running_targets()
+        if not targets:
+            self._client_running_robot_ids.clear()
+            self._log("No running clients detected for emergency stop.")
+            return
+
+        self._emergency_stop_active = True
+        self._busy = True
+        self._set_notice("EMERGENCY STOP: killing clients now.", seconds=4.0)
+        self._log(f"EMERGENCY STOP: killing clients on {self._target_label(targets)}.")
         try:
-            while True:
-                self._draw_robot_command_menu(win, box_h, box_w, targets, notice)
-                key = stdscr.getch()
-                ch = chr(key).upper() if 0 <= key < 256 else ""
+            curses.beep()
+        except curses.error:
+            pass
 
-                if ch in ("Q", "N") or key == 27:
-                    self._log("Robot command menu closed.")
-                    return
+        def on_done(results=None):
+            with self._lock:
+                self._busy = False
+                self._emergency_stop_active = False
+                self._client_running_robot_ids.difference_update(
+                    robot.id for robot in targets
+                )
+                self._apply_client_robot_status(
+                    self._client_running_robot_ids,
+                    checked_ids={robot.id for robot in targets},
+                )
+            if results:
+                for rid, out in results.items():
+                    self._log(f"  WS-{rid}: {str(out)[:80]}")
+            self._set_notice("Emergency client stop complete.", seconds=3.0)
+            self._log("Emergency client stop complete.")
+            self._refresh_client_status()
 
-                for command_key, label, action in TARGET_COMMANDS:
-                    if ch != command_key:
-                        continue
-                    if not self._eligible_targets(action, targets):
-                        curses.beep()
-                        notice = f"Unavailable: {label} ({self._target_disabled_reason(action)})"
-                        break
-                    if self._execute_target_command(action, label, targets):
-                        return
-        finally:
-            stdscr.nodelay(True)
+        self.dispatcher.kill_client(targets, callback=on_done)
 
-    def _draw_robot_command_menu(
+    def _update_client_state_from_results(
         self,
-        win: curses.window,
-        h: int,
-        w: int,
         targets: list,
-        notice: str = "",
+        results,
+        running: bool,
     ):
-        win.erase()
-        win.bkgd(" ", curses.color_pair(PAIR_SURFACE))
-        self._draw_box(win, 0, 0, h, w, "Robot Command Menu")
+        target_ids = {robot.id for robot in targets}
+        if not results:
+            if running:
+                self._client_running_robot_ids.update(target_ids)
+                self._apply_client_robot_status(target_ids)
+            else:
+                self._client_running_robot_ids.difference_update(target_ids)
+                self._apply_client_robot_status(
+                    self._client_running_robot_ids,
+                    checked_ids=target_ids,
+                )
+            return
 
-        target_label = self._format_robot_ids(targets)
-        self._center_text(
-            win,
-            2,
-            1,
-            w - 2,
-            f"Target: {target_label}",
-            curses.color_pair(PAIR_LOG) | curses.A_BOLD,
-        )
-        self._center_text(
-            win,
-            3,
-            1,
-            w - 2,
-            notice or "Press a command key. Disabled commands stay locked.",
-            curses.color_pair(PAIR_NOTICE if notice else PAIR_MUTED),
-        )
+        successful = {
+            rid
+            for rid, out in results.items()
+            if not isinstance(out, Exception)
+            and not str(out).startswith("ERROR:")
+        }
+        failed = target_ids - successful
+        if running:
+            self._client_running_robot_ids.update(successful)
+            self._client_running_robot_ids.difference_update(failed)
+            self._apply_client_robot_status(successful)
+            self._apply_client_robot_status(
+                self._client_running_robot_ids,
+                checked_ids=failed,
+            )
+            if successful:
+                self._set_notice("Clients running. Space = emergency-stop.")
+        else:
+            self._client_running_robot_ids.difference_update(successful)
+            self._apply_client_robot_status(
+                self._client_running_robot_ids,
+                checked_ids=successful,
+            )
 
-        row = 5
-        for key, label, action in TARGET_COMMANDS:
-            if row >= h - 2:
-                break
-
-            available = bool(self._eligible_targets(action, targets))
-            attr = curses.color_pair(PAIR_CMD if available else PAIR_MUTED)
-            key_attr = curses.color_pair(PAIR_HIGHLIGHT if available else PAIR_MUTED) | curses.A_BOLD
-            suffix = "" if available else f" ({self._target_disabled_reason(action)})"
-
-            self._add_text(win, row, 4, "[", attr)
-            self._add_text(win, row, 5, key, key_attr)
-            self._add_text(win, row, 6, f"] {label}{suffix}"[: w - 9], attr)
-            row += 1
-
-        self._center_text(
-            win,
-            h - 2,
-            1,
-            w - 2,
-            "[Q] Cancel",
-            curses.color_pair(PAIR_NOTICE),
-        )
-        win.refresh()
-
-    @staticmethod
-    def _target_disabled_reason(action: str) -> str:
-        if action == "connect":
-            return "needs booted"
-        if action in ("boot", "start_tunnel", "kill_tunnel"):
-            return "unavailable"
-        return "needs active"
+    def _apply_client_robot_status(
+        self,
+        running_ids: set[int],
+        checked_ids: set[int] | None = None,
+    ):
+        """Reflect client process state in the dashboard robot status."""
+        for robot in self.config.robots:
+            if robot.id in running_ids:
+                robot.status = RobotStatus.ONLINE
+            elif checked_ids is not None and robot.id in checked_ids:
+                if robot.status == RobotStatus.ONLINE:
+                    robot.status = RobotStatus.BOOTED
 
     # ── confirmation dialog ─────────────────────────────────────
 
@@ -553,7 +679,7 @@ class Dashboard:
         header_h = 2
         gap = 1
         desired_log_h = max(7, min(10, content_h // 3))
-        min_body_h = 12 if self._runtime_controls_unlocked() else 10
+        min_body_h = 13 if self._runtime_controls_unlocked() else 10
         log_h = min(desired_log_h, content_h - header_h - (gap * 2) - min_body_h)
         body_h = content_h - header_h - log_h - (gap * 2)
 
@@ -591,28 +717,56 @@ class Dashboard:
             curses.color_pair(PAIR_HIGHLIGHT) | curses.A_BOLD,
         )
 
+        clients_running = self._clients_running()
         badge = (
-            "SYNCING"
+            "CLIENTS LIVE"
+            if clients_running
+            else "SYNCING"
             if self._busy
             else "RUNTIME READY"
             if self._runtime_controls_unlocked()
             else f"BOOT {self._ready_robot_count()}/{len(self.config.robots)}"
         )
-        badge_attr = curses.color_pair(
-            PAIR_BOOTED if self._busy else PAIR_ONLINE if self._runtime_controls_unlocked() else PAIR_NOTICE
-        ) | curses.A_BOLD
+        badge_pair = (
+            PAIR_OFFLINE
+            if clients_running
+            else PAIR_BOOTED
+            if self._busy
+            else PAIR_ONLINE
+            if self._runtime_controls_unlocked()
+            else PAIR_NOTICE
+        )
+        badge_attr = curses.color_pair(badge_pair) | curses.A_BOLD
         self._right_text(stdscr, y, x, w, badge, badge_attr)
 
-        offline, booted, online = self._status_counts()
-        segments = [
-            ("offline ", curses.color_pair(PAIR_MUTED)),
-            (str(offline), curses.color_pair(PAIR_OFFLINE) | curses.A_BOLD),
-            ("   booted ", curses.color_pair(PAIR_MUTED)),
-            (str(booted), curses.color_pair(PAIR_BOOTED) | curses.A_BOLD),
-            ("   online ", curses.color_pair(PAIR_MUTED)),
-            (str(online), curses.color_pair(PAIR_ONLINE) | curses.A_BOLD),
-        ]
-        self._draw_centered_segments(stdscr, y + 1, x, w, segments)
+        notice = self._active_notice()
+        if not notice and clients_running:
+            notice = (
+                f"Clients running on {self._format_robot_ids(self._client_running_targets())}. "
+                "SPACE = EMERGENCY STOP"
+            )
+        if notice:
+            self._center_text(
+                stdscr,
+                y + 1,
+                x,
+                w,
+                notice,
+                curses.color_pair(PAIR_OFFLINE) | curses.A_BOLD,
+            )
+        else:
+            offline, booted, online = self._status_counts()
+            segments = [
+                ("target ", curses.color_pair(PAIR_MUTED)),
+                (self._target_label(), curses.color_pair(PAIR_HIGHLIGHT) | curses.A_BOLD),
+                ("   offline ", curses.color_pair(PAIR_MUTED)),
+                (str(offline), curses.color_pair(PAIR_OFFLINE) | curses.A_BOLD),
+                ("   booted ", curses.color_pair(PAIR_MUTED)),
+                (str(booted), curses.color_pair(PAIR_BOOTED) | curses.A_BOLD),
+                ("   online ", curses.color_pair(PAIR_MUTED)),
+                (str(online), curses.color_pair(PAIR_ONLINE) | curses.A_BOLD),
+            ]
+            self._draw_centered_segments(stdscr, y + 1, x, w, segments)
 
     def _draw_side_panel(self, y: int, x: int, h: int, w: int):
         stdscr = self._stdscr
@@ -675,31 +829,38 @@ class Dashboard:
                 row += 1
 
         if h >= 8:
+            footer = (
+                "SPACE = KILL CLIENTS NOW"
+                if self._clients_running()
+                else "Up/Down focus | Space selects target subset"
+            )
+            footer_pair = PAIR_OFFLINE if self._clients_running() else PAIR_MUTED
             self._center_text(
                 stdscr,
                 y + h - 2,
                 x + 1,
                 w - 2,
-                "Up/Down focus | Space select | Enter command",
-                curses.color_pair(PAIR_MUTED),
+                footer,
+                curses.color_pair(footer_pair) | curses.A_BOLD,
             )
 
     def _draw_core_panel(self, y: int, x: int, h: int, w: int, show_notice: bool = False):
         stdscr = self._stdscr
-        self._draw_box(stdscr, y, x, h, w, "Core Controls")
+        self._draw_box(stdscr, y, x, h, w, f"Core Controls [{self._target_label()}]")
         self._draw_command_grid(y + 2, x + 2, w - 4, h - 3, CORE_COMMANDS)
 
         if not show_notice or h < 8:
             return
 
-        ready = self._ready_robot_count()
-        total = len(self.config.robots)
+        targets = self._command_targets()
+        ready = len(self._eligible_targets("runtime", targets))
+        total = len(targets)
         self._center_text(
             stdscr,
             y + h - 3,
             x + 1,
             w - 2,
-            "Runtime controls appear once the fleet is fully booted.",
+            "Runtime controls appear once the current target is fully booted.",
             curses.color_pair(PAIR_MUTED),
         )
         self._draw_centered_segments(
@@ -710,13 +871,13 @@ class Dashboard:
             [
                 ("ready ", curses.color_pair(PAIR_MUTED)),
                 (f"{ready}/{total}", curses.color_pair(PAIR_HIGHLIGHT) | curses.A_BOLD),
-                ("  press [6] to boot remaining workstations", curses.color_pair(PAIR_NOTICE)),
+                ("  press [6] to boot target robots", curses.color_pair(PAIR_NOTICE)),
             ],
         )
 
     def _draw_runtime_panel(self, y: int, x: int, h: int, w: int):
         stdscr = self._stdscr
-        self._draw_box(stdscr, y, x, h, w, "Runtime Controls")
+        self._draw_box(stdscr, y, x, h, w, f"Runtime Controls [{self._target_label()}]")
         self._draw_command_grid(y + 2, x + 2, w - 4, h - 3, RUNTIME_COMMANDS)
 
     def _draw_command_grid(
@@ -790,7 +951,11 @@ class Dashboard:
     # ── helpers ─────────────────────────────────────────────────
 
     def _runtime_controls_unlocked(self) -> bool:
-        return bool(self.config.robots) and self._ready_robot_count() == len(self.config.robots)
+        targets = self._command_targets()
+        return (
+            bool(targets)
+            and len(self._eligible_targets("runtime", targets)) == len(targets)
+        )
 
     def _clamp_robot_focus(self):
         if not self.config.robots:
@@ -819,10 +984,26 @@ class Dashboard:
 
         if robot.id in self._selected_robot_ids:
             self._selected_robot_ids.remove(robot.id)
+            self._runtime_unlocked_announced = False
             self._log(f"Unselected WS-{robot.id}.")
             return
 
+        selected = [
+            r
+            for r in self.config.robots
+            if r.id in self._selected_robot_ids
+        ]
+        if selected and any(self._is_ready(r) != self._is_ready(robot) for r in selected):
+            self._set_notice("Selection blocked: do not mix booted/online and offline robots.")
+            self._log("Selection blocked: mixed ready/offline robot sets are not permitted.")
+            try:
+                curses.beep()
+            except curses.error:
+                pass
+            return
+
         self._selected_robot_ids.add(robot.id)
+        self._runtime_unlocked_announced = False
         self._log(f"Selected WS-{robot.id}.")
 
     def _focused_robot(self):
@@ -831,7 +1012,7 @@ class Dashboard:
             return None
         return self.config.robots[self._focused_robot_idx]
 
-    def _target_robots(self) -> list:
+    def _command_targets(self) -> list:
         self._clamp_robot_focus()
         if self._selected_robot_ids:
             return [
@@ -839,9 +1020,43 @@ class Dashboard:
                 for robot in self.config.robots
                 if robot.id in self._selected_robot_ids
             ]
+        return list(self.config.robots)
 
-        robot = self._focused_robot()
-        return [robot] if robot is not None else []
+    def _clients_running(self) -> bool:
+        valid_ids = {robot.id for robot in self.config.robots}
+        self._client_running_robot_ids.intersection_update(valid_ids)
+        return bool(self._client_running_robot_ids)
+
+    def _client_running_targets(self) -> list:
+        return self._robots_for_ids(self._client_running_robot_ids)
+
+    def _robots_for_ids(self, robot_ids: set[int]) -> list:
+        return [
+            robot
+            for robot in self.config.robots
+            if robot.id in robot_ids
+        ]
+
+    def _target_label(self, robots: list | None = None) -> str:
+        if robots is not None:
+            return self._format_robot_ids(robots)
+        if self._selected_robot_ids:
+            return self._format_robot_ids(self._command_targets())
+        return "ALL"
+
+    def _set_notice(self, message: str, seconds: float = 3.5):
+        self._notice_message = message
+        self._notice_until = time.time() + seconds
+
+    def _active_notice(self) -> str:
+        if self._notice_message and time.time() < self._notice_until:
+            return self._notice_message
+        self._notice_message = ""
+        return ""
+
+    @staticmethod
+    def _is_ready(robot) -> bool:
+        return robot.status in (RobotStatus.BOOTED, RobotStatus.ONLINE)
 
     @staticmethod
     def _format_robot_ids(robots: list) -> str:
@@ -868,7 +1083,7 @@ class Dashboard:
         unlocked = self._runtime_controls_unlocked()
         if unlocked and not self._runtime_unlocked_announced:
             self._runtime_unlocked_announced = True
-            self._log("All workstations are ready. Runtime controls unlocked.")
+            self._log(f"{self._target_label()} is ready. Runtime controls unlocked.")
         elif not unlocked:
             self._runtime_unlocked_announced = False
 
