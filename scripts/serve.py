@@ -5,20 +5,17 @@ import multiprocessing as mp
 import pathlib
 import socket
 import sys
-import time
 from typing import Any, Literal
 
-import numpy as np
 import tyro
 
-from armory_client.messages import InferRequest, InferType
 from armory_client.schemas import ServerMetadata
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import DEFAULT_CHECKPOINT  # noqa: E402
+from utils import DEFAULT_CHECKPOINT, _MockPolicyFactory  # noqa: E402
 
 
 @dataclasses.dataclass
@@ -34,14 +31,6 @@ class Default:
     """Use the default policy for the given environment."""
 
 
-profiles = {
-    "l40s_pi05": {
-        1: 0.070,
-        2: 0.135,
-        3: 0.195,
-        4: 0.250,
-    }
-}
 
 @dataclasses.dataclass
 class Mock:
@@ -101,64 +90,6 @@ class _PolicyFactory:
             default_prompt=self._args.default_prompt,
             sample_kwargs={"num_steps": self._args.num_steps},
             env_mode=self._args.env,
-        )
-
-
-class _MockPolicy:
-    """Stub policy implementing the armory engine interface without weights/GPU."""
-
-    def __init__(self, *, env: str, action_horizon: int, action_dim: int, inference_latency: dict[int, float]):
-        self._action_horizon = action_horizon
-        self._action_dim = action_dim
-        self._inference_latency = inference_latency
-        self.metadata = {"env": env}
-
-    def make_infer_request(self) -> InferRequest:
-        now = time.time()
-        return InferRequest(
-            robot_id="__warmup__",
-            observation={},
-            observation_step=0,
-            action_start_step=0,
-            request_timestamp=now,
-            deadline=now + 60.0,
-            execution_horizon=0,
-            infer_type=InferType.SYNC,
-            params=None,
-            noise=None,
-        )
-
-    def warmup(self, max_batch_size: int) -> None:
-        del max_batch_size
-
-    def infer_batch(self, requests: list[InferRequest]) -> list[dict[str, Any]]:
-        inference_latency = self._inference_latency[len(requests)]
-        now = time.time()
-        while time.time() - now < inference_latency:
-            time.sleep(0.001)
-        actions = np.zeros((self._action_horizon, self._action_dim), dtype=np.float32)
-        return [
-            {"actions": actions, "noise": None, "rtc_prev_actions": actions}
-            for _ in requests
-        ]
-
-
-class _MockPolicyFactory:
-    """Picklable factory for the mock policy."""
-
-    def __init__(self, *, env: str, action_horizon: int, action_dim: int, profile: str):
-        self._env = env
-        self._action_horizon = action_horizon
-        self._action_dim = action_dim
-        self._profile = profile
-        self._inference_latency = profiles[profile]
-
-    def __call__(self) -> _MockPolicy:
-        return _MockPolicy(
-            env=self._env,
-            action_horizon=self._action_horizon,
-            action_dim=self._action_dim,
-            inference_latency=self._inference_latency,
         )
 
 
