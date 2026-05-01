@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import enum
 import pathlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openpi.policies import policy_config as _policy_config
-from openpi.training import config as _config
-
-from openpi_adapter.policy_adapter import OpenPiPolicyAdapter
+if TYPE_CHECKING:
+    from openpi_adapter.policy_adapter import OpenPiPolicyAdapter
 
 
 class EnvMode(str, enum.Enum):
@@ -51,6 +49,11 @@ def create_policy(
     Returns an OpenPiPolicyAdapter whose .infer_batch() / .warmup() / .make_infer_request()
     match the armory engine interface.
     """
+    from openpi.policies import policy_config as _policy_config
+    from openpi.training import config as _config
+
+    from openpi_adapter.policy_adapter import OpenPiPolicyAdapter
+
     train_config = _config.get_config(config_name)
     policy = _policy_config.create_trained_policy(
         train_config,
@@ -66,10 +69,14 @@ def create_policy(
 
 def get_model_dims(config_name: str) -> tuple[int, int]:
     """Return (action_horizon, action_dim) for a training config without loading the model."""
+    from openpi.training import config as _config
+
     train_config = _config.get_config(config_name)
     return train_config.model.action_horizon, train_config.model.action_dim
 
 
 def get_config_name(config_name: str) -> str:
     """Return the canonical name for a training config (resolves aliases)."""
+    from openpi.training import config as _config
+
     return _config.get_config(config_name).name

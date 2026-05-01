@@ -190,6 +190,8 @@ class MetricsStore(JSONDataclass):
                 request_timestamp=request.request_timestamp,
                 server_arrival_time=request.arrival_timestamp,  # FIXME: make timestamp/arrival time naming convention consistent
             )
+            if robot_id not in self.robots:
+                self.robots[robot_id] = Robot(robot_id=robot_id, episodes=[])
             robot = self.robots[robot_id]
             robot.add_request(record)
 
@@ -404,8 +406,7 @@ class MetricsStore(JSONDataclass):
             response_by_id: dict[int, ResponseRecord] = {
                 resp.request.request_id: resp
                 for robot in self.robots.values()
-                for episode in robot.episodes
-                for resp in episode.responses
+                for resp in robot.iter_responses()
             }
             batch_history = []
             for i, b in enumerate(batches):
@@ -460,8 +461,7 @@ class MetricsStore(JSONDataclass):
             for robot_id, robot in self.robots.items():
                 delays = [
                     round(resp.outbound_ms, 2)
-                    for episode in robot.episodes
-                    for resp in episode.responses
+                    for resp in robot.iter_responses()
                     if resp.receive_time > 0 and resp.receive_time >= start_timestamp
                 ]
                 if delays:

@@ -2,6 +2,7 @@ import dataclasses
 import datetime
 import enum
 import logging
+import multiprocessing as mp
 import pathlib
 import socket
 import sys
@@ -35,6 +36,16 @@ class Default:
     """Use the default checkpoint for the given --env."""
 
 
+
+@dataclasses.dataclass
+class Mock:
+    """Use a lightweight mock policy that does not load weights or use a GPU."""
+
+    action_horizon: int = 50
+    action_dim: int = 14
+    profile: str = "l40s_pi05"
+
+
 @dataclasses.dataclass
 class Args:
     env: EnvMode = EnvMode.LIBERO
@@ -46,7 +57,7 @@ class Args:
 
     port: int = 8080
 
-    policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
+    policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
 
     max_batch_size: int = 1
 
@@ -98,6 +109,7 @@ def main(args: Args) -> None:
 
     policy_config = args.policy.config if isinstance(args.policy, Checkpoint) else None
     policy_dir = args.policy.dir if isinstance(args.policy, Checkpoint) else None
+    mock = args.policy if isinstance(args.policy, Mock) else None
 
     resolved = resolve_policy(
         model=args.model.value,
@@ -108,6 +120,7 @@ def main(args: Args) -> None:
         num_steps=args.num_steps,
         default_prompt=args.default_prompt,
         scheduling_algorithm=args.scheduling_algorithm,
+        mock=mock,
     )
 
     hostname = socket.gethostname()
@@ -131,4 +144,5 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
+    mp.set_start_method("fork", force=True)
     main(tyro.cli(Args))

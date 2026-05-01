@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 import numpy as np
-from libero.libero import benchmark
-from typing import List, Dict, Type
+from typing import Any, List, Dict, Type, TYPE_CHECKING
 from jaxtyping import Float
 import random
+
+if TYPE_CHECKING:
+    from libero.libero import benchmark
 
 
 @dataclass
@@ -13,14 +17,35 @@ class Episode:
     idx: int  # 1-indexed
     task_suite_name: str
     task_id: int
-    task: benchmark.Task
+    task: Any  # benchmark.Task in libero mode; duck-typed (.language) elsewhere
     initial_state: np.ndarray
 
     def __str__(self) -> str:
         return f"Episode(task_suite_name={self.task_suite_name}, task_id={self.task_id}, task={self.task.language})"
 
 
+@dataclass
+class _MockTask:
+    language: str
+
+
+def create_mock_episodes(num_episodes: int) -> List[Episode]:
+    """Synthetic episodes for the mock env — no libero dependency."""
+    return [
+        Episode(
+            idx=i + 1,
+            task_suite_name="mock",
+            task_id=0,
+            task=_MockTask(language="mock task"),
+            initial_state=np.zeros(1, dtype=np.float32),
+        )
+        for i in range(num_episodes)
+    ]
+
+
 def create_episodes(task_suite_name: str, num_trials_per_task: int) -> List[Episode]:
+    from libero.libero import benchmark
+
     benchmark_dict: Dict[str, Type[benchmark.Benchmark]] = (
         benchmark.get_benchmark_dict()
     )

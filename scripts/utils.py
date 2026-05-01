@@ -1,5 +1,8 @@
 """Shared utilities for scripts."""
 
+import json
+import time
+import numpy as np
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,6 +20,10 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
     is_groot_model,
 )
 
+from armory_client.messages import InferRequest, InferType
+
+with open("configs/inference_profiles.json", "r") as f:
+    INFERENCE_PROFILES = {profile_name: {int(batch_size): latency for batch_size, latency in profile.items()} for profile_name, profile in json.load(f).items()}
 
 def get_gpu_info() -> dict[str, Any]:
     try:
@@ -92,12 +99,32 @@ def resolve_policy(
     num_steps: int,
     default_prompt: str | None,
     scheduling_algorithm: str,
+    mock: Any = None,
 ) -> ResolvedPolicy:
     """Resolve model backend, checkpoint, and dims into a ResolvedPolicy.
 
     Dispatches to GR00T or OpenPI based on `model`. All routing lives here —
     callers (serve.py) stay model-agnostic.
     """
+    if mock is not None:
+        metadata = ServerMetadata(
+            config_name="mock",
+            checkpoint_dir="",
+            action_horizon=mock.action_horizon,
+            action_dim=mock.action_dim,
+            num_steps=num_steps,
+            max_batch_size=max_batch_size,
+            env=env.value,
+            scheduling_algorithm=scheduling_algorithm,
+        )
+        factory = _MockPolicyFactory(
+            env=env.value,
+            action_horizon=mock.action_horizon,
+            action_dim=mock.action_dim,
+            profile=mock.profile,
+        )
+        return ResolvedPolicy(metadata=metadata, factory=factory)
+
     if is_groot_model(model):
         groot_ckpt_override = policy_dir
         checkpoint_label = groot_ckpt_override or get_gr00t_checkpoint_label(model, env)
@@ -149,3 +176,62 @@ def create_default_policy(env: EnvMode, *, batch_size: int = 1, default_prompt: 
             env_mode=env,
         )
     raise ValueError(f"Unsupported environment mode: {env}")
+
+
+
+class _MockPolicy:
+    """Stub policy implementing the armory engine interface without weights/GPU."""
+
+    def __init__(self, *, env: str, action_horizon: int, action_dim: int, inference_latency: dict[int, float]):
+        self._action_horizon = action_horizon
+        self._action_dim = action_dim
+        self._inference_latency = inference_latency
+        self.metadata = {"env": env}
+
+    def make_infer_request(self) -> InferRequest:
+        now = time.time()
+        return InferRequest(
+            robot_id="__warmup__",
+            observation={},
+            observation_step=0,
+            action_start_step=0,
+            request_timestamp=now,
+            deadline=now + 60.0,
+            execution_horizon=0,
+            infer_type=InferType.SYNC,
+            params=None,
+            noise=None,
+        )
+
+    def warmup(self, max_batch_size: int) -> None:
+        del max_batch_size
+
+    def infer_batch(self, requests: list[InferRequest]) -> list[dict[str, Any]]:
+        inference_latency = self._inference_latency[len(requests)]
+        now = time.time()
+        while time.time() - now < inference_latency:
+            time.sleep(0.001)
+        actions = np.zeros((self._action_horizon, self._action_dim), dtype=np.float32)
+        return [
+            {"actions": actions, "noise": None, "rtc_prev_actions": actions}
+            for _ in requests
+        ]
+
+
+class _MockPolicyFactory:
+    """Picklable factory for the mock policy."""
+
+    def __init__(self, *, env: str, action_horizon: int, action_dim: int, profile: str):
+        self._env = env
+        self._action_horizon = action_horizon
+        self._action_dim = action_dim
+        self._profile = profile
+        self._inference_latency = INFERENCE_PROFILES[profile]
+
+    def __call__(self) -> _MockPolicy:
+        return _MockPolicy(
+            env=self._env,
+            action_horizon=self._action_horizon,
+            action_dim=self._action_dim,
+            inference_latency=self._inference_latency,
+        )
