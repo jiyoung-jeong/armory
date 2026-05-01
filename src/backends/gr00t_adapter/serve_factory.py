@@ -1,72 +1,58 @@
-"""Factory for creating armory-compatible GR00T policies.
-
-This is the only file in gr00t_adapter that scripts need to import.
-"""
+"""Factory for creating armory-compatible GR00T policies."""
 
 from __future__ import annotations
 
 import pathlib
 
+from armory.checkpoints import GROOT_CHECKPOINT
 from gr00t_adapter.policy_adapter import Gr00tPolicyAdapter
-
-# GR00T model registry: model_name -> (embodiment_tag, checkpoint_path, action_horizon, action_dim)
-_GROOT_MODELS: dict[str, dict] = {
-    "gr00t-n1.7-libero": {
-        "embodiment_tag": "LIBERO_PANDA",
-        "default_checkpoint": "/coc/flash7/rbansal66/vvla/Isaac-GR00T/checkpoints/GR00T-N1.7-LIBERO/libero_10",
-        "action_horizon": 16,
-        "action_dim": 7,   # x, y, z, roll, pitch, yaw, gripper (1+1+1+1+1+1+1)
-    },
-}
+from openpi_adapter.serve_factory import EnvMode
 
 
-def get_gr00t_model_dims(model_name: str) -> tuple[int, int]:
-    """Return (action_horizon, action_dim) for a GR00T model name."""
-    cfg = _resolve_model(model_name)
+def _resolve(model_family: str, env: EnvMode) -> dict:
+    family = GROOT_CHECKPOINT.get(model_family.lower())
+    if family is None:
+        raise ValueError(
+            f"Unknown GR00T model family '{model_family}'. "
+            f"Available: {list(GROOT_CHECKPOINT)}"
+        )
+    cfg = family.get(env)
+    if cfg is None:
+        avail = sorted(e.value for e in family)
+        raise ValueError(
+            f"No GR00T checkpoint for model='{model_family}' env={env.value!r}. "
+            f"Available envs for this family: {avail}"
+        )
+    return cfg
+
+
+def is_groot_model(model_family: str) -> bool:
+    return model_family.lower() in GROOT_CHECKPOINT
+
+
+def get_gr00t_model_dims(model_family: str, env: EnvMode) -> tuple[int, int]:
+    cfg = _resolve(model_family, env)
     return cfg["action_horizon"], cfg["action_dim"]
 
 
-def _resolve_model(model_name: str) -> dict:
-    model_name = model_name.lower()
-    if model_name not in _GROOT_MODELS:
-        raise ValueError(
-            f"Unknown GR00T model '{model_name}'. "
-            f"Available: {list(_GROOT_MODELS.keys())}"
-        )
-    return _GROOT_MODELS[model_name]
+def get_gr00t_default_checkpoint(model_family: str, env: EnvMode) -> str | None:
+    return _resolve(model_family, env).get("dir")
 
 
 def create_gr00t_policy(
-    model_name: str,
+    model_family: str,
+    env: EnvMode,
     checkpoint_dir: str | pathlib.Path | None = None,
 ) -> Gr00tPolicyAdapter:
-    """Create an armory-serving-compatible GR00T policy.
-
-    Args:
-        model_name: Model identifier, e.g. "gr00t-n1.7-libero".
-        checkpoint_dir: Path to the checkpoint directory.
-            If None, uses the default checkpoint for the model.
-
-    Returns:
-        A Gr00tPolicyAdapter with .warmup() / .infer_batch() / .make_infer_request().
-    """
+    """Create an armory-serving-compatible GR00T policy."""
     import torch
     from gr00t.data.embodiment_tags import EmbodimentTag
     from gr00t.policy.gr00t_policy import Gr00tPolicy
 
-    cfg = _resolve_model(model_name)
-    ckpt = str(checkpoint_dir) if checkpoint_dir is not None else cfg["default_checkpoint"]
+    cfg = _resolve(model_family, env)
+    ckpt = str(checkpoint_dir) if checkpoint_dir is not None else cfg["dir"]
     tag = EmbodimentTag[cfg["embodiment_tag"]]
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    policy = Gr00tPolicy(
-        embodiment_tag=tag,
-        model_path=ckpt,
-        device=device,
-    )
+    policy = Gr00tPolicy(embodiment_tag=tag, model_path=ckpt, device=device)
     return Gr00tPolicyAdapter(policy)
-
-
-def is_groot_model(model_name: str) -> bool:
-    """Return True if model_name refers to a GR00T model."""
-    return model_name.lower() in _GROOT_MODELS

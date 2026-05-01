@@ -1,8 +1,5 @@
 """Adapts gr00t.policy.Gr00tPolicy to the armory engine interface.
 
-The armory engine calls warmup(), infer_batch(), and make_infer_request().
-Gr00tPolicy only exposes get_action(). This class bridges the gap.
-
 Observation layout from armory clients (flat dict):
   state       : np.float32 (8,)  [x, y, z, roll, pitch, yaw, grip0, grip1]
   image       : np.uint8   (H, W, 3)
@@ -19,7 +16,7 @@ GR00T LIBERO layout (nested, batched):
 
 Output from GR00T (dict of action arrays):
   {action_key: np.ndarray (B, horizon, dim), ...}
-→ concatenated per-sample into actions (horizon, action_dim) for armory.
+→ concatenated per-sample into actions (horizon, action_dim).
 """
 
 from __future__ import annotations

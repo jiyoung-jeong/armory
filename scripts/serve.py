@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import enum
 import logging
 import pathlib
 import socket
@@ -8,21 +9,22 @@ from typing import Literal
 
 import tyro
 
-from armory_client.schemas import ServerMetadata
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
-from openpi_adapter.serve_factory import create_policy
-from openpi_adapter.serve_factory import get_model_dims
-from gr00t_adapter.serve_factory import create_gr00t_policy, get_gr00t_model_dims, is_groot_model
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import DEFAULT_CHECKPOINT, GROOT_CHECKPOINT  # noqa: E402
+from utils import resolve_policy  # noqa: E402
+
+
+class ModelFamily(str, enum.Enum):
+    PI05 = "pi05"
+    GROOT_N17 = "gr00t-n1.7"
 
 
 @dataclasses.dataclass
 class Checkpoint:
-    """Load a policy from a trained checkpoint."""
+    """Load a policy from a specific checkpoint."""
 
     config: str
     dir: str
@@ -30,19 +32,15 @@ class Checkpoint:
 
 @dataclasses.dataclass
 class Default:
-    """Use the default policy for the given environment."""
+    """Use the default checkpoint for the given --env."""
 
 
 @dataclasses.dataclass
 class Args:
-    """Arguments for the serve script."""
-
     env: EnvMode = EnvMode.LIBERO
 
-    model: str | None = None
-    """Model to serve. When set to a GR00T model name (e.g. 'gr00t-n1.7-libero'),
-    the GR00T adapter is used instead of OpenPI. When None, the existing pi0/pi05
-    path is used (controlled by --policy and --env)."""
+    # options are PI05, GROOT_N17
+    model: ModelFamily = ModelFamily.PI05
 
     default_prompt: str | None = None
 
@@ -58,45 +56,16 @@ class Args:
 
     scheduling_algorithm: str = "greedy-deadline"
 
-    useful_action_weight: float = 0.0 # rewards action
-    useful_tardiness_weight: float = 0.0 # penalizes length of unusable chunk
-    useful_slack_weight: float = 0.0 # rewards slack
-    useful_deficit_weight: float = 4.0 # rewards underserved
+    useful_action_weight: float = 0.0
+    useful_tardiness_weight: float = 0.0
+    useful_slack_weight: float = 0.0
+    useful_deficit_weight: float = 4.0
 
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
     lookahead_control_hz: int = 20
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-
-
-class _PolicyFactory:
-    """Picklable callable required by spawn multiprocessing."""
-
-    def __init__(self, args: Args, config_name: str, checkpoint_dir: str):
-        self._args = args
-        self._config_name = config_name
-        self._checkpoint_dir = checkpoint_dir
-
-    def __call__(self):
-        return create_policy(
-            self._config_name,
-            self._checkpoint_dir,
-            default_prompt=self._args.default_prompt,
-            sample_kwargs={"num_steps": self._args.num_steps},
-            env_mode=self._args.env,
-        )
-
-
-class _Gr00tPolicyFactory:
-    """Picklable callable for GR00T policies."""
-
-    def __init__(self, model_name: str, checkpoint_dir: str | None):
-        self._model_name = model_name
-        self._checkpoint_dir = checkpoint_dir
-
-    def __call__(self):
-        return create_gr00t_policy(self._model_name, self._checkpoint_dir)
 
 
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
@@ -114,7 +83,6 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
             "action_horizon_steps": action_horizon_steps,
             "control_hz": args.lookahead_control_hz,
         }
-
     return None
 
 
@@ -124,70 +92,35 @@ def main(args: Args) -> None:
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
     )
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_queue, log_listener = logging_config.setup_logging(log_path=log_path, level=getattr(logging, args.log_level))
+    log_queue, log_listener = logging_config.setup_logging(
+        log_path=log_path, level=getattr(logging, args.log_level)
+    )
 
-    if args.model is not None and is_groot_model(args.model):
-        # ── GR00T path ────────────────────────────────────────────────────
-        model_name = args.model.lower()
-        match args.policy:
-            case Checkpoint():
-                checkpoint_dir = args.policy.dir
-            case Default():
-                checkpoint_dir = GROOT_CHECKPOINT.get(model_name, {}).get("dir")
+    policy_config = args.policy.config if isinstance(args.policy, Checkpoint) else None
+    policy_dir = args.policy.dir if isinstance(args.policy, Checkpoint) else None
 
-        action_horizon, action_dim = get_gr00t_model_dims(model_name)
-        config_name = model_name
-
-        server_metadata = ServerMetadata(
-            config_name=config_name,
-            checkpoint_dir=checkpoint_dir or "",
-            action_horizon=action_horizon,
-            action_dim=action_dim,
-            num_steps=args.num_steps,
-            max_batch_size=args.max_batch_size,
-            env=args.env.value,
-            scheduling_algorithm=args.scheduling_algorithm,
-        )
-
-        policy_factory = _Gr00tPolicyFactory(model_name, checkpoint_dir)
-
-    else:
-        # ── OpenPI / pi0 / pi05 path (existing behaviour) ─────────────────
-        match args.policy:
-            case Checkpoint():
-                config_name = args.policy.config
-                checkpoint_dir = args.policy.dir
-            case Default():
-                if checkpoint := DEFAULT_CHECKPOINT.get(args.env):
-                    config_name = checkpoint["config"]
-                    checkpoint_dir = checkpoint["dir"]
-                else:
-                    raise ValueError(f"Unsupported environment mode: {args.env}")
-
-        action_horizon, action_dim = get_model_dims(config_name)
-
-        server_metadata = ServerMetadata(
-            config_name=config_name,
-            checkpoint_dir=checkpoint_dir,
-            action_horizon=action_horizon,
-            action_dim=action_dim,
-            num_steps=args.num_steps,
-            max_batch_size=args.max_batch_size,
-            env=args.env.value,
-            scheduling_algorithm=args.scheduling_algorithm,
-        )
-
-        policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
+    resolved = resolve_policy(
+        model=args.model.value,
+        env=args.env,
+        policy_config=policy_config,
+        policy_dir=policy_dir,
+        max_batch_size=args.max_batch_size,
+        num_steps=args.num_steps,
+        default_prompt=args.default_prompt,
+        scheduling_algorithm=args.scheduling_algorithm,
+    )
 
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    scheduler_kwargs = build_scheduler_kwargs(args, action_horizon_steps=action_horizon)
+    scheduler_kwargs = build_scheduler_kwargs(
+        args, action_horizon_steps=resolved.metadata.action_horizon
+    )
 
     server = PolicyServer(
-        metadata=server_metadata,
-        policy_factory=policy_factory,
+        metadata=resolved.metadata,
+        policy_factory=resolved.factory,
         scheduler_kwargs=scheduler_kwargs,
         log_queue=log_queue,
     )

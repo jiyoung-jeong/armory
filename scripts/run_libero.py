@@ -72,7 +72,7 @@ class Args:
     #################################################################################################################
     experiment_config: Optional[str] = None
     toxiproxy_server_bin: Optional[str] = (
-        "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
+        "../toxiproxy-server-linux-amd64"
     )
 
     #################################################################################################################
