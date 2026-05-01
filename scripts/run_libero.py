@@ -50,7 +50,7 @@ class Args:
     host: str = "0.0.0.0"
     port: int = 8080
     resize_size: int = 224
-    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.SYNC
+    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
     execution_horizon: List[int] = field(default_factory=list)
 
     #################################################################################################################
@@ -72,7 +72,7 @@ class Args:
     #################################################################################################################
     experiment_config: Optional[str] = None
     toxiproxy_server_bin: Optional[str] = (
-        "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
+        "../toxiproxy-server-linux-amd64"
     )
 
     #################################################################################################################
