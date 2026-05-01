@@ -35,8 +35,10 @@ def get_gr00t_model_dims(model_family: str, env: EnvMode) -> tuple[int, int]:
     return cfg["action_horizon"], cfg["action_dim"]
 
 
-def get_gr00t_default_checkpoint(model_family: str, env: EnvMode) -> str | None:
-    return _resolve(model_family, env).get("dir")
+def get_gr00t_checkpoint_label(model_family: str, env: EnvMode) -> str:
+    """Human-readable checkpoint id for server metadata (Hub id + subfolder)."""
+    cfg = _resolve(model_family, env)
+    return f'{cfg["hub_model_id"]}/{cfg["hub_subfolder"]}'
 
 
 def create_gr00t_policy(
@@ -50,9 +52,43 @@ def create_gr00t_policy(
     from gr00t.policy.gr00t_policy import Gr00tPolicy
 
     cfg = _resolve(model_family, env)
-    ckpt = str(checkpoint_dir) if checkpoint_dir is not None else cfg["dir"]
     tag = EmbodimentTag[cfg["embodiment_tag"]]
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    policy = Gr00tPolicy(embodiment_tag=tag, model_path=ckpt, device=device)
+    if checkpoint_dir is not None:
+        root = pathlib.Path(checkpoint_dir).expanduser()
+        subfolder = cfg["hub_subfolder"]
+        # ``hf download --local-dir checkpoints/GR00T-N1.7-LIBERO`` nests weights under
+        # ``libero_10/``. If the user passes the parent dir, append the known subfolder.
+        if root.is_dir():
+            has_root_config = (root / "config.json").exists()
+            nested = root / subfolder
+            if not has_root_config and nested.is_dir() and (nested / "config.json").exists():
+                policy = Gr00tPolicy(
+                    embodiment_tag=tag,
+                    model_path=str(root),
+                    checkpoint_subfolder=subfolder,
+                    device=device,
+                )
+            else:
+                policy = Gr00tPolicy(
+                    embodiment_tag=tag,
+                    model_path=str(checkpoint_dir),
+                    checkpoint_subfolder=None,
+                    device=device,
+                )
+        else:
+            policy = Gr00tPolicy(
+                embodiment_tag=tag,
+                model_path=str(checkpoint_dir),
+                checkpoint_subfolder=None,
+                device=device,
+            )
+    else:
+        policy = Gr00tPolicy(
+            embodiment_tag=tag,
+            model_path=cfg["hub_model_id"],
+            checkpoint_subfolder=cfg["hub_subfolder"],
+            device=device,
+        )
     return Gr00tPolicyAdapter(policy)

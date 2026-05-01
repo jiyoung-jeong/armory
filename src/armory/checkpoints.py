@@ -46,17 +46,19 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
 
 class GrootCheckpointEntry(TypedDict):
     embodiment_tag: str
-    dir: str
+    hub_model_id: str
+    hub_subfolder: str
     action_horizon: int
     action_dim: int
 
 
-# model_family -> EnvMode -> checkpoint row (parallel to OPENPI_CHECKPOINT)
+# note: Can either rely on the HF cache or point ``--policy.dir`` at ``checkpoints/GR00T-N1.7-LIBERO`` if downloaded locally
 GROOT_CHECKPOINT: dict[str, dict[EnvMode, GrootCheckpointEntry]] = {
     "gr00t-n1.7": {
         EnvMode.LIBERO: {
             "embodiment_tag": "LIBERO_PANDA",
-            "dir": "/coc/flash7/rbansal66/vvla/Isaac-GR00T/checkpoints/GR00T-N1.7-LIBERO/libero_10",
+            "hub_model_id": "nvidia/GR00T-N1.7-LIBERO",
+            "hub_subfolder": "libero_10",
             "action_horizon": 16,
             "action_dim": 7,
         },

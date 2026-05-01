@@ -25,7 +25,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoModel
 
 from gr00t.data.embodiment_tags import FINETUNE_ONLY_TAGS, POSTTRAIN_TAGS, EmbodimentTag
 from gr00t.data.interfaces import BaseProcessor
@@ -78,41 +78,89 @@ class Gr00tPolicy(BasePolicy):
         *,
         device: int | str,
         strict: bool = True,
+        checkpoint_subfolder: str | None = None,
     ):
         """Initialize the Gr00t Policy.
 
         Args:
             embodiment_tag: The embodiment tag defining the robot/environment type.
                 Accepts an EmbodimentTag enum or a string (resolved case-insensitively).
-            model_path: Path to the pretrained model checkpoint directory
+            model_path: Hugging Face model id (e.g. ``nvidia/GR00T-N1.7-LIBERO``) or a local
+                directory containing the checkpoint. HF ids resolve via the HF cache when
+                you first call ``from_pretrained``.
+            checkpoint_subfolder: For hub models whose weights live under a subfolder of the
+                repo (e.g. ``libero_10`` for ``nvidia/GR00T-N1.7-LIBERO``), pass it here so
+                ``AutoModel`` loads ``repo_id`` + ``subfolder``. The GR00T processor is loaded
+                with ``Gr00tN1d7Processor`` (not ``AutoProcessor``); for HF, processor files are
+                resolved under ``subfolder`` via the Hub cache. For local ``model_path``, this is
+                appended as ``Path(model_path) / subfolder`` when given.
             device: Device to run the model on (e.g., 'cuda:0', 0, 'cpu')
             strict: Whether to enforce strict input validation (default: True)
         """
         # Import this to register all models.
         import gr00t.model  # noqa: F401
 
+        from gr00t.model.gr00t_n1d7.processing_gr00t_n1d7 import Gr00tN1d7Processor
+
         super().__init__(strict=strict)
         if isinstance(embodiment_tag, str):
             embodiment_tag = EmbodimentTag.resolve(embodiment_tag)
-        model_dir = Path(model_path)
 
-        # Load the pretrained model and move to target device with bfloat16 precision
-        model = AutoModel.from_pretrained(model_dir)
-        model.eval()  # Set model to evaluation mode
+        # Local dir: optionally resolve .../subdir; hub id: pass subfolder to from_pretrained.
+        expanded = Path(model_path).expanduser()
+        effective_local = None
+        if expanded.is_dir():
+            effective_local = expanded / checkpoint_subfolder if checkpoint_subfolder else expanded
+            if checkpoint_subfolder and not effective_local.is_dir():
+                raise FileNotFoundError(
+                    f"Expected checkpoint under {effective_local!s} "
+                    f"(model_path={model_path!r}, checkpoint_subfolder={checkpoint_subfolder!r})"
+                )
+
+        hf_subfolder_kw = checkpoint_subfolder if checkpoint_subfolder else None
+
+        if effective_local is not None and effective_local.is_dir():
+            model = AutoModel.from_pretrained(str(effective_local))
+        else:
+            model = AutoModel.from_pretrained(
+                model_path,
+                subfolder=hf_subfolder_kw,
+                trust_remote_code=True,
+            )
+
+        model.eval()
         model.to(device=device, dtype=torch.bfloat16)
         self.model = model
 
-        # Load the processor for input/output transformation.
-        # Training saves processor files under a "processor/" subdirectory, but
-        # AutoProcessor expects them at the model root.  Fall back to the
-        # subdirectory when the root lacks a processor_config.json.
-        processor_dir = (
-            model_dir / "processor"
-            if (model_dir / "processor").is_dir()
-            and not (model_dir / "processor_config.json").exists()
-            else model_dir
-        )
-        self.processor: BaseProcessor = AutoProcessor.from_pretrained(processor_dir)
+        # Load Gr00tN1d7Processor — not AutoProcessor: HF repo uses custom processor_config and
+        # checkpoints may nest under subfolder (e.g. libero_10/).
+        if effective_local is not None and effective_local.is_dir():
+            proc_root = effective_local
+            processor_dir = (
+                proc_root / "processor"
+                if (proc_root / "processor").is_dir()
+                and not (proc_root / "processor_config.json").exists()
+                else proc_root
+            )
+            self.processor: BaseProcessor = Gr00tN1d7Processor.from_pretrained(str(processor_dir))
+        else:
+            try:
+                from huggingface_hub import hf_hub_download
+            except ImportError as e:
+                raise ImportError(
+                    "huggingface_hub is required to load GR00T processors from the Hub."
+                ) from e
+            sf = hf_subfolder_kw
+            cfg_path = hf_hub_download(model_path, "processor_config.json", subfolder=sf)
+            hf_hub_download(model_path, "statistics.json", subfolder=sf)
+            try:
+                hf_hub_download(model_path, "embodiment_id.json", subfolder=sf)
+            except Exception:
+                pass
+            self.processor: BaseProcessor = Gr00tN1d7Processor.from_pretrained(
+                str(Path(cfg_path).parent)
+            )
+
         self.processor.eval()
 
         # Store embodiment-specific configurations

@@ -10,7 +10,12 @@ from armory_client.schemas import ServerMetadata
 from openpi_adapter.serve_factory import EnvMode
 from openpi_adapter.serve_factory import create_policy
 from openpi_adapter.serve_factory import get_model_dims
-from gr00t_adapter.serve_factory import create_gr00t_policy, get_gr00t_model_dims, get_gr00t_default_checkpoint, is_groot_model  # noqa: E501
+from gr00t_adapter.serve_factory import (  # noqa: E501
+    create_gr00t_policy,
+    get_gr00t_checkpoint_label,
+    get_gr00t_model_dims,
+    is_groot_model,
+)
 
 
 def get_gpu_info() -> dict[str, Any]:
@@ -94,11 +99,12 @@ def resolve_policy(
     callers (serve.py) stay model-agnostic.
     """
     if is_groot_model(model):
-        checkpoint_dir = policy_dir or get_gr00t_default_checkpoint(model, env)
+        groot_ckpt_override = policy_dir
+        checkpoint_label = groot_ckpt_override or get_gr00t_checkpoint_label(model, env)
         action_horizon, action_dim = get_gr00t_model_dims(model, env)
         metadata = ServerMetadata(
             config_name=f"{model}/{env.value}",
-            checkpoint_dir=checkpoint_dir or "",
+            checkpoint_dir=checkpoint_label,
             action_horizon=action_horizon,
             action_dim=action_dim,
             num_steps=num_steps,
@@ -106,7 +112,7 @@ def resolve_policy(
             env=env.value,
             scheduling_algorithm=scheduling_algorithm,
         )
-        factory = _Gr00tFactory(model, env, checkpoint_dir)
+        factory = _Gr00tFactory(model, env, groot_ckpt_override)
 
     else:
         if policy_config is not None and policy_dir is not None:
