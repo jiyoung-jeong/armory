@@ -51,7 +51,7 @@ class Args:
     host: str = "0.0.0.0"
     port: int = 8080
     resize_size: int = 224
-    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.SYNC
+    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
     execution_horizon: List[int] = field(default_factory=list)
 
     #################################################################################################################

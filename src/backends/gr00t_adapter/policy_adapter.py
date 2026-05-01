@@ -81,6 +81,22 @@ def _obs_to_groot(requests: list[InferRequest]) -> dict:
     }
 
 
+def _convert_gripper(actions: np.ndarray) -> np.ndarray:
+    """Convert gripper from GR00T's training space to robosuite convention.
+
+    GR00T outputs gripper in RLDS/LeRobot space: 0 = close, 1 = open.
+    Robosuite (LIBERO) expects:                 +1 = close, -1 = open.
+
+    Step 1 – normalize [0,1] → [-1,+1] with binarize:  sign(2x - 1)
+    Step 2 – invert sign (robosuite polarity flip):     * -1
+    Net:  0 → sign(-1)*-1 = +1 (close)
+          1 → sign(+1)*-1 = -1 (open)
+    """
+    actions = actions.copy()
+    actions[..., -1] = np.sign(2.0 * actions[..., -1] - 1.0) * -1.0
+    return actions
+
+
 def _groot_action_to_armory(action_dict: dict, batch_size: int) -> list[dict[str, Any]]:
     """Convert GR00T's batched action dict to a list of per-sample armory result dicts."""
     results = []
@@ -90,6 +106,7 @@ def _groot_action_to_armory(action_dict: dict, batch_size: int) -> list[dict[str
             arr = action_dict[key][i]   # (horizon, dim)
             parts.append(arr)
         actions = np.concatenate(parts, axis=-1)   # (horizon, total_action_dim)
+        actions = _convert_gripper(actions)
         results.append({
             "actions": actions,
             "noise": None,           # GR00T does not expose diffusion noise
