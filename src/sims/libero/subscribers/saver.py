@@ -1,12 +1,16 @@
+from __future__ import annotations
+
 import logging
 import pathlib
 import time
 import imageio
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple, TYPE_CHECKING
 import dataclasses
 from dataclasses import dataclass
 from armory_client.runtime import subscriber as _subscriber
@@ -19,8 +23,10 @@ from armory_client.schemas import (
     Observation,
     Action,
 )
-from libero.libero import benchmark
-from sims.libero.env import LiberoSimEnvironment
+
+if TYPE_CHECKING:
+    from libero.libero import benchmark
+    from sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
 

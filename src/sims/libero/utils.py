@@ -1,17 +1,10 @@
 import pathlib
 import math
-import random
 import numpy as np
 from libero.libero import get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
 
 LIBERO_ENV_RESOLUTION = 256
-
-
-def seed_everything(seed: int) -> None:
-    """Seed everything for reproducibility."""
-    np.random.seed(seed)
-    random.seed(seed)
 
 
 def _get_libero_env(task, seed):

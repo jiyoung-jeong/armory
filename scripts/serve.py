@@ -1,10 +1,11 @@
 import dataclasses
 import datetime
 import logging
+import multiprocessing as mp
 import pathlib
 import socket
 import sys
-from typing import Literal
+from typing import Any, Literal
 
 import tyro
 
@@ -12,11 +13,9 @@ from armory_client.schemas import ServerMetadata
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
-from openpi_adapter.serve_factory import create_policy
-from openpi_adapter.serve_factory import get_model_dims
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import DEFAULT_CHECKPOINT  # noqa: E402
+from utils import DEFAULT_CHECKPOINT, _MockPolicyFactory  # noqa: E402
 
 
 @dataclasses.dataclass
@@ -32,6 +31,16 @@ class Default:
     """Use the default policy for the given environment."""
 
 
+
+@dataclasses.dataclass
+class Mock:
+    """Use a lightweight mock policy that does not load weights or use a GPU."""
+
+    action_horizon: int = 50
+    action_dim: int = 14
+    profile: str = "l40s_pi05"
+
+
 @dataclasses.dataclass
 class Args:
     """Arguments for the serve script."""
@@ -42,7 +51,7 @@ class Args:
 
     port: int = 8080
 
-    policy: Checkpoint | Default = dataclasses.field(default_factory=Default)
+    policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
 
     max_batch_size: int = 1
 
@@ -73,6 +82,8 @@ class _PolicyFactory:
         self._checkpoint_dir = checkpoint_dir
 
     def __call__(self):
+        from openpi_adapter.serve_factory import create_policy
+
         return create_policy(
             self._config_name,
             self._checkpoint_dir,
@@ -113,6 +124,9 @@ def main(args: Args) -> None:
         case Checkpoint():
             config_name = args.policy.config
             checkpoint_dir = args.policy.dir
+        case Mock():
+            config_name = "mock"
+            checkpoint_dir = ""
         case Default():
             if checkpoint := DEFAULT_CHECKPOINT.get(args.env):
                 config_name = checkpoint["config"]
@@ -120,7 +134,13 @@ def main(args: Args) -> None:
             else:
                 raise ValueError(f"Unsupported environment mode: {args.env}")
 
-    action_horizon, action_dim = get_model_dims(config_name)
+    if isinstance(args.policy, Mock):
+        action_horizon = args.policy.action_horizon
+        action_dim = args.policy.action_dim
+    else:
+        from openpi_adapter.serve_factory import get_model_dims
+
+        action_horizon, action_dim = get_model_dims(config_name)
 
     server_metadata = ServerMetadata(
         config_name=config_name,
@@ -138,7 +158,15 @@ def main(args: Args) -> None:
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
     scheduler_kwargs = build_scheduler_kwargs(args, action_horizon_steps=action_horizon)
-    policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
+    if isinstance(args.policy, Mock):
+        policy_factory: Any = _MockPolicyFactory(
+            env=args.env.value,
+            action_horizon=action_horizon,
+            action_dim=action_dim,
+            profile=args.policy.profile,
+        )
+    else:
+        policy_factory = _PolicyFactory(args, config_name, checkpoint_dir)
 
     server = PolicyServer(
         metadata=server_metadata,
@@ -153,4 +181,5 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
+    mp.set_start_method("fork", force=True)
     main(tyro.cli(Args))

@@ -64,7 +64,7 @@ class LookaheadScheduler(RequestScheduler):
         now = time.time()
         self._prune_predictions(now)
 
-        if self._batch_queue.qsize() > 0 or now < self._server_available_at:
+        if not self._batch_queue.empty() or now < self._server_available_at:
             return []
 
         schedulable = self.schedulable_requests

@@ -2,12 +2,14 @@ from __future__ import annotations
 import multiprocessing
 import time
 import numpy as np
-from typing import List
+from typing import List, TYPE_CHECKING
 from armory_client.runtime import subscriber as _subscriber
 from typing_extensions import override
-from sims.libero.env import LiberoSimEnvironment
 from sims.libero.episodes import Episode
 import logging
+
+if TYPE_CHECKING:
+    from sims.libero.env import LiberoSimEnvironment
 
 
 logger = logging.getLogger(__name__)
