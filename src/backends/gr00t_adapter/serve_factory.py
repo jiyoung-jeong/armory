@@ -54,41 +54,29 @@ def create_gr00t_policy(
     cfg = _resolve(model_family, env)
     tag = EmbodimentTag[cfg["embodiment_tag"]]
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    hub_sub = cfg["hub_subfolder"]
 
-    if checkpoint_dir is not None:
-        root = pathlib.Path(checkpoint_dir).expanduser()
-        subfolder = cfg["hub_subfolder"]
-        # ``hf download --local-dir checkpoints/GR00T-N1.7-LIBERO`` nests weights under
-        # ``libero_10/``. If the user passes the parent dir, append the known subfolder.
-        if root.is_dir():
-            has_root_config = (root / "config.json").exists()
-            nested = root / subfolder
-            if not has_root_config and nested.is_dir() and (nested / "config.json").exists():
-                policy = Gr00tPolicy(
-                    embodiment_tag=tag,
-                    model_path=str(root),
-                    checkpoint_subfolder=subfolder,
-                    device=device,
-                )
-            else:
-                policy = Gr00tPolicy(
-                    embodiment_tag=tag,
-                    model_path=str(checkpoint_dir),
-                    checkpoint_subfolder=None,
-                    device=device,
-                )
-        else:
-            policy = Gr00tPolicy(
-                embodiment_tag=tag,
-                model_path=str(checkpoint_dir),
-                checkpoint_subfolder=None,
-                device=device,
-            )
+    if checkpoint_dir is None:
+        model_path = cfg["hub_model_id"]
+        checkpoint_subfolder = hub_sub
     else:
-        policy = Gr00tPolicy(
-            embodiment_tag=tag,
-            model_path=cfg["hub_model_id"],
-            checkpoint_subfolder=cfg["hub_subfolder"],
-            device=device,
+        root = pathlib.Path(checkpoint_dir).expanduser()
+        # ``hf download --local-dir checkpoints/GR00T-N1.7-LIBERO`` nests weights under
+        # ``libero_10/``. If the user passes the parent dir, use the known subfolder.
+        nested = root / hub_sub
+        use_hub_layout = (
+            root.is_dir()
+            and not (root / "config.json").exists()
+            and nested.is_dir()
+            and (nested / "config.json").exists()
         )
+        model_path = str(root)
+        checkpoint_subfolder = hub_sub if use_hub_layout else None
+
+    policy = Gr00tPolicy(
+        embodiment_tag=tag,
+        model_path=model_path,
+        checkpoint_subfolder=checkpoint_subfolder,
+        device=device,
+    )
     return Gr00tPolicyAdapter(policy)
