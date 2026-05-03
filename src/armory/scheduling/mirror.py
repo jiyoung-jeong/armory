@@ -5,12 +5,12 @@ action indexes vs. control steps
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, replace
+
+import copy
 import itertools
 import logging
+from dataclasses import dataclass, replace
 from typing import TypeAlias
-from collections import deque
-import copy
 
 from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import AckNotification, SlotRequest
@@ -45,6 +45,7 @@ class ActionChunk:
 
 
 class Robot:
+    # TODO: a robot will always have at least one control step, need to make this clear
     def __init__(self, control_hz: float, execution_horizon: int):
         self.control_hz = control_hz
         self.execution_horizon = execution_horizon
@@ -60,18 +61,14 @@ class Robot:
         self.steps.append(control_step)
 
     def send_response(self, chunk: ActionChunk) -> None:
-        assert (
-            not self.chunks or self.chunks[-1].observation_step < chunk.observation_step
-        )
+        assert not self.chunks or self.chunks[-1].observation_step < chunk.observation_step
         self.chunks.append(chunk)
 
     def receive_response(self, ack: AckNotification) -> None:
         """Updates a chunk's actual arrival time."""
         for i, chunk in enumerate(self.chunks):
             if chunk.observation_step == ack.observation_step:
-                self.chunks[i] = replace(
-                    chunk, arrival_time=ack.receive_time, arrived=True
-                )
+                self.chunks[i] = replace(chunk, arrival_time=ack.receive_time, arrived=True)
                 return
 
     @property
@@ -125,10 +122,18 @@ class Robot:
         )
 
     def deadline(self) -> float:
+        if not self.chunks:
+            return self.steps[-1].time
+
         step = self.steps[-1]
 
-        while step.action_step <= self.max_overall_action_step:
+        logger.debug(
+            "deadline start: step=%s max_overall_action_step=%d", step, self.max_overall_action_step
+        )
+        while step.next_action_step <= self.max_overall_action_step:
             step = self.advance_step(step)
+
+        logger.debug("deadline end: step=%s", step)
 
         return step.time
 
@@ -166,17 +171,13 @@ class Mirror:
         control_steps = []
         for rid in robot_ids:
             obs_time = time - latency_tracker.observation_latency(rid)
-            control_steps.append(
-                self.robots[rid].get_latest_control_step_before(obs_time)
-            )
+            control_steps.append(self.robots[rid].get_latest_control_step_before(obs_time))
 
         inference_latency = latency_tracker.infer_latency(len(robot_ids))
         return [
             ActionChunk(
                 observation_step=control_step.observation_step,
-                arrival_time=time
-                + inference_latency
-                + latency_tracker.action_latency(rid),
+                arrival_time=time + inference_latency + latency_tracker.action_latency(rid),
                 action_start_step=control_step.action_step,
                 execution_horizon=self.robots[rid].execution_horizon,
                 arrived=True,
@@ -203,6 +204,9 @@ class Mirror:
     def total_actions(self) -> int:
         return sum(robot.actions_executed() for robot in self.robots.values())
 
+    def deadlines(self) -> dict[robot_id, float]:
+        return {rid: robot.deadline() for rid, robot in self.robots.items()}
+
 
 # TODO: can be modified to support different search strategies/pruning/stopping criteria
 def search(
@@ -216,6 +220,7 @@ def search(
     best_objective = -float("inf")
     best_schedule: list[tuple[robot_id, ...]] = []
     end_time = start_time + horizon
+    initial_deadlines = initial_mirror.deadlines()
     # FIXME: don't access private
     max_batch_size = max(latency_tracker._infer_latency.keys())
     nodes_visited = 0
@@ -235,14 +240,14 @@ def search(
         gpu_time = time - start_time
         if gpu_time <= 0:
             return -float("inf")
-        new_actions = mirror.total_actions() - initial_mirror.total_actions()
-        return new_actions / gpu_time
+        new_deadlines = mirror.deadlines()
+        gained_time = sum(new_deadlines[rid] - initial_deadlines[rid] for rid in new_deadlines)
+        return gained_time / gpu_time
 
     def generate_candidates(mirror: Mirror):
         # TODO: for now just return combinations
         return itertools.chain.from_iterable(
-            itertools.combinations(mirror.robots.keys(), i)
-            for i in range(1, max_batch_size + 1)
+            itertools.combinations(mirror.robots.keys(), i) for i in range(1, max_batch_size + 1)
         )
 
     def dfs(
@@ -251,12 +256,7 @@ def search(
         schedule: list[tuple[robot_id, ...]],
         max_depth: int = 1,
     ) -> None:
-        nonlocal \
-            best_objective, \
-            best_schedule, \
-            nodes_visited, \
-            branches_pruned_time, \
-            leaves
+        nonlocal best_objective, best_schedule, nodes_visited, branches_pruned_time, leaves
         nodes_visited += 1
         objective_value = objective(mirror, time)
         if objective_value > best_objective:
