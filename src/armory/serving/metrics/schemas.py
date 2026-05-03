@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from dataclasses import field
 import itertools
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import NamedTuple, TypeAlias, TypeVar
 
 import numpy as np
-from armory_client.messages import EpisodeEnd
-from armory_client.messages import EpisodeStart
+
+from armory_client.messages import EpisodeEnd, EpisodeStart
 
 RobotID: TypeAlias = str
 T = TypeVar("T")
@@ -88,7 +87,9 @@ class Episode:
         self.responses = [ResponseRecord(**r) if isinstance(r, dict) else r for r in self.responses]
         assert all(
             next_request.action_start_step >= prev_request.action_start_step
-            for prev_request, next_request in zip(self.requests[:-1], self.requests[1:], strict=True)
+            for prev_request, next_request in zip(
+                self.requests[:-1], self.requests[1:], strict=True
+            )
         )
 
     @property
@@ -137,7 +138,9 @@ class Episode:
         )
 
     def get_responses(self, start_timestamp: float, end_timestamp: float) -> list[ResponseRecord]:
-        return window_filter(self.responses, lambda r: r.receive_time, (start_timestamp, end_timestamp))
+        return window_filter(
+            self.responses, lambda r: r.receive_time, (start_timestamp, end_timestamp)
+        )
 
     def get_windowed_actions_left(self, start_ts: float, end_ts: float) -> np.ndarray:
         """Slice of actions_left_history for control steps with timestamp in [start_ts, end_ts)."""
@@ -150,7 +153,11 @@ class Episode:
     def get_windowed_steps(self, start_ts: float, end_ts: float) -> list[tuple[float, float]]:
         """Return [(timestamp, actions_left), ...] for control steps in [start_ts, end_ts)."""
         history = self.actions_left_history
-        return [(t, float(history[i])) for i, t in enumerate(self.step_timestamps) if start_ts <= t < end_ts]
+        return [
+            (t, float(history[i]))
+            for i, t in enumerate(self.step_timestamps)
+            if start_ts <= t < end_ts
+        ]
 
 
 @dataclass
@@ -165,8 +172,12 @@ class Robot:
 
     def __post_init__(self) -> None:
         self.episodes = [Episode(**e) if isinstance(e, dict) else e for e in self.episodes]
-        self.orphan_requests = [RequestRecord(**r) if isinstance(r, dict) else r for r in self.orphan_requests]
-        self.orphan_responses = [ResponseRecord(**r) if isinstance(r, dict) else r for r in self.orphan_responses]
+        self.orphan_requests = [
+            RequestRecord(**r) if isinstance(r, dict) else r for r in self.orphan_requests
+        ]
+        self.orphan_responses = [
+            ResponseRecord(**r) if isinstance(r, dict) else r for r in self.orphan_responses
+        ]
 
     @property
     def current_episode(self) -> Episode:
@@ -189,7 +200,7 @@ class Robot:
         episode = self.current_episode
         assert episode.task_suite_name == episode_end.task_suite_name
         assert episode.task_id == episode_end.task_id
-        #assert episode.num_steps == episode_end.steps_taken
+        # assert episode.num_steps == episode_end.steps_taken
         episode.success = episode_end.success
 
     def add_step(self, timestamp: float) -> None:
@@ -232,19 +243,29 @@ class Robot:
 
     def get_requests(self, start_timestamp: float, end_timestamp: float) -> list[RequestRecord]:
         episode_reqs = list(
-            itertools.chain.from_iterable(e.get_requests(start_timestamp, end_timestamp) for e in self.episodes)
+            itertools.chain.from_iterable(
+                e.get_requests(start_timestamp, end_timestamp) for e in self.episodes
+            )
         )
-        orphan = window_filter(self.orphan_requests, lambda r: r.request_timestamp, (start_timestamp, end_timestamp))
+        orphan = window_filter(
+            self.orphan_requests, lambda r: r.request_timestamp, (start_timestamp, end_timestamp)
+        )
         return episode_reqs + orphan
 
     def get_responses(self, start_timestamp: float, end_timestamp: float) -> list[ResponseRecord]:
         episode_resps = list(
-            itertools.chain.from_iterable(e.get_responses(start_timestamp, end_timestamp) for e in self.episodes)
+            itertools.chain.from_iterable(
+                e.get_responses(start_timestamp, end_timestamp) for e in self.episodes
+            )
         )
-        orphan = window_filter(self.orphan_responses, lambda r: r.receive_time, (start_timestamp, end_timestamp))
+        orphan = window_filter(
+            self.orphan_responses, lambda r: r.receive_time, (start_timestamp, end_timestamp)
+        )
         return episode_resps + orphan
 
-    def get_actions_left_timed(self, start_ts: float, end_ts: float) -> tuple[np.ndarray, np.ndarray]:
+    def get_actions_left_timed(
+        self, start_ts: float, end_ts: float
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Return (timestamps, actions_left_values) for steps in [start_ts, end_ts), with nan separators between episodes."""
         times_parts: list[np.ndarray] = []
         values_parts: list[np.ndarray] = []

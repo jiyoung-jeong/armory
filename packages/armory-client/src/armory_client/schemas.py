@@ -2,14 +2,15 @@ import csv
 import json
 import pathlib
 import time
-from dataclasses import dataclass, field, fields, asdict
-from typing import List, Type, TypeVar, Optional
+from dataclasses import asdict, dataclass, field, fields
+from typing import TypeVar
 
 import numpy as np
-from jaxtyping import Float
-from armory_client import messages
 import pandas as pd
 import requests
+from jaxtyping import Float
+
+from armory_client import messages
 
 T = TypeVar("T", bound="CSVDataclass")
 J = TypeVar("J", bound="JSONDataclass")
@@ -20,7 +21,7 @@ class CSVDataclass:
     """Mixin class that adds CSV serialization to dataclasses."""
 
     @classmethod
-    def to_csv(cls: Type[T], instances: List[T], filepath: pathlib.Path) -> None:
+    def to_csv(cls: type[T], instances: list[T], filepath: pathlib.Path) -> None:
         """Save a list of dataclass instances to a CSV file."""
         if not instances:
             return
@@ -31,14 +32,16 @@ class CSVDataclass:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for instance in instances:
-                writer.writerow({field.name: getattr(instance, field.name) for field in allowed_fields})
+                writer.writerow(
+                    {field.name: getattr(instance, field.name) for field in allowed_fields}
+                )
 
     @classmethod
-    def from_csv(cls: Type[T], filepath: pathlib.Path) -> List[T]:
+    def from_csv(cls: type[T], filepath: pathlib.Path) -> list[T]:
         """Load a list of dataclass instances from a CSV file."""
         instances = []
         allowed_fields = [f for f in fields(cls) if f.type in (int, float, bool, str)]
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             reader = csv.DictReader(f)
             for row in reader:
                 # Convert string values to appropriate types based on field annotations
@@ -67,9 +70,9 @@ class JSONDataclass:
             json.dump(asdict(self), f, indent=indent)
 
     @classmethod
-    def from_json(cls: Type[J], filepath: pathlib.Path) -> J:
+    def from_json(cls: type[J], filepath: pathlib.Path) -> J:
         """Load a dataclass instance from a JSON file."""
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
             return cls(**data)
 
@@ -78,7 +81,7 @@ class ParquetDataclass:
     """Mixin class that adds Parquet serialization to dataclasses."""
 
     @classmethod
-    def to_parquet(cls: Type[P], instances: List[P], filepath: pathlib.Path) -> None:
+    def to_parquet(cls: type[P], instances: list[P], filepath: pathlib.Path) -> None:
         """Save a list of dataclass instances to a Parquet file."""
         if not instances:
             return
@@ -106,7 +109,7 @@ class ParquetDataclass:
         df.to_parquet(filepath, engine="pyarrow", index=False)
 
     @classmethod
-    def from_parquet(cls: Type[P], filepath: pathlib.Path) -> List[P]:
+    def from_parquet(cls: type[P], filepath: pathlib.Path) -> list[P]:
         """Load a list of dataclass instances from a Parquet file."""
         df = pd.read_parquet(filepath, engine="pyarrow")
 
@@ -129,7 +132,11 @@ class ParquetDataclass:
                 # to specify which fields should be numpy arrays
                 if isinstance(value, list) and value and isinstance(value[0], list):
                     kwargs[f.name] = np.array(value)
-                elif value is None or value is pd.NA or (isinstance(value, float) and np.isnan(value)):
+                elif (
+                    value is None
+                    or value is pd.NA
+                    or (isinstance(value, float) and np.isnan(value))
+                ):
                     kwargs[f.name] = None
                 else:
                     kwargs[f.name] = value
@@ -153,7 +160,7 @@ class ActionChunk(ParquetDataclass):
     request_timestamp: float
     response_timestamp: float
     request_id: int = -1
-    noise: Optional[np.ndarray] = None
+    noise: np.ndarray | None = None
 
     @classmethod
     def from_infer_response(
@@ -191,16 +198,16 @@ class Action:
 
     step: int
     action: Float[np.ndarray, " action_dim"]  # TODO: check the shape on this
-    action_chunk_index: Optional[int]
-    index_in_chunk: Optional[int]
+    action_chunk_index: int | None
+    index_in_chunk: int | None
 
 
 @dataclass(frozen=True)
 class Timestamp(CSVDataclass):
     timestamp: float
     env_step: int
-    action_chunk_index: Optional[int]
-    action_index: Optional[int]
+    action_chunk_index: int | None
+    action_index: int | None
 
 
 @dataclass
@@ -238,13 +245,15 @@ class ServerMetadata(JSONDataclass):
     scheduling_algorithm: str  # TODO: maybe reference the enum from scheduler.py
 
     # Set by Modal when running behind a tunnel; clients should use this for WebSocket
-    tunnel_url: Optional[str] = None
-    location: Optional[str] = None
+    tunnel_url: str | None = None
+    location: str | None = None
 
     def __post_init__(self) -> None:
         try:
             info = requests.get("https://ipinfo.io/json", timeout=3).json()
-            self.location = f"{info.get('city', '?')}, {info.get('region', '?')}, {info.get('country', '?')}"
+            self.location = (
+                f"{info.get('city', '?')}, {info.get('region', '?')}, {info.get('country', '?')}"
+            )
         except Exception:
             self.location = "unknown"
 
@@ -268,5 +277,5 @@ class RuntimeMetadata(JSONDataclass):
     broker_type: str
 
     # Other
-    episodes: List[str] = field(default_factory=list)
-    execution_horizon: List[int] = field(default_factory=list)
+    episodes: list[str] = field(default_factory=list)
+    execution_horizon: list[int] = field(default_factory=list)

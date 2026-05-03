@@ -14,7 +14,6 @@ import argparse
 import json
 import pathlib
 from typing import Any
-from typing import Dict
 
 from armory_client.network_emulation import load_experiment_config
 
@@ -26,7 +25,7 @@ NETWORK_FIELDS = (
 )
 
 
-def load_homogeneous_robot_profile(path: pathlib.Path) -> Dict[str, Any]:
+def load_homogeneous_robot_profile(path: pathlib.Path) -> dict[str, Any]:
     profile = json.loads(path.read_text())
 
     uplink_median = float(profile["uplink_median_ms"])
@@ -55,14 +54,14 @@ def _robot_position(robot_idx: int, num_robots: int) -> float:
 
 
 def _build_max_profile(
-    homogeneous_profile: Dict[str, Any],
+    homogeneous_profile: dict[str, Any],
     *,
     max_uplink_median_ms: float,
     max_uplink_sigma: float,
     max_downlink_median_ms: float,
     max_downlink_sigma: float,
     max_execution_horizon: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     max_profile = {
         "uplink_median_ms": float(max_uplink_median_ms),
         "uplink_sigma": float(max_uplink_sigma),
@@ -77,8 +76,8 @@ def _build_max_profile(
 def build_output_config(
     *,
     num_robots: int,
-    homogeneous_profile: Dict[str, Any],
-    max_profile: Dict[str, Any],
+    homogeneous_profile: dict[str, Any],
+    max_profile: dict[str, Any],
     heterogeneity_k: float,
     action_chunk_broker_type: str,
     trials_per_robot: int,
@@ -88,11 +87,11 @@ def build_output_config(
     toxiproxy_server_args: list[str],
     sampling_default_seed: int,
     sampling_resample_every_requests: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     broker_type = action_chunk_broker_type.strip().lower()
     k = float(heterogeneity_k)
 
-    output: Dict[str, Any] = {
+    output: dict[str, Any] = {
         "experiment": {
             "action_chunk_broker_type": broker_type,
             "num_robots": num_robots,
@@ -114,7 +113,7 @@ def build_output_config(
     for robot_idx in range(num_robots):
         robot_id = f"robot_{robot_idx}"
         position = _robot_position(robot_idx, num_robots)
-        robot_out: Dict[str, Any] = {}
+        robot_out: dict[str, Any] = {}
 
         for field in NETWORK_FIELDS:
             homo_val = float(homogeneous_profile[field])
@@ -213,9 +212,7 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
-    profile = load_homogeneous_robot_profile(
-        pathlib.Path(args.homogeneous_robot_profile)
-    )
+    profile = load_homogeneous_robot_profile(pathlib.Path(args.homogeneous_robot_profile))
     max_profile = _build_max_profile(
         profile,
         max_uplink_median_ms=float(args.max_uplink_median_ms),

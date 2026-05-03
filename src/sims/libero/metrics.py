@@ -1,19 +1,21 @@
 """Metrics and plotting utilities for LIBERO experiments."""
 
 import json
-from typing import List, Dict, Callable, Optional, Tuple
-import pandas as pd
-import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.patches import Patch
+import logging
+from collections.abc import Callable
 from dataclasses import asdict
+
+import matplotlib
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.patches import Patch
 from rich.console import Console
 from rich.table import Table
+
+from armory_client.schemas import ActionChunk, RuntimeMetadata, pathlib
 from sims.libero.subscribers.saver import Result
-from armory_client.schemas import RuntimeMetadata, pathlib, ActionChunk
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +23,14 @@ logger = logging.getLogger(__name__)
 # Data Loading
 # =============================================================================
 
-def _episode_step_timestamps(ep: dict) -> List[float]:
+
+def _episode_step_timestamps(ep: dict) -> list[float]:
     ts = ep.get("step_timestamps") or []
     if ts:
         return [float(t) for t in ts]
 
     requests = ep.get("requests") or []
-    return [
-        float(req.get("request_timestamp"))
-        for req in requests
-        if req.get("request_timestamp")
-    ]
+    return [float(req.get("request_timestamp")) for req in requests if req.get("request_timestamp")]
 
 
 # =============================================================================
@@ -45,13 +44,13 @@ def load_episodes(output_path: pathlib.Path) -> pd.DataFrame:
     if not metadata_files:
         return pd.DataFrame()
 
-    results: List[Result] = [Result.from_json(f) for f in metadata_files]
+    results: list[Result] = [Result.from_json(f) for f in metadata_files]
     return pd.DataFrame([asdict(result) for result in results])
 
 
 def load_actions_left(
     output_path: pathlib.Path,
-) -> Dict[str, List[Tuple[float, np.ndarray]]]:
+) -> dict[str, list[tuple[float, np.ndarray]]]:
     """Load actions_left.npy files grouped by robot_idx, with start timestamps.
 
     Returns:
@@ -93,8 +92,8 @@ def _load_control_hz(output_path: pathlib.Path, fallback: float = 20.0) -> float
 
 def _build_actions_left_matrix(
     output_path: pathlib.Path,
-    control_hz: Optional[float] = None,
-) -> Tuple[List[str], np.ndarray, List[List[int]], float]:
+    control_hz: float | None = None,
+) -> tuple[list[str], np.ndarray, list[list[int]], float]:
     """Align per-episode actions_left traces onto a shared wall-clock grid."""
     by_robot = load_actions_left(output_path)
     resolved_control_hz = float(control_hz or _load_control_hz(output_path))
@@ -158,7 +157,7 @@ def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def load_experiment_duration(output_path: pathlib.Path) -> Optional[float]:
+def load_experiment_duration(output_path: pathlib.Path) -> float | None:
     """Compute total experiment wall-clock duration from timestamps.csv files.
 
     Returns the span from the earliest first-step timestamp to the latest
@@ -184,7 +183,7 @@ def load_experiment_duration(output_path: pathlib.Path) -> Optional[float]:
 
 def _server_batch_fields(
     batch,
-) -> Tuple[object, List[str], List[int], Optional[float], Optional[float], int]:
+) -> tuple[object, list[str], list[int], float | None, float | None, int]:
     """Parse old 5-field and new 6-field server batch records."""
     if isinstance(batch, dict):
         robot_ids = batch.get("robot_ids") or []
@@ -200,9 +199,7 @@ def _server_batch_fields(
         )
 
     batch_id, robot_ids, request_ids, start, end = batch[:5]
-    batch_size = (
-        int(batch[5]) if len(batch) >= 6 and batch[5] is not None else len(robot_ids)
-    )
+    batch_size = int(batch[5]) if len(batch) >= 6 and batch[5] is not None else len(robot_ids)
     return batch_id, robot_ids, request_ids, start, end, batch_size
 
 
@@ -327,13 +324,13 @@ def plot_histogram(
 
 def plot_bar_chart(
     ax: plt.Axes,
-    labels: List[str],
+    labels: list[str],
     values: np.ndarray,
     ylabel: str = "Value",
     title: str = "",
-    counts: Optional[np.ndarray] = None,
-    overall_line: Optional[Tuple[float, str]] = None,
-    color_fn: Optional[Callable[[float], str]] = None,
+    counts: np.ndarray | None = None,
+    overall_line: tuple[float, str] | None = None,
+    color_fn: Callable[[float], str] | None = None,
 ) -> None:
     """Plot bar chart with optional annotations.
 
@@ -347,9 +344,7 @@ def plot_bar_chart(
         overall_line: Optional (value, label) for horizontal line
         color_fn: Optional function(value) -> color for conditional coloring
     """
-    bars = ax.bar(
-        range(len(values)), values, color="steelblue", edgecolor="black", alpha=0.7
-    )
+    bars = ax.bar(range(len(values)), values, color="steelblue", edgecolor="black", alpha=0.7)
 
     if color_fn:
         for bar, val in zip(bars, values):
@@ -381,10 +376,10 @@ def plot_bar_chart(
 
 def plot_grouped_violin(
     ax: plt.Axes,
-    groups: Dict[str, Dict[str, np.ndarray]],
+    groups: dict[str, dict[str, np.ndarray]],
     ylabel: str = "Value",
     title: str = "",
-    group_colors: Optional[Dict[str, str]] = None,
+    group_colors: dict[str, str] | None = None,
 ) -> None:
     """Plot violin plots comparing multiple groups per category.
 
@@ -449,9 +444,7 @@ def plot_grouped_violin(
 
     # Legend
     legend_elements = [
-        Patch(
-            facecolor=group_colors.get(name, "lightblue"), edgecolor="black", label=name
-        )
+        Patch(facecolor=group_colors.get(name, "lightblue"), edgecolor="black", label=name)
         for name in group_names
         if any(name in g for g in groups.values())
     ]
@@ -470,7 +463,7 @@ def plot_task_breakdown(
     plot_fn: Callable[[plt.Axes, np.ndarray, str], None],
     title: str,
     filename: pathlib.Path,
-    title_pad: Optional[float] = None,
+    title_pad: float | None = None,
 ) -> None:
     """Create grid: 'All Tasks' in first cell, then one cell per task.
 
@@ -489,13 +482,9 @@ def plot_task_breakdown(
     # Create task labels and group
     df = df.copy()
     if "task_language" in df.columns:
-        df["task_label"] = (
-            "Task " + df["task_id"].astype(str) + "\n" + df["task_language"].str[:30]
-        )
+        df["task_label"] = "Task " + df["task_id"].astype(str) + "\n" + df["task_language"].str[:30]
     else:
-        df["task_label"] = (
-            df["task_suite_name"] + " - Task " + df["task_id"].astype(str)
-        )
+        df["task_label"] = df["task_suite_name"] + " - Task " + df["task_id"].astype(str)
     grouped = df.groupby(["task_id", "task_label"], sort=True)
 
     n_tasks = len(grouped)
@@ -571,10 +560,7 @@ def generate_success_rate_plot(output_path: pathlib.Path) -> None:
         .reset_index()
     )
     summary["task_label"] = (
-        "Task "
-        + summary["task_id"].astype(str)
-        + "\n"
-        + summary["task_language"].str[:30]
+        "Task " + summary["task_id"].astype(str) + "\n" + summary["task_language"].str[:30]
     )
 
     overall_rate = df["success"].mean()
@@ -645,13 +631,9 @@ def generate_steps_plot(output_path: pathlib.Path) -> None:
         ax_success.set_title("Successful Episodes")
 
     # Per-task violin plot (success only)
-    df["task_label"] = (
-        "Task " + df["task_id"].astype(str) + "\n" + df["task_language"].str[:30]
-    )
+    df["task_label"] = "Task " + df["task_id"].astype(str) + "\n" + df["task_language"].str[:30]
     groups = {}
-    for (task_id, task_label), group in df.groupby(
-        ["task_id", "task_label"], sort=True
-    ):
+    for (task_id, task_label), group in df.groupby(["task_id", "task_label"], sort=True):
         groups[task_label] = {
             "success": group[group["success"]]["steps_taken"].values,
         }
@@ -673,7 +655,7 @@ def generate_steps_plot(output_path: pathlib.Path) -> None:
 
 
 def generate_actions_left_heatmap(
-    output_path: pathlib.Path, control_hz: Optional[float] = None
+    output_path: pathlib.Path, control_hz: float | None = None
 ) -> None:
     """Heatmap of actions_left[step, robot] using ground-truth queue lengths.
 
@@ -755,9 +737,7 @@ def generate_per_robot_success_rate_plot(output_path: pathlib.Path) -> None:
         logger.warning("No episode data for per-robot success rate plot")
         return
 
-    robot_summary = (
-        df.groupby("robot_idx")["success"].agg(["mean", "count"]).reset_index()
-    )
+    robot_summary = df.groupby("robot_idx")["success"].agg(["mean", "count"]).reset_index()
     robot_summary = robot_summary.sort_values("robot_idx")
 
     overall_rate = df["success"].mean()
@@ -835,8 +815,7 @@ def generate_starvation_plot(output_path: pathlib.Path) -> None:
     fig, ax = plt.subplots(figsize=(max(6, 2 * n_robots), 5))
     bars = ax.bar(robot_labels, rates, color="tomato", edgecolor="black", alpha=0.8)
     overall_rate = (
-        robot_starvation["starvation_steps"].sum()
-        / robot_starvation["observed_steps"].sum()
+        robot_starvation["starvation_steps"].sum() / robot_starvation["observed_steps"].sum()
     )
     ax.axhline(
         overall_rate,
@@ -927,7 +906,7 @@ def generate_starvation_tail_metrics_plot(output_path: pathlib.Path) -> None:
 
 
 def generate_starvation_variance_plot(
-    output_path: pathlib.Path, control_hz: Optional[float] = None
+    output_path: pathlib.Path, control_hz: float | None = None
 ) -> None:
     """Plot cumulative starvation rate per robot and its cross-robot variance."""
     robots, matrix, _, control_hz = _build_actions_left_matrix(output_path, control_hz)
@@ -1023,7 +1002,7 @@ def generate_staleness_plot(output_path: pathlib.Path) -> None:
         return
 
     robots = sorted(by_robot.keys(), key=int)
-    robot_actions: Dict[str, np.ndarray] = {}
+    robot_actions: dict[str, np.ndarray] = {}
     for robot in robots:
         vals = np.concatenate([arr for _, arr in by_robot[robot]])
         robot_actions[robot] = vals[~np.isnan(vals)]
@@ -1039,9 +1018,7 @@ def generate_staleness_plot(output_path: pathlib.Path) -> None:
 
     fig, ax = plt.subplots(figsize=(max(6, 2 * n_robots), 5))
 
-    parts = ax.violinplot(
-        data, positions=positions, widths=0.7, showmeans=False, showmedians=False
-    )
+    parts = ax.violinplot(data, positions=positions, widths=0.7, showmeans=False, showmedians=False)
     for pc in parts["bodies"]:
         pc.set_facecolor("steelblue")
         pc.set_alpha(0.6)
@@ -1093,7 +1070,7 @@ def generate_staleness_plot(output_path: pathlib.Path) -> None:
 def generate_batch_size_plot(output_path: pathlib.Path) -> None:
     """Distribution of action chunk execution horizons (batch sizes)."""
 
-    with open(output_path / "server_metrics_history.json", "r") as f:
+    with open(output_path / "server_metrics_history.json") as f:
         data = json.load(f)
 
     # FIXME: should use JSONDataclass loading
@@ -1122,16 +1099,14 @@ def generate_server_timings_plot(output_path: pathlib.Path) -> None:
         return
     data = json.loads(history_path.read_text())
 
-    step_intervals: List[float] = []
-    inbound: List[float] = []
-    outbound: List[float] = []
+    step_intervals: list[float] = []
+    inbound: list[float] = []
+    outbound: list[float] = []
     for robot in data.get("robots", {}).values():
         for ep in robot.get("episodes", []):
             ts = _episode_step_timestamps(ep)
             if len(ts) >= 2:
-                step_intervals.extend(
-                    (np.diff(np.asarray(ts, dtype=float)) * 1000.0).tolist()
-                )
+                step_intervals.extend((np.diff(np.asarray(ts, dtype=float)) * 1000.0).tolist())
             for req in ep.get("requests", []):
                 ra = req.get("server_arrival_time")
                 send_ts = req.get("request_timestamp")
@@ -1143,7 +1118,7 @@ def generate_server_timings_plot(output_path: pathlib.Path) -> None:
                 if rcv > 0 and snd > 0:
                     outbound.append((rcv - snd) * 1000.0)
 
-    infer: List[float] = []
+    infer: list[float] = []
     for b in data.get("batches", []):
         _, _, _, start, end, _ = _server_batch_fields(b)
         if start and end and end >= start:
@@ -1193,21 +1168,19 @@ def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
     """Plot server timings over wall-clock time to check temporal alignment of spikes."""
     history_path = output_path / "server_metrics_history.json"
     if not history_path.exists():
-        logger.warning(
-            "No server_metrics_history.json; skipping server timings over time plot"
-        )
+        logger.warning("No server_metrics_history.json; skipping server timings over time plot")
         return
     data = json.loads(history_path.read_text())
 
-    step_t: List[float] = []
-    step_v: List[float] = []
-    step_robot: List[str] = []
-    inbound_t: List[float] = []
-    inbound_v: List[float] = []
-    inbound_robot: List[str] = []
-    outbound_t: List[float] = []
-    outbound_v: List[float] = []
-    outbound_robot: List[str] = []
+    step_t: list[float] = []
+    step_v: list[float] = []
+    step_robot: list[str] = []
+    inbound_t: list[float] = []
+    inbound_v: list[float] = []
+    inbound_robot: list[str] = []
+    outbound_t: list[float] = []
+    outbound_v: list[float] = []
+    outbound_robot: list[str] = []
 
     for robot_id, robot in data.get("robots", {}).items():
         for ep in robot.get("episodes", []):
@@ -1231,9 +1204,9 @@ def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
                     outbound_v.append((float(rcv) - float(snd)) * 1000.0)
                     outbound_robot.append(robot_id)
 
-    infer_t: List[float] = []
-    infer_v: List[float] = []
-    infer_bs: List[int] = []
+    infer_t: list[float] = []
+    infer_v: list[float] = []
+    infer_bs: list[int] = []
     for b in data.get("batches", []):
         _, _, _, start, end, batch_size = _server_batch_fields(b)
         if start and end and end >= start:
@@ -1247,7 +1220,7 @@ def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
         return
     t0 = min(all_times)
 
-    def _rel(ts: List[float]) -> np.ndarray:
+    def _rel(ts: list[float]) -> np.ndarray:
         return np.asarray(ts, dtype=float) - t0
 
     series = [
@@ -1381,9 +1354,7 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     aggregation_spec["post_first_observed_steps"] = "sum"
 
     summary = df.groupby(["task_suite_name", "task_id"]).agg(aggregation_spec)
-    summary["planner_starvation_rate"] = (
-        summary["starvation_steps"] / summary["observed_steps"]
-    )
+    summary["planner_starvation_rate"] = summary["starvation_steps"] / summary["observed_steps"]
     summary["post_first_starvation_rate"] = (
         summary["post_first_starvation_steps"] / summary["post_first_observed_steps"]
     )
@@ -1448,9 +1419,7 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
         if total_post_first_observed_steps > 0
         else 0.0
     )
-    console.print(
-        f"\n[bold green]Total success rate: {summary['success'].mean():.2%}[/bold green]"
-    )
+    console.print(f"\n[bold green]Total success rate: {summary['success'].mean():.2%}[/bold green]")
     console.print(
         f"[bold yellow]Total starvation steps: {total_starvation_steps} control steps[/bold yellow]"
     )

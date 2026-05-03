@@ -1,13 +1,18 @@
-from armory_client.schemas import Observation
+from typing_extensions import override
+
+from armory_client import messages
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
-from typing_extensions import override
-from armory_client import messages
+from armory_client.schemas import Observation
 
 
 class InferenceTimeRTCBroker(ActionChunkBroker):
     def __init__(
-        self, ws_client: BidirectionalWebsocket, control_hz: int, realtime: bool = True, execution_horizon: int = 0
+        self,
+        ws_client: BidirectionalWebsocket,
+        control_hz: int,
+        realtime: bool = True,
+        execution_horizon: int = 0,
     ):
         """
         Args:
@@ -17,7 +22,10 @@ class InferenceTimeRTCBroker(ActionChunkBroker):
             execution_horizon: how many steps in the predicted chunk the robot is willing to execute
         """
         super().__init__(
-            ws_client=ws_client, control_hz=control_hz, realtime=realtime, execution_horizon=execution_horizon
+            ws_client=ws_client,
+            control_hz=control_hz,
+            realtime=realtime,
+            execution_horizon=execution_horizon,
         )
 
     @override

@@ -1,12 +1,10 @@
+import threading
 import time
-from typing import List
-from typing import Optional
-from armory_client.schemas import ActionChunk
 from abc import ABC
 from collections import deque
+
 from armory_client.client import BidirectionalWebsocket
-from armory_client.schemas import Action, Observation
-import threading
+from armory_client.schemas import Action, ActionChunk, Observation
 
 
 # FIXME: Saver uses action_chunks, but the envy is not clear and it's easy to remove it from this class
@@ -24,11 +22,15 @@ class ActionChunkBroker(ABC):
     """
 
     def __init__(
-        self, ws_client: BidirectionalWebsocket, control_hz: int, realtime: bool = True, execution_horizon: int = 0
+        self,
+        ws_client: BidirectionalWebsocket,
+        control_hz: int,
+        realtime: bool = True,
+        execution_horizon: int = 0,
     ) -> None:
         self._ws_client = ws_client
         self._action_queue: deque[Action] = deque()
-        self._action_chunks: List[ActionChunk] = []
+        self._action_chunks: list[ActionChunk] = []
         self._next_observation_step: int = 0  # next observation step to see
         self._next_action_step: int = 0  # next action step to execute
 
@@ -69,7 +71,11 @@ class ActionChunkBroker(ABC):
         import numpy as np
 
         action = np.zeros(7)
-        action[-1] = self.current_action_chunk.get_action(-1)[-1] if self.current_action_chunk is not None else 0.0
+        action[-1] = (
+            self.current_action_chunk.get_action(-1)[-1]
+            if self.current_action_chunk is not None
+            else 0.0
+        )
 
         return Action(
             step=observation_step,
@@ -89,7 +95,9 @@ class ActionChunkBroker(ABC):
 
                 self._action_chunks.append(action_chunk)
                 self._update_action_queue(action_chunk)
-                first_executed_index = max(0, self._next_action_step - action_chunk.action_start_step)
+                first_executed_index = max(
+                    0, self._next_action_step - action_chunk.action_start_step
+                )
                 self._ws_client.send_ack(
                     action_chunk.request_id,
                     action_chunk.response_timestamp,
@@ -132,15 +140,15 @@ class ActionChunkBroker(ABC):
             self._ws_client.reset()
 
     @property
-    def action_chunks(self) -> List[ActionChunk]:
+    def action_chunks(self) -> list[ActionChunk]:
         return self._action_chunks
 
     @property
-    def current_action_chunk(self) -> Optional[ActionChunk]:
+    def current_action_chunk(self) -> ActionChunk | None:
         return self._action_chunks[-1] if self._action_chunks else None
 
     @property
-    def actions_left_history(self) -> List[int]:
+    def actions_left_history(self) -> list[int]:
         """Actions remaining in queue after each step (recorded inside the lock)."""
         return list(self._actions_left_history)
 

@@ -1,8 +1,8 @@
 from typing_extensions import override
 
 from armory_client import action_chunkers as _action_chunkers
-from armory_client.schemas import Observation, Action
 from armory_client.runtime import agent as _agent
+from armory_client.schemas import Action, Observation
 
 
 # TODO: fix typing on broker, it was base_policy

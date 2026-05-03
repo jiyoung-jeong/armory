@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-import numpy as np
-from typing import Any, List, Dict, Type, TYPE_CHECKING
-from jaxtyping import Float
 import random
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+from jaxtyping import Float
 
 if TYPE_CHECKING:
     from libero.libero import benchmark
@@ -29,7 +30,7 @@ class _MockTask:
     language: str
 
 
-def create_mock_episodes(num_episodes: int) -> List[Episode]:
+def create_mock_episodes(num_episodes: int) -> list[Episode]:
     """Synthetic episodes for the mock env — no libero dependency."""
     return [
         Episode(
@@ -43,16 +44,14 @@ def create_mock_episodes(num_episodes: int) -> List[Episode]:
     ]
 
 
-def create_episodes(task_suite_name: str, num_trials_per_task: int) -> List[Episode]:
+def create_episodes(task_suite_name: str, num_trials_per_task: int) -> list[Episode]:
     from libero.libero import benchmark
 
-    benchmark_dict: Dict[str, Type[benchmark.Benchmark]] = (
-        benchmark.get_benchmark_dict()
-    )
+    benchmark_dict: dict[str, type[benchmark.Benchmark]] = benchmark.get_benchmark_dict()
     task_suite: benchmark.Benchmark = benchmark_dict[task_suite_name]()
     num_tasks_in_suite = task_suite.n_tasks
 
-    episodes: List[Episode] = []
+    episodes: list[Episode] = []
     for task_id in range(num_tasks_in_suite):
         task: benchmark.Task = task_suite.get_task(task_id)
         all_initial_states: Float[np.ndarray, "n_initial_states state_dim"] = (
@@ -60,9 +59,7 @@ def create_episodes(task_suite_name: str, num_trials_per_task: int) -> List[Epis
         )
 
         if len(all_initial_states) < num_trials_per_task:
-            raise ValueError(
-                f"Task {task_id} has less initial states than trials per task"
-            )
+            raise ValueError(f"Task {task_id} has less initial states than trials per task")
 
         initial_states = all_initial_states[:num_trials_per_task]
         for state in initial_states:

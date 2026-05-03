@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from abc import ABC
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 
 class LatencyTracker(ABC):
@@ -31,7 +30,9 @@ class LatencyTracker(ABC):
     def update_infer(self, batch_size: int, duration: float) -> None:
         self._update_measurement(self._infer_latency, batch_size, duration)
 
-    def update_action_delivery(self, robot_id: str, receive_time: float, server_send_time: float) -> None:
+    def update_action_delivery(
+        self, robot_id: str, receive_time: float, server_send_time: float
+    ) -> None:
         self._update_measurement(self._action_latency, robot_id, receive_time - server_send_time)
 
     # FIXME: how to make sure these are only called when these are available?
@@ -46,7 +47,11 @@ class LatencyTracker(ABC):
 
     def total_latency(self, robot_id: str, batch_size: int) -> float:
         """Total latency from observation timestep to robot receiving the action. Used as d param in RTC."""
-        return self.observation_latency(robot_id) + self.infer_latency(batch_size) + self.action_latency(robot_id)
+        return (
+            self.observation_latency(robot_id)
+            + self.infer_latency(batch_size)
+            + self.action_latency(robot_id)
+        )
 
     def clear(self, robot_id: str) -> None:
         self._observation_latency.pop(robot_id, None)

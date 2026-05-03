@@ -361,6 +361,46 @@ dependencies = [
     "sortedcontainers>=2.4.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.0",
+    "ruff>=0.15.12",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "packages/armory-client/src"]
+extend-exclude = [
+    "data",
+    "logs",
+    "third_party",
+]
+
+[tool.ruff.lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "UP",
+]
+ignore = [
+    # jaxtyping uses string shape annotations that Pyflakes reports as invalid.
+    "F722",
+    # Keep enum inheritance changes explicit instead of auto-modernizing public types.
+    "UP042",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "armory",
+    "armory_client",
+    "openpi_adapter",
+    "sims",
+]
+
 [tool.uv.sources]
 lerobot = { git = "https://github.com/huggingface/lerobot", rev = "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
 libero = { path = "third_party/libero", editable = true }

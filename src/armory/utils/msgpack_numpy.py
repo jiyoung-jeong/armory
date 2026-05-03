@@ -13,10 +13,10 @@ that it falls back to pickle for object arrays.
 """
 
 import functools
+from enum import Enum
 
 import msgpack
 import numpy as np
-from enum import Enum
 
 
 def pack_array(obj):

@@ -1,6 +1,6 @@
 import abc
 
-from armory_client.schemas import Observation, Action
+from armory_client.schemas import Action, Observation
 
 
 class Subscriber(abc.ABC):

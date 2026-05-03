@@ -15,7 +15,9 @@ def _make_handlers(log_path: Path | None) -> list[logging.Handler]:
     handlers: list[logging.Handler] = [console]
     if log_path is not None:
         fh = logging.FileHandler(log_path)
-        fh.setFormatter(logging.Formatter("%(asctime)s [%(processName)s] %(levelname)s %(name)s: %(message)s"))
+        fh.setFormatter(
+            logging.Formatter("%(asctime)s [%(processName)s] %(levelname)s %(name)s: %(message)s")
+        )
         handlers.append(fh)
     return handlers
 
@@ -30,7 +32,9 @@ def setup_logging(
     listener.stop() on shutdown.
     """
     handlers = _make_handlers(log_path)
-    logging.basicConfig(level=level, format="%(message)s", datefmt="[%X]", handlers=handlers, force=True)
+    logging.basicConfig(
+        level=level, format="%(message)s", datefmt="[%X]", handlers=handlers, force=True
+    )
 
     log_queue: mp.Queue = mp.Queue(-1)
     listener = logging.handlers.QueueListener(log_queue, *handlers, respect_handler_level=True)

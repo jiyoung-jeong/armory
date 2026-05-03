@@ -1,7 +1,8 @@
 from dataclasses import dataclass
-from armory_client.schemas import Observation
-from armory_client.schemas import Action
+
 import numpy as np
+
+from armory_client.schemas import Action, Observation
 
 
 @dataclass
@@ -79,4 +80,3 @@ class MockEnvironment:
     @property
     def current_initial_state(self) -> np.ndarray:
         return np.zeros(1, dtype=np.float32)
-

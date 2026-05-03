@@ -2,28 +2,32 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
-from multiprocessing.synchronize import Event
 import signal
+from multiprocessing.synchronize import Event
 
-from armory_client.messages import ResetRequest
 import zmq
 
 from armory.scheduling import RequestScheduler
-from armory.scheduling.baselines import MaxBatchScheduler
-from armory.scheduling.baselines import GreedyActionScheduler
-from armory.scheduling.baselines import GreedyDeadlineScheduler
-from armory.scheduling.baselines import RandomBatchScheduler
-from armory.scheduling.baselines import RoundRobinScheduler
-from armory.scheduling.baselines import FixedMaxBatchScheduler
+from armory.scheduling.baselines import (
+    FixedMaxBatchScheduler,
+    GreedyActionScheduler,
+    GreedyDeadlineScheduler,
+    MaxBatchScheduler,
+    RandomBatchScheduler,
+    RoundRobinScheduler,
+)
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
-from armory.serving.schemas import AckNotification
-from armory.serving.schemas import BatchProfile
-from armory.serving.schemas import CompletionNotification
-from armory.serving.schemas import SlotRequest
-from armory.serving.schemas import WarmupSeed
+from armory.serving.schemas import (
+    AckNotification,
+    BatchProfile,
+    CompletionNotification,
+    SlotRequest,
+    WarmupSeed,
+)
 from armory.utils import logging_config
+from armory_client.messages import ResetRequest
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +40,7 @@ def _recv_batch_profile(result_sock: zmq.Socket) -> dict[int, float]:
             msg = result_sock.recv_pyobj()
             if isinstance(msg, BatchProfile):
                 return msg.latencies
-            logger.warning(
-                "Unexpected message before batch profile: %s", type(msg).__name__
-            )
+            logger.warning("Unexpected message before batch profile: %s", type(msg).__name__)
 
 
 SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
@@ -100,8 +102,7 @@ def _run_scheduler(
     cls = SCHEDULER_REGISTRY.get(algorithm)
     if cls is None:
         raise ValueError(
-            f"Unknown scheduling algorithm {algorithm!r}. "
-            f"Available: {sorted(SCHEDULER_REGISTRY)}"
+            f"Unknown scheduling algorithm {algorithm!r}. Available: {sorted(SCHEDULER_REGISTRY)}"
         )
     ctx = zmq.Context()
 
@@ -153,9 +154,7 @@ def _run_scheduler(
                 logger.debug("Received ack notification: %s", msg)
             elif isinstance(msg, WarmupSeed):
                 for arrival_ts, request_ts in msg.obs_samples:
-                    scheduler.latency_tracker.update_obs(
-                        msg.robot_id, arrival_ts, request_ts
-                    )
+                    scheduler.latency_tracker.update_obs(msg.robot_id, arrival_ts, request_ts)
                 for client_receive_time, server_send_time in msg.delivery_samples:
                     scheduler.latency_tracker.update_action_delivery(
                         msg.robot_id, client_receive_time, server_send_time

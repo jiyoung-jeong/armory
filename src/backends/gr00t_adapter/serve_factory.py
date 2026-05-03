@@ -13,8 +13,7 @@ def _resolve(model_family: str, env: EnvMode) -> dict:
     family = GROOT_CHECKPOINT.get(model_family.lower())
     if family is None:
         raise ValueError(
-            f"Unknown GR00T model family '{model_family}'. "
-            f"Available: {list(GROOT_CHECKPOINT)}"
+            f"Unknown GR00T model family '{model_family}'. Available: {list(GROOT_CHECKPOINT)}"
         )
     cfg = family.get(env)
     if cfg is None:
@@ -38,7 +37,7 @@ def get_gr00t_model_dims(model_family: str, env: EnvMode) -> tuple[int, int]:
 def get_gr00t_checkpoint_label(model_family: str, env: EnvMode) -> str:
     """Human-readable checkpoint id for server metadata (Hub id + subfolder)."""
     cfg = _resolve(model_family, env)
-    return f'{cfg["hub_model_id"]}/{cfg["hub_subfolder"]}'
+    return f"{cfg['hub_model_id']}/{cfg['hub_subfolder']}"
 
 
 def create_gr00t_policy(

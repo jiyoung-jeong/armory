@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from dataclasses import field
 import itertools
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import numpy as np
-from armory_client.messages import InferResponse
-from armory_client.messages import InferType
-from armory_client.messages import RTCParams
-from armory_client.messages import TrainTimeRTCParams
-from armory_client.messages import VlashParams
+
+from armory_client.messages import (
+    InferResponse,
+    InferType,
+    RTCParams,
+    TrainTimeRTCParams,
+    VlashParams,
+)
 
 _request_id_counter = itertools.count(1)
 
@@ -33,9 +35,7 @@ class SlotRequest:
     noise: np.ndarray | None
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
-    is_padding: bool = (
-        False  # true for artificial slots used only to pad GPU batch size
-    )
+    is_padding: bool = False  # true for artificial slots used only to pad GPU batch size
 
 
 @dataclass(frozen=True)
@@ -74,9 +74,7 @@ class BatchProfile:
 class WarmupSeed:
     robot_id: str
     obs_samples: list[tuple[float, float]]  # (arrival_ts, request_ts) per ping
-    delivery_samples: list[
-        tuple[float, float]
-    ]  # (client_receive_time, server_send_time) per ack
+    delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 
 
 class RequestBatch(NamedTuple):

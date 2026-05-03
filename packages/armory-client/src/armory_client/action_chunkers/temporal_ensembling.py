@@ -1,9 +1,9 @@
 import numpy as np
-from armory_client.schemas import Action
+from typing_extensions import override
+
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
-from typing_extensions import override
-from typing import List
+from armory_client.schemas import Action
 
 
 class TemporalEnsemblingBroker(ActionChunkBroker):
@@ -14,7 +14,13 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
     Larger m = faster incorporation (weights recent predictions more heavily)
     """
 
-    def __init__(self, ws_client: BidirectionalWebsocket, control_hz: int, realtime: bool = True, m_param: float = 1.0):
+    def __init__(
+        self,
+        ws_client: BidirectionalWebsocket,
+        control_hz: int,
+        realtime: bool = True,
+        m_param: float = 1.0,
+    ):
         """
         Args:
             ws_client: websocket client for inference
@@ -38,7 +44,8 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
             if existing_actions:
                 start_step = existing_actions[0].step
                 end_step = max(
-                    existing_actions[-1].step, action_chunk.action_start_step + action_chunk.execution_horizon - 1
+                    existing_actions[-1].step,
+                    action_chunk.action_start_step + action_chunk.execution_horizon - 1,
                 )
             else:
                 start_step = action_chunk.action_start_step
@@ -46,7 +53,7 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
 
             # For each step, collect all predictions and ensemble them
             for step in range(start_step, end_step + 1):
-                predictions: List[tuple[np.ndarray, int]] = []  # (action, chunk_age)
+                predictions: list[tuple[np.ndarray, int]] = []  # (action, chunk_age)
 
                 # Collect predictions from all chunks that cover this step
                 for chunk_idx, chunk in enumerate(self._action_chunks):

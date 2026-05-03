@@ -20,52 +20,52 @@ ZMQ topology (all ipc://, unique per server instance):
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 import dataclasses
-from dataclasses import asdict
-from dataclasses import dataclass
 import logging
 import multiprocessing as mp
-from multiprocessing.synchronize import Event
 import os
 import queue
 import signal
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from multiprocessing.synchronize import Event
 
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi import WebSocket
-from fastapi.concurrency import asynccontextmanager
-from armory_client import msgpack_numpy
-from armory_client.messages import ConnectRequest
-from armory_client.messages import ConnectResponse
-from armory_client.messages import EpisodeEnd
-from armory_client.messages import EpisodeStart
-from armory_client.messages import EpisodeStep
-from armory_client.messages import InferRequest
-from armory_client.messages import InferResponse
-from armory_client.messages import ResetRequest
-from armory_client.messages import ResponseAck
-from armory_client.messages import WarmupPong
-from armory_client.schemas import ServerMetadata
-from starlette.middleware.wsgi import WSGIMiddleware
-from starlette.websockets import WebSocketDisconnect
 import uvicorn
 import zmq.asyncio
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.concurrency import asynccontextmanager
+from starlette.middleware.wsgi import WSGIMiddleware
+from starlette.websockets import WebSocketDisconnect
 
 from armory.serving.engine import _run_gpu_worker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
 from armory.serving.scheduler import _run_scheduler
-from armory.serving.schemas import AckNotification
-from armory.serving.schemas import ResponseBatch
-from armory.serving.schemas import SchedulerDecision
-from armory.serving.schemas import SlotRequest
-from armory.serving.schemas import WarmupSeed
-from armory.serving.schemas import _request_id_counter
-from armory.serving.slots import RobotSlots
-from armory.serving.slots import SlotData
+from armory.serving.schemas import (
+    AckNotification,
+    ResponseBatch,
+    SchedulerDecision,
+    SlotRequest,
+    WarmupSeed,
+    _request_id_counter,
+)
+from armory.serving.slots import RobotSlots, SlotData
+from armory_client import msgpack_numpy
+from armory_client.messages import (
+    ConnectRequest,
+    ConnectResponse,
+    EpisodeEnd,
+    EpisodeStart,
+    EpisodeStep,
+    InferRequest,
+    InferResponse,
+    ResetRequest,
+    ResponseAck,
+    WarmupPong,
+)
+from armory_client.schemas import ServerMetadata
 
 MAX_ROBOTS = 100
 NUM_WARMUP = 100
@@ -137,12 +137,8 @@ async def _ws_handshake(
     state.response_queues[robot_id] = asyncio.Queue()
     state.robot_metadata[robot_id] = connect_req
 
-    await websocket.send_bytes(
-        msgpack_numpy.packb(dataclasses.asdict(ConnectResponse()))
-    )
-    logger.info(
-        "Robot %s connected (control_hz=%.1f)", robot_id, connect_req.control_hz
-    )
+    await websocket.send_bytes(msgpack_numpy.packb(dataclasses.asdict(ConnectResponse())))
+    logger.info("Robot %s connected (control_hz=%.1f)", robot_id, connect_req.control_hz)
     return robot_id, slot_index, connect_req
 
 
@@ -176,9 +172,7 @@ async def _ws_warmup(
         ack_raw = await websocket.receive_bytes()
         ack_msg = msgpack_numpy.unpackb(ack_raw)
         if ack_msg.get("type") == "warmup_ack":
-            delivery_samples.append(
-                (ack_msg["client_receive_time"], ack_msg["server_send_time"])
-            )
+            delivery_samples.append((ack_msg["client_receive_time"], ack_msg["server_send_time"]))
 
     if obs_samples or delivery_samples:
         await state.scheduler_sock.send_pyobj(
@@ -338,9 +332,7 @@ def create_app(
             robot_metadata={},
         )
 
-        router = asyncio.create_task(
-            _router_task(response_sock, response_queues, metrics_store)
-        )
+        router = asyncio.create_task(_router_task(response_sock, response_queues, metrics_store))
         scheduler_metrics = asyncio.create_task(
             _scheduler_metrics_task(scheduler_metrics_queue, metrics_store)
         )
@@ -379,9 +371,7 @@ def create_app(
             return
         robot_id, slot_index, _connect_req = result
 
-        action_payload_size = (
-            metadata.action_horizon * metadata.action_dim * 4
-        )  # float32 bytes
+        action_payload_size = metadata.action_horizon * metadata.action_dim * 4  # float32 bytes
         await _ws_warmup(websocket, state, robot_id, action_payload_size)
 
         # Normal operation
@@ -396,9 +386,7 @@ def create_app(
 
                     match msg.get("type"):
                         case "reset":
-                            await state.scheduler_sock.send_pyobj(
-                                ResetRequest(robot_id=robot_id)
-                            )
+                            await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
                             continue
                         case "ack":
                             ack = ResponseAck(**msg)
@@ -415,19 +403,13 @@ def create_app(
                             )
                             continue
                         case "episode_start":
-                            state.metrics_store.record_episode_start(
-                                robot_id, EpisodeStart(**msg)
-                            )
+                            state.metrics_store.record_episode_start(robot_id, EpisodeStart(**msg))
                             continue
                         case "episode_step":
-                            state.metrics_store.record_episode_step(
-                                robot_id, EpisodeStep(**msg)
-                            )
+                            state.metrics_store.record_episode_step(robot_id, EpisodeStep(**msg))
                             continue
                         case "episode_end":
-                            state.metrics_store.record_episode_end(
-                                robot_id, EpisodeEnd(**msg)
-                            )
+                            state.metrics_store.record_episode_end(robot_id, EpisodeEnd(**msg))
                             continue
                         case "infer":
                             pass
@@ -504,9 +486,7 @@ def create_app(
     async def get_metrics(
         request: Request, window_s: float | None = None, sla_pct: float = 10.0
     ) -> dict:
-        return request.app.state.server.metrics_store.snapshot(
-            window_s, sla_pct=sla_pct
-        )
+        return request.app.state.server.metrics_store.snapshot(window_s, sla_pct=sla_pct)
 
     @app.get("/save-metrics")
     async def save_metrics(request: Request) -> dict:

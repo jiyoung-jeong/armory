@@ -1,18 +1,13 @@
 """Shared utilities for scripts."""
 
 import json
-import time
-import numpy as np
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from armory.checkpoints import OPENPI_CHECKPOINT
-from armory_client.schemas import ServerMetadata
-from openpi_adapter.serve_factory import EnvMode
-from openpi_adapter.serve_factory import create_policy
-from openpi_adapter.serve_factory import get_model_dims
+import numpy as np
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
@@ -20,10 +15,17 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
     is_groot_model,
 )
 
+from armory.checkpoints import OPENPI_CHECKPOINT
 from armory_client.messages import InferRequest, InferType
+from armory_client.schemas import ServerMetadata
+from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
-with open("configs/inference_profiles.json", "r") as f:
-    INFERENCE_PROFILES = {profile_name: {int(batch_size): latency for batch_size, latency in profile.items()} for profile_name, profile in json.load(f).items()}
+with open("configs/inference_profiles.json") as f:
+    INFERENCE_PROFILES = {
+        profile_name: {int(batch_size): latency for batch_size, latency in profile.items()}
+        for profile_name, profile in json.load(f).items()
+    }
+
 
 def get_gpu_info() -> dict[str, Any]:
     try:
@@ -45,10 +47,10 @@ def get_gpu_info() -> dict[str, Any]:
         return {"gpu_available": False}
 
 
-
 # ---------------------------------------------------------------------------
 # Policy resolution – single entry point for all model backends
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ResolvedPolicy:
@@ -59,8 +61,14 @@ class ResolvedPolicy:
 class _OpenPiFactory:
     """Picklable callable that constructs an OpenPI policy in the GPU subprocess."""
 
-    def __init__(self, config_name: str, checkpoint_dir: str, default_prompt: str | None,
-                 num_steps: int, env_mode: EnvMode):
+    def __init__(
+        self,
+        config_name: str,
+        checkpoint_dir: str,
+        default_prompt: str | None,
+        num_steps: int,
+        env_mode: EnvMode,
+    ):
         self.config_name = config_name
         self.checkpoint_dir = checkpoint_dir
         self.default_prompt = default_prompt
@@ -164,7 +172,13 @@ def resolve_policy(
     return ResolvedPolicy(metadata=metadata, factory=factory)
 
 
-def create_default_policy(env: EnvMode, *, batch_size: int = 1, default_prompt: str | None = None, sample_kwargs: dict | None = None):
+def create_default_policy(
+    env: EnvMode,
+    *,
+    batch_size: int = 1,
+    default_prompt: str | None = None,
+    sample_kwargs: dict | None = None,
+):
     if checkpoint := OPENPI_CHECKPOINT.get(env):
         return create_policy(
             checkpoint["config"],
@@ -178,11 +192,12 @@ def create_default_policy(env: EnvMode, *, batch_size: int = 1, default_prompt: 
     raise ValueError(f"Unsupported environment mode: {env}")
 
 
-
 class _MockPolicy:
     """Stub policy implementing the armory engine interface without weights/GPU."""
 
-    def __init__(self, *, env: str, action_horizon: int, action_dim: int, inference_latency: dict[int, float]):
+    def __init__(
+        self, *, env: str, action_horizon: int, action_dim: int, inference_latency: dict[int, float]
+    ):
         self._action_horizon = action_horizon
         self._action_dim = action_dim
         self._inference_latency = inference_latency
@@ -212,10 +227,7 @@ class _MockPolicy:
         while time.time() - now < inference_latency:
             time.sleep(0.001)
         actions = np.zeros((self._action_horizon, self._action_dim), dtype=np.float32)
-        return [
-            {"actions": actions, "noise": None, "rtc_prev_actions": actions}
-            for _ in requests
-        ]
+        return [{"actions": actions, "noise": None, "rtc_prev_actions": actions} for _ in requests]
 
 
 class _MockPolicyFactory:

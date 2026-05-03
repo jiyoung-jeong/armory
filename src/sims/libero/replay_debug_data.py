@@ -31,17 +31,16 @@ import json
 import logging
 import pathlib
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 import imageio
 import matplotlib.pyplot as plt
 import numpy as np
 from libero.libero import benchmark
-from armory_client.schemas import Action, LiberoObservation
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from armory_client import websocket_client_policy as _websocket_client_policy
+from armory_client.schemas import Action, LiberoObservation
 from sims.libero import utils
 from sims.libero.env import LiberoSimEnvironment
 
@@ -62,11 +61,9 @@ class ReplayConfig:
     control_hz: int = 20
     action_horizon: int = 50  # Number of actions per chunk (model's action horizon)
     action_dim: int = 7  # Actual robot action dimension (6 DoF + gripper for LIBERO)
-    output_video: Optional[str] = None
+    output_video: str | None = None
     use_saved_actions: bool = False  # If True, use saved output_actions directly
-    debug_report_path: Optional[str] = (
-        None  # Where to write per-chunk debug comparison report (jsonl)
-    )
+    debug_report_path: str | None = None  # Where to write per-chunk debug comparison report (jsonl)
 
 
 def load_metadata(debug_data_dir: pathlib.Path) -> dict:
@@ -81,7 +78,7 @@ def load_metadata(debug_data_dir: pathlib.Path) -> dict:
 
 def load_debug_chunks(
     debug_data_dir: pathlib.Path,
-) -> Tuple[List[dict], Optional[np.ndarray]]:
+) -> tuple[list[dict], np.ndarray | None]:
     """Load all debug data chunks from the .npz file.
 
     Returns:
@@ -195,7 +192,7 @@ def _compute_array_diff(a: np.ndarray, b: np.ndarray) -> dict:
     }
 
 
-def _safe_get(d: dict, path: List[str]):
+def _safe_get(d: dict, path: list[str]):
     cur = d
     for p in path:
         if not isinstance(cur, dict) or p not in cur:
@@ -215,7 +212,7 @@ def plot_action_comparison(
     saved_actions: np.ndarray,
     output_path: pathlib.Path,
     action_horizon: int = 50,
-    action_dim_names: Optional[List[str]] = None,
+    action_dim_names: list[str] | None = None,
 ) -> None:
     """Plot comparison of replay actions vs saved actions for each dimension.
 
@@ -232,9 +229,7 @@ def plot_action_comparison(
         # Default names for LIBERO 7-DoF actions
         action_dim_names = ["X", "Y", "Z", "RX", "RY", "RZ", "Gripper"]
         if action_dim > len(action_dim_names):
-            action_dim_names.extend(
-                [f"Dim {i}" for i in range(len(action_dim_names), action_dim)]
-            )
+            action_dim_names.extend([f"Dim {i}" for i in range(len(action_dim_names), action_dim)])
 
     # Create figure with subplots for each action dimension
     fig, axes = plt.subplots(action_dim, 1, figsize=(14, 3 * action_dim), sharex=True)
@@ -282,9 +277,7 @@ def plot_action_comparison(
         )
 
         # Title with difference stats
-        dim_name = (
-            action_dim_names[dim] if dim < len(action_dim_names) else f"Dim {dim}"
-        )
+        dim_name = action_dim_names[dim] if dim < len(action_dim_names) else f"Dim {dim}"
         ax.set_title(
             f"{dim_name} | Max Diff: {max_diff[dim]:.6f}, Mean Diff: {mean_diff[dim]:.6f}",
             fontsize=12,
@@ -325,9 +318,9 @@ def plot_action_comparison(
 
 def replay_episode(
     config: ReplayConfig,
-    policy: Optional[_websocket_client_policy.WebsocketClientPolicy],
+    policy: _websocket_client_policy.WebsocketClientPolicy | None,
     console: Console,
-) -> Tuple[bool, np.ndarray, np.ndarray]:
+) -> tuple[bool, np.ndarray, np.ndarray]:
     """Replay a single episode from debug data.
 
     Args:
@@ -363,9 +356,7 @@ def replay_episode(
     initial_state = saved_initial_state[np.newaxis, :]  # Add batch dimension
     console.print("[green]Using saved initial state from debug data[/green]")
 
-    env_raw, task_description = utils._get_libero_env(
-        task, LIBERO_ENV_RESOLUTION, seed=config.seed
-    )
+    env_raw, task_description = utils._get_libero_env(task, LIBERO_ENV_RESOLUTION, seed=config.seed)
 
     env = LiberoSimEnvironment(
         env=env_raw,
@@ -391,9 +382,9 @@ def replay_episode(
         all_saved_actions.append(saved_chunk_actions)
 
     # Replay loop
-    frames: List[np.ndarray] = []
-    replay_actions_list: List[np.ndarray] = []  # Track actions used during replay
-    saved_actions_list: List[np.ndarray] = []  # Track corresponding saved actions
+    frames: list[np.ndarray] = []
+    replay_actions_list: list[np.ndarray] = []  # Track actions used during replay
+    saved_actions_list: list[np.ndarray] = []  # Track corresponding saved actions
     chunk_idx = 0
     action_idx = 0
     current_actions = None
@@ -450,9 +441,7 @@ def replay_episode(
                     else:
                         # Re-infer from policy with saved noise
                         if policy is None:
-                            raise ValueError(
-                                "Policy is required when not using saved actions"
-                            )
+                            raise ValueError("Policy is required when not using saved actions")
                         noise = get_noise_from_debug(chunk_data)
 
                         # Create observation from debug data
@@ -492,9 +481,7 @@ def replay_episode(
                     action.copy() if hasattr(action, "copy") else np.array(action)
                 )
                 saved_actions_list.append(
-                    saved_action.copy()
-                    if hasattr(saved_action, "copy")
-                    else np.array(saved_action)
+                    saved_action.copy() if hasattr(saved_action, "copy") else np.array(saved_action)
                 )
 
             # Remember last action for when we run out of chunks
@@ -536,18 +523,14 @@ def replay_episode(
     env.close()
 
     # Convert action lists to arrays
-    replay_actions = (
-        np.array(replay_actions_list) if replay_actions_list else np.array([])
-    )
+    replay_actions = np.array(replay_actions_list) if replay_actions_list else np.array([])
     saved_actions = np.array(saved_actions_list) if saved_actions_list else np.array([])
 
     return success, replay_actions, saved_actions
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Replay debug data from a saved episode"
-    )
+    parser = argparse.ArgumentParser(description="Replay debug data from a saved episode")
     parser.add_argument(
         "--debug_data_dir",
         type=str,
@@ -625,9 +608,7 @@ def main():
     policy = None
     if not config.use_saved_actions:
         # Connect to policy server
-        console.print(
-            f"[bold]Connecting to policy server at {config.host}:{config.port}...[/bold]"
-        )
+        console.print(f"[bold]Connecting to policy server at {config.host}:{config.port}...[/bold]")
         policy = _websocket_client_policy.WebsocketClientPolicy(
             robot_id="debug_data_replay",
             host=config.host,
@@ -646,9 +627,7 @@ def main():
         # Generate action comparison plot
         if len(replay_actions) > 0 and len(saved_actions) > 0:
             plot_path = config.debug_data_dir / "action_comparison.png"
-            console.print(
-                f"\n[bold]Generating action comparison plot: {plot_path}[/bold]"
-            )
+            console.print(f"\n[bold]Generating action comparison plot: {plot_path}[/bold]")
             plot_action_comparison(
                 replay_actions,
                 saved_actions,
@@ -668,9 +647,7 @@ def main():
             console.print(f"  Max absolute difference: {max_diff:.10f}")
             console.print(f"  Mean absolute difference: {mean_diff:.10f}")
             if is_deterministic:
-                console.print(
-                    "[bold green]  Verdict: DETERMINISTIC (max diff < 1e-5)[/bold green]"
-                )
+                console.print("[bold green]  Verdict: DETERMINISTIC (max diff < 1e-5)[/bold green]")
             else:
                 console.print(
                     "[bold red]  Verdict: NON-DETERMINISTIC (max diff >= 1e-5)[/bold red]"

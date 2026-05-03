@@ -1,21 +1,22 @@
-from abc import ABC
-from abc import abstractmethod
-from collections.abc import Callable, Generator
-from contextlib import contextmanager
 import dataclasses
 import itertools
 import logging
 import multiprocessing as mp
 import time
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 
-from armory_client.messages import InferType
 from armory.scheduling.latency import EMALatencyTracker
 from armory.scheduling.mirror import ActionChunk, Mirror
-from armory.serving.schemas import AckNotification
-from armory.serving.schemas import CompletionNotification
-from armory.serving.schemas import RequestBatch
-from armory.serving.schemas import SchedulerDecision
-from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import (
+    AckNotification,
+    CompletionNotification,
+    RequestBatch,
+    SchedulerDecision,
+    SlotRequest,
+)
+from armory_client.messages import InferType
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,7 @@ class RequestScheduler(ABC):
             str, float
         ] = {}  # includes chunks that have been sent to the GPU but not yet completed
         self._decisions: list[SchedulerDecision] = []
-        self.latency_tracker = (
-            EMALatencyTracker()
-        )  # TODO: allow different latency trackers
+        self.latency_tracker = EMALatencyTracker()  # TODO: allow different latency trackers
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
 
@@ -56,9 +55,7 @@ class RequestScheduler(ABC):
         self.mirror.receive_request(request, request.control_hz)
 
     def update_completion(self, notification: CompletionNotification) -> None:
-        self.latency_tracker.update_infer(
-            notification.batch_size, notification.inference_duration
-        )
+        self.latency_tracker.update_infer(notification.batch_size, notification.inference_duration)
 
     def update_ack(self, notification: AckNotification) -> None:
         self.latency_tracker.update_action_delivery(
@@ -117,22 +114,16 @@ class RequestScheduler(ABC):
                 # FIXME: this might monotonically increase if we end up serving a newer observation?
                 if not request.is_padding:
                     self._deadlines[request.robot_id] = (
-                        request.request_timestamp
-                        + request.execution_horizon / request.control_hz
+                        request.request_timestamp + request.execution_horizon / request.control_hz
                     )
                     self._latest_scheduled_requests[request.robot_id] = request
-                observation_latency = self.latency_tracker.observation_latency(
-                    request.robot_id
-                )
+                observation_latency = self.latency_tracker.observation_latency(request.robot_id)
                 inference_latency = self.latency_tracker.infer_latency(batch_size)
                 action_latency = self.latency_tracker.action_latency(request.robot_id)
                 total_latency_steps = (
                     observation_latency + inference_latency + action_latency
                 ) * request.control_hz
-                if (
-                    request.infer_type == InferType.INFERENCE_TIME_RTC
-                    and not request.is_padding
-                ):
+                if request.infer_type == InferType.INFERENCE_TIME_RTC and not request.is_padding:
                     logger.info(
                         "RTC d estimate: robot=%s request_id=%d batch_size=%d "
                         "obs_step=%d action_start_step=%d control_hz=%.2f "
@@ -182,9 +173,7 @@ class RequestScheduler(ABC):
                     batch_id=batch_id,
                 )
             )
-            self._batch_queue.put_nowait(
-                RequestBatch(requests=annotated, batch_id=batch_id)
-            )
+            self._batch_queue.put_nowait(RequestBatch(requests=annotated, batch_id=batch_id))
             self._in_flight += 1
 
     def notify_batch_complete(self) -> None:
