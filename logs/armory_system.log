@@ -7040,3 +7040,329 @@ INFO:Pip
 2026-04-29 23:11:59,721 [INFO]   WS-13: Reset: Go to reset complete.; Disable: Piper disable sequence complete.; Tunnel:
 2026-04-29 23:11:59,721 [INFO]   WS-14: Reset: Go to reset complete.; Disable: Piper disable sequence complete.; Tunnel:
 2026-04-29 23:11:59,721 [INFO] Shutdown complete.
+2026-05-03 18:49:15,915 [INFO] ARMory dashboard started.
+2026-05-03 18:49:15,915 [INFO] Querying workstation status...
+2026-05-03 18:49:20,152 [INFO] Current operation still running. Controls will unlock shortly.
+2026-05-03 18:49:20,253 [INFO] WS-11: container not running (offline)
+2026-05-03 18:49:22,269 [INFO] WS-12: container not running (offline)
+2026-05-03 18:49:24,490 [INFO] WS-13: container not running (offline)
+2026-05-03 18:49:26,804 [INFO] WS-14: container not running (offline)
+2026-05-03 18:49:26,804 [INFO] Status refresh complete.
+2026-05-03 18:49:38,748 [INFO] Selected WS-11.
+2026-05-03 18:49:39,150 [INFO] Selected WS-12.
+2026-05-03 18:49:39,653 [INFO] Unselected WS-11.
+2026-05-03 18:49:39,954 [INFO] Unselected WS-12.
+2026-05-03 18:49:43,669 [INFO] Booting WS-11, WS-12, WS-13, WS-14...
+2026-05-03 18:49:44,978 [INFO] WS-11: starting Docker container...
+2026-05-03 18:49:45,482 [INFO] WS-12: starting Docker container...
+2026-05-03 18:49:45,583 [INFO] WS-11: 450d646495a8bb611c8c2a021143a05c10baa354a6fdee9343174e3aa6c96602
+2026-05-03 18:49:45,785 [INFO] WS-13: starting Docker container...
+2026-05-03 18:49:46,188 [INFO] WS-12: 668d95bf5e46d0fe0fe3d2075bb970ad53f22571c19d28cedea39b281f1bf446
+2026-05-03 18:49:46,289 [INFO] WS-14: starting Docker container...
+2026-05-03 18:49:46,289 [INFO] WS-13: edb2e9d842af315437efb9f9bbc2cfc8b974f3d9adb83eae9ebd34cb39f3cb6f
+2026-05-03 18:49:46,896 [INFO] WS-14: 38684e09914287902bd342095754c5563d1282d0cbfdf2ccce9d300b713fc83b
+2026-05-03 18:49:48,005 [INFO] WS-11: container up, running entrypoint...
+2026-05-03 18:49:48,408 [INFO] WS-11: boot successful
+2026-05-03 18:49:48,811 [INFO] WS-12: container up, running entrypoint...
+2026-05-03 18:49:48,912 [INFO] WS-13: container up, running entrypoint...
+2026-05-03 18:49:49,619 [INFO] WS-12: boot successful
+2026-05-03 18:49:49,720 [INFO] WS-13: boot successful
+2026-05-03 18:49:49,720 [INFO] WS-14: container up, running entrypoint...
+2026-05-03 18:49:49,922 [INFO] WS-14: boot successful
+2026-05-03 18:49:49,922 [INFO]   WS-11: Boot successful
+2026-05-03 18:49:49,922 [INFO]   WS-12: Boot successful
+2026-05-03 18:49:49,922 [INFO]   WS-13: Boot successful
+2026-05-03 18:49:49,922 [INFO]   WS-14: Boot successful
+2026-05-03 18:49:49,922 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 18:49:49,922 [INFO] Boot complete.
+2026-05-03 19:01:25,899 [INFO] Starting listener on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:01:27,013 [INFO] WS-11: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 19:01:27,516 [INFO] WS-12: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 19:01:27,720 [INFO] WS-13: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 19:01:27,921 [INFO] WS-14: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 19:01:30,434 [INFO] WS-12: data listener started (pid 99); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 19:01:30,636 [INFO] WS-11: data listener started (pid 100); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 19:01:30,837 [INFO] WS-13: data listener started (pid 99); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 19:01:30,838 [INFO] WS-14: data listener started (pid 96); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 19:01:30,838 [INFO]   WS-11: data listener started (pid 100); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 19:01:30,838 [INFO]   WS-12: data listener started (pid 99); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:01:30,838 [INFO]   WS-13: data listener started (pid 99); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:01:30,838 [INFO]   WS-14: data listener started (pid 96); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:01:30,838 [INFO] Start Listener complete.
+2026-05-03 19:02:02,526 [INFO] Executing 'Enable' on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:02:03,134 [INFO] WS-11: running 'p enable'
+2026-05-03 19:02:03,436 [INFO] WS-12: running 'p enable'
+2026-05-03 19:02:03,739 [INFO] WS-13: running 'p enable'
+2026-05-03 19:02:04,041 [INFO] WS-14: running 'p enable'
+2026-05-03 19:02:33,470 [INFO] WS-11: FAILED 'p enable' — 
+2026-05-03 19:02:33,671 [INFO] Current operation still running. Controls will unlock shortly.
+2026-05-03 19:02:33,771 [INFO] WS-12: FAILED 'p enable' — 
+2026-05-03 19:02:34,075 [INFO] WS-13: FAILED 'p enable' — 
+2026-05-03 19:02:34,377 [INFO] WS-14: FAILED 'p enable' — 
+2026-05-03 19:02:34,880 [INFO] WS-11: running 'p goto init'
+2026-05-03 19:02:35,887 [INFO] WS-12: running 'p goto init'
+2026-05-03 19:02:36,291 [INFO] WS-13: running 'p goto init'
+2026-05-03 19:02:36,795 [INFO] WS-14: running 'p goto init'
+2026-05-03 19:02:47,742 [INFO] Current operation still running. Controls will unlock shortly.
+2026-05-03 19:02:49,452 [INFO] Current operation still running. Controls will unlock shortly.
+2026-05-03 19:02:57,287 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:02:57,287 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:02:57,287 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:02:57,287 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:03:02,067 [INFO] ARMory dashboard started.
+2026-05-03 19:03:02,067 [INFO] Querying workstation status...
+2026-05-03 19:03:05,205 [INFO] WS-11: container running (booted)
+2026-05-03 19:03:06,919 [INFO] WS-12: container running (booted)
+2026-05-03 19:03:09,238 [INFO] WS-13: container running (booted)
+2026-05-03 19:03:11,252 [INFO] WS-14: container running (booted)
+2026-05-03 19:03:11,252 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 19:03:11,252 [INFO] Status refresh complete.
+2026-05-03 19:03:23,820 [INFO] Disabling, killing tunnels, and shutting down WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:03:24,122 [INFO] WS-11: running 'p goto reset'
+2026-05-03 19:03:24,425 [INFO] WS-12: running 'p goto reset'
+2026-05-03 19:03:24,627 [INFO] WS-13: running 'p goto reset'
+2026-05-03 19:03:25,030 [INFO] WS-14: running 'p goto reset'
+2026-05-03 19:03:35,879 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:03:35,879 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:03:35,879 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:03:35,880 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:03:39,578 [INFO] ARMory dashboard started.
+2026-05-03 19:03:39,578 [INFO] Querying workstation status...
+2026-05-03 19:03:42,700 [INFO] WS-11: container running (booted)
+2026-05-03 19:03:44,316 [INFO] WS-12: container running (booted)
+2026-05-03 19:03:45,730 [INFO] WS-13: container running (booted)
+2026-05-03 19:03:47,141 [INFO] WS-14: container running (booted)
+2026-05-03 19:03:47,142 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 19:03:47,142 [INFO] Status refresh complete.
+2026-05-03 19:06:33,052 [INFO] ARMory dashboard started.
+2026-05-03 19:06:33,052 [INFO] Querying workstation status...
+2026-05-03 19:06:35,777 [INFO] WS-11: container not running (offline)
+2026-05-03 19:06:37,592 [INFO] WS-12: container not running (offline)
+2026-05-03 19:06:39,813 [INFO] WS-13: container not running (offline)
+2026-05-03 19:06:41,628 [INFO] WS-14: container not running (offline)
+2026-05-03 19:06:41,628 [INFO] Status refresh complete.
+2026-05-03 19:07:31,633 [INFO] Selected WS-11.
+2026-05-03 19:07:33,934 [INFO] Booting WS-11...
+2026-05-03 19:07:35,246 [INFO] WS-11: starting Docker container...
+2026-05-03 19:07:36,150 [INFO] WS-11: ebf47a7ab78bd156dd324207d798d802f3001f8d67e9dcb1f081c1fee88db6ae
+2026-05-03 19:07:38,464 [INFO] WS-11: container up, running entrypoint...
+2026-05-03 19:07:38,767 [INFO] WS-11: boot successful
+2026-05-03 19:07:38,767 [INFO]   WS-11: Boot successful
+2026-05-03 19:07:38,767 [INFO] WS-11 is ready. Runtime controls unlocked.
+2026-05-03 19:07:38,767 [INFO] Boot complete.
+2026-05-03 19:12:04,610 [INFO] Unselected WS-11.
+2026-05-03 19:12:05,012 [INFO] Selected WS-11.
+2026-05-03 19:12:06,568 [INFO] Executing 'Enable' on WS-11...
+2026-05-03 19:12:07,374 [INFO] WS-11: running 'p enable'
+2026-05-03 19:12:08,481 [INFO] WS-11: 使能成功!!!!
+Piper enable sequence complete.
+2026-05-03 19:12:08,482 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-05-03 19:12:08,985 [INFO] WS-11: running 'p goto init'
+2026-05-03 19:12:10,795 [INFO] WS-11: Go to init complete.
+2026-05-03 19:12:10,895 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:12:10,895 [INFO]   WS-11: Go to init complete.
+2026-05-03 19:12:10,895 [INFO] WS-11 is ready. Runtime controls unlocked.
+2026-05-03 19:12:10,895 [INFO] 'Enable' complete.
+2026-05-03 19:12:14,120 [INFO] Executing 'Disable' on WS-11...
+2026-05-03 19:12:14,526 [INFO] WS-11: running 'p goto reset'
+2026-05-03 19:12:16,334 [INFO] WS-11: Go to reset complete.
+2026-05-03 19:12:16,334 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:12:16,636 [INFO] WS-11: running 'p disable'
+2026-05-03 19:12:17,240 [INFO] Unselected WS-11.
+2026-05-03 19:12:17,744 [INFO] Selected WS-12.
+2026-05-03 19:12:18,046 [INFO] Selected WS-13.
+2026-05-03 19:12:18,350 [INFO] Selected WS-14.
+2026-05-03 19:12:20,458 [INFO] Current operation still running. Controls will unlock shortly.
+2026-05-03 19:12:21,564 [INFO] WS-11: Piper disable sequence complete.
+2026-05-03 19:12:21,564 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+INFO:Pip
+2026-05-03 19:12:21,564 [INFO]   WS-11: Piper disable sequence complete.
+2026-05-03 19:12:21,564 [INFO] 'Disable' complete.
+2026-05-03 19:12:26,057 [INFO] Booting WS-12, WS-13, WS-14...
+2026-05-03 19:12:27,265 [INFO] WS-12: starting Docker container...
+2026-05-03 19:12:27,669 [INFO] WS-13: starting Docker container...
+2026-05-03 19:12:28,776 [INFO] WS-12: 4726c793106428a6cf328932ad418674328051f6d859e16ad831b1a2bd3aba8b
+2026-05-03 19:12:28,776 [INFO] WS-13: 7cc5ffe1027fb1b018a1ff631f13c1d1ffb9b1636d7e283270b08eb98d114280
+2026-05-03 19:12:28,777 [INFO] WS-14: starting Docker container...
+2026-05-03 19:12:29,482 [INFO] WS-14: 69b279228149df7c4f525a6174f12a95724826186a3af76776eab992b3f33aed
+2026-05-03 19:12:30,991 [INFO] WS-13: container up, running entrypoint...
+2026-05-03 19:12:30,991 [INFO] WS-12: container up, running entrypoint...
+2026-05-03 19:12:31,195 [INFO] WS-13: boot successful
+2026-05-03 19:12:31,296 [INFO] WS-12: boot successful
+2026-05-03 19:12:31,909 [INFO] WS-14: container up, running entrypoint...
+2026-05-03 19:12:32,211 [INFO] WS-14: boot successful
+2026-05-03 19:12:32,211 [INFO]   WS-12: Boot successful
+2026-05-03 19:12:32,211 [INFO]   WS-13: Boot successful
+2026-05-03 19:12:32,211 [INFO]   WS-14: Boot successful
+2026-05-03 19:12:32,211 [INFO] WS-12, WS-13, WS-14 is ready. Runtime controls unlocked.
+2026-05-03 19:12:32,211 [INFO] Boot complete.
+2026-05-03 19:14:06,613 [INFO] Unselected WS-12.
+2026-05-03 19:14:06,915 [INFO] Unselected WS-13.
+2026-05-03 19:14:07,217 [INFO] Unselected WS-14.
+2026-05-03 19:14:18,801 [INFO] Executing 'Enable' on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:14:19,204 [INFO] WS-11: running 'p enable'
+2026-05-03 19:14:19,509 [INFO] WS-12: running 'p enable'
+2026-05-03 19:14:20,114 [INFO] WS-11: 使能成功!!!!
+Piper enable sequence complete.
+2026-05-03 19:14:20,114 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-05-03 19:14:20,315 [INFO] WS-13: running 'p enable'
+2026-05-03 19:14:20,718 [INFO] WS-14: running 'p enable'
+2026-05-03 19:14:20,820 [INFO] WS-12: 使能成功!!!!
+Piper enable sequence complete.
+2026-05-03 19:14:20,820 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-05-03 19:14:21,323 [INFO] WS-13: 使能成功!!!!
+Piper enable sequence complete.
+2026-05-03 19:14:21,324 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-05-03 19:14:21,629 [INFO] WS-14: 使能成功!!!!
+Piper enable sequence complete.
+2026-05-03 19:14:21,629 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+bash: /p
+2026-05-03 19:14:21,832 [INFO] WS-11: running 'p goto init'
+2026-05-03 19:14:22,135 [INFO] WS-12: running 'p goto init'
+2026-05-03 19:14:22,739 [INFO] WS-13: running 'p goto init'
+2026-05-03 19:14:23,142 [INFO] WS-14: running 'p goto init'
+2026-05-03 19:14:23,545 [INFO] WS-11: Go to init complete.
+2026-05-03 19:14:23,546 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:14:23,847 [INFO] WS-12: Go to init complete.
+2026-05-03 19:14:23,848 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:14:24,551 [INFO] WS-13: Go to init complete.
+2026-05-03 19:14:24,551 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:14:24,853 [INFO] WS-14: Go to init complete.
+2026-05-03 19:14:24,853 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:14:24,853 [INFO]   WS-11: Go to init complete.
+2026-05-03 19:14:24,853 [INFO]   WS-12: Go to init complete.
+2026-05-03 19:14:24,853 [INFO]   WS-13: Go to init complete.
+2026-05-03 19:14:24,853 [INFO]   WS-14: Go to init complete.
+2026-05-03 19:14:24,853 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 19:14:24,853 [INFO] 'Enable' complete.
+2026-05-03 19:14:44,121 [INFO] Starting listener on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:14:45,631 [INFO] WS-11: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 19:14:45,833 [INFO] WS-12: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 19:14:46,035 [INFO] WS-13: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 19:14:46,136 [INFO] WS-14: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 19:14:48,547 [INFO] WS-12: data listener started (pid 225); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 19:14:48,648 [INFO] WS-11: data listener started (pid 775); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 19:14:48,648 [INFO] WS-13: data listener started (pid 221); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 19:14:48,648 [INFO] WS-14: data listener started (pid 221); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 19:14:48,648 [INFO]   WS-11: data listener started (pid 775); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 19:14:48,648 [INFO]   WS-12: data listener started (pid 225); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 19:14:48,648 [INFO]   WS-13: data listener started (pid 221); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 19:14:48,648 [INFO]   WS-14: data listener started (pid 221); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 19:14:48,648 [INFO] Start Listener complete.
+2026-05-03 19:14:56,724 [INFO] Starting client on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:14:58,539 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 19:14:58,740 [INFO] WS-12: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 19:14:58,741 [INFO] WS-13: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-client.log
+2026-05-03 19:14:58,842 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:15:01,457 [INFO] WS-12: Piper client started (pid 453); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 19:15:01,457 [INFO] WS-13: Piper client started (pid 450); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-client.log
+2026-05-03 19:15:01,557 [INFO] WS-14: Piper client started (pid 449); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:15:01,557 [INFO] WS-11: Piper client started (pid 1004); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 19:15:01,557 [INFO]   WS-11: Piper client started (pid 1004); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 19:15:01,557 [INFO]   WS-12: Piper client started (pid 453); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:15:01,558 [INFO]   WS-13: Piper client started (pid 450); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:15:01,658 [INFO]   WS-14: Piper client started (pid 449); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:15:01,658 [INFO] Start Client complete.
+2026-05-03 19:17:58,522 [INFO] EMERGENCY STOP: killing clients on WS-11, WS-12, WS-13, WS-14.
+2026-05-03 19:17:58,826 [INFO] WS-11: stopping Piper client
+2026-05-03 19:17:59,329 [INFO] WS-12: stopping Piper client
+2026-05-03 19:17:59,634 [INFO] WS-13: stopping Piper client
+2026-05-03 19:17:59,835 [INFO] WS-14: stopping Piper client
+2026-05-03 19:18:00,946 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 19:18:00,946 [INFO] WS-12: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 19:18:01,147 [INFO] WS-13: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-client.log
+2026-05-03 19:18:01,449 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:18:01,550 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 19:18:01,650 [INFO]   WS-12: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 19:18:01,650 [INFO]   WS-13: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 19:18:01,752 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 19:18:01,753 [INFO] Emergency client stop complete.
+2026-05-03 19:19:12,596 [INFO] Executing 'Goto Init' on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 19:19:13,100 [INFO] WS-11: running 'p goto init'
+2026-05-03 19:19:13,604 [INFO] WS-12: running 'p goto init'
+2026-05-03 19:19:14,012 [INFO] WS-13: running 'p goto init'
+2026-05-03 19:19:14,516 [INFO] WS-14: running 'p goto init'
+2026-05-03 19:19:15,119 [INFO] WS-11: Go to init complete.
+2026-05-03 19:19:15,119 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:19:15,622 [INFO] WS-12: Go to init complete.
+2026-05-03 19:19:15,622 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:19:15,924 [INFO] WS-13: Go to init complete.
+2026-05-03 19:19:15,924 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:19:16,326 [INFO] WS-14: Go to init complete.
+2026-05-03 19:19:16,326 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:19:16,326 [INFO]   WS-11: Go to init complete.
+2026-05-03 19:19:16,326 [INFO]   WS-12: Go to init complete.
+2026-05-03 19:19:16,326 [INFO]   WS-13: Go to init complete.
+2026-05-03 19:19:16,326 [INFO]   WS-14: Go to init complete.
+2026-05-03 19:19:16,326 [INFO] 'Goto Init' complete.
+2026-05-03 19:19:18,534 [INFO] Selected WS-14.
+2026-05-03 19:19:23,613 [INFO] Starting client on WS-14...
+2026-05-03 19:19:24,318 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:19:26,830 [INFO] WS-14: Piper client started (pid 634); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:19:26,830 [INFO]   WS-14: Piper client started (pid 634); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:19:26,831 [INFO] Start Client complete.
+2026-05-03 19:20:25,777 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 19:20:26,080 [INFO] WS-14: stopping Piper client
+2026-05-03 19:20:27,390 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:20:27,490 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 19:20:27,490 [INFO] Emergency client stop complete.
+2026-05-03 19:20:42,805 [INFO] Executing 'Goto Init' on WS-14...
+2026-05-03 19:20:43,107 [INFO] WS-14: running 'p goto init'
+2026-05-03 19:20:44,717 [INFO] WS-14: Go to init complete.
+2026-05-03 19:20:44,717 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:20:44,717 [INFO]   WS-14: Go to init complete.
+2026-05-03 19:20:44,717 [INFO] WS-14 is ready. Runtime controls unlocked.
+2026-05-03 19:20:44,717 [INFO] 'Goto Init' complete.
+2026-05-03 19:21:09,045 [INFO] Starting client on WS-14...
+2026-05-03 19:21:09,450 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:21:11,862 [INFO] WS-14: Piper client started (pid 821); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:21:11,862 [INFO]   WS-14: Piper client started (pid 821); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 19:21:11,862 [INFO] Start Client complete.
+2026-05-03 19:22:16,469 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 19:22:16,873 [INFO] WS-14: stopping Piper client
+2026-05-03 19:22:18,082 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 19:22:18,182 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 19:22:18,182 [INFO] Emergency client stop complete.
+2026-05-03 19:22:20,862 [INFO] Executing 'Goto Init' on WS-14...
+2026-05-03 19:22:21,064 [INFO] WS-14: running 'p goto init'
+2026-05-03 19:22:22,873 [INFO] WS-14: Go to init complete.
+2026-05-03 19:22:22,873 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 19:22:22,974 [INFO]   WS-14: Go to init complete.
+2026-05-03 19:22:22,974 [INFO] 'Goto Init' complete.
+2026-05-03 19:39:02,434 [INFO] Unselected WS-14.
+2026-05-03 19:39:02,836 [INFO] Selected WS-14.
+2026-05-03 19:39:03,238 [INFO] Unselected WS-14.
+2026-05-03 19:39:04,243 [INFO] Selected WS-14.
+2026-05-03 19:39:04,545 [INFO] Unselected WS-14.
+2026-05-03 19:39:04,948 [INFO] Selected WS-14.
+2026-05-03 19:39:05,249 [INFO] Unselected WS-14.
