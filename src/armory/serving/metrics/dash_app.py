@@ -5,19 +5,12 @@ from __future__ import annotations
 import datetime
 
 import dash
-from dash import Input
-from dash import Output
-from dash import Patch
-from dash import State
-from dash import ctx
-from dash import dcc
-from dash import html
 import numpy as np
-from armory_client.schemas import ServerMetadata
 import plotly.graph_objects as go
+from dash import Input, Output, Patch, State, ctx, dcc, html
 
-from armory.serving.metrics.store import MetricsStore
-from armory.serving.metrics.store import Snapshot
+from armory.serving.metrics.store import MetricsStore, Snapshot
+from armory_client.schemas import ServerMetadata
 
 # ---------------------------------------------------------------------------
 # Plotly dark theme helpers
@@ -130,7 +123,15 @@ def _stat_card(value: str, label: str, *, value_color: str = "#4fc3f7") -> html.
     return html.Div(
         style=_STAT_CARD,
         children=[
-            html.Div(value, style={"fontSize": "1.9em", "fontWeight": 700, "color": value_color, "lineHeight": "1.1"}),
+            html.Div(
+                value,
+                style={
+                    "fontSize": "1.9em",
+                    "fontWeight": 700,
+                    "color": value_color,
+                    "lineHeight": "1.1",
+                },
+            ),
             html.Div(label, style={"color": "#555", "fontSize": "0.72em", "marginTop": "5px"}),
         ],
     )
@@ -171,7 +172,9 @@ def _robot_table(robots: dict, sla_pct: float) -> html.Element:
                                 f"{r.get('starved_steps', 0):,} / {r.get('observed_steps', 0):,}",
                                 style={
                                     **td_base,
-                                    "color": "#ff8a65" if r.get("starved_steps", 0) > 0 else "#4fc3f7",
+                                    "color": "#ff8a65"
+                                    if r.get("starved_steps", 0) > 0
+                                    else "#4fc3f7",
                                     "fontWeight": 600,
                                 },
                             ),
@@ -179,7 +182,9 @@ def _robot_table(robots: dict, sla_pct: float) -> html.Element:
                                 f"{r.get('starvation_rate_pct', 0.0):.2f}",
                                 style={
                                     **td_base,
-                                    "color": "#ff8a65" if r.get("starvation_rate_pct", 0.0) > sla_pct else "#4fc3f7",
+                                    "color": "#ff8a65"
+                                    if r.get("starvation_rate_pct", 0.0) > sla_pct
+                                    else "#4fc3f7",
                                     "fontWeight": 600,
                                 },
                             ),
@@ -208,7 +213,9 @@ def _robot_table(robots: dict, sla_pct: float) -> html.Element:
     )
 
 
-def _combined_task_episode_heatmap_fig(task_events: list[dict], task_progress: list[dict], title: str) -> go.Figure:
+def _combined_task_episode_heatmap_fig(
+    task_events: list[dict], task_progress: list[dict], title: str
+) -> go.Figure:
     fig = go.Figure()
     if not task_events and not task_progress:
         fig.update_layout(
@@ -428,7 +435,10 @@ def _healthy_robots_over_time_fig(series: list[dict], sla_pct: float) -> go.Figu
         )
     fig.update_layout(
         **_layout(
-            title={"text": f"Healthy Robots Over Time @ {sla_pct:.0f}% SLA", "font": {"size": 12, "color": "#888"}},
+            title={
+                "text": f"Healthy Robots Over Time @ {sla_pct:.0f}% SLA",
+                "font": {"size": 12, "color": "#888"},
+            },
             xaxis={"title": "Time since server start (s)"},
             yaxis={"title": "Robots"},
             height=320,
@@ -499,7 +509,9 @@ def _batch_fig(batches: list[dict]) -> go.Figure:
                 marker={"size": 4, "color": "#ce93d8", "opacity": 0.6},
             )
         )
-    fig.update_layout(**_layout(xaxis={"title": "Time since server start (s)"}, yaxis={"title": "Batch size"}))
+    fig.update_layout(
+        **_layout(xaxis={"title": "Time since server start (s)"}, yaxis={"title": "Batch size"})
+    )
     return fig
 
 
@@ -531,7 +543,10 @@ def _busy_fig(batches: list[dict]) -> go.Figure:
             )
         )
     fig.update_layout(
-        **_layout(xaxis={"title": "Time since server start (s)"}, yaxis={"title": "GPU busy (%)", "range": [0, 100]})
+        **_layout(
+            xaxis={"title": "Time since server start (s)"},
+            yaxis={"title": "GPU busy (%)", "range": [0, 100]},
+        )
     )
     return fig
 
@@ -645,12 +660,16 @@ def _gantt_fig(
     return fig
 
 
-def _actions_left_heatmap_fig(robot_actions_left: dict[str, tuple[np.ndarray, np.ndarray]]) -> go.Figure:
+def _actions_left_heatmap_fig(
+    robot_actions_left: dict[str, tuple[np.ndarray, np.ndarray]],
+) -> go.Figure:
     """Scatter of actions_left over time. Robots on y-axis, time on x-axis (aligned with batch/busy/gantt)."""
     robots = sorted(robot_actions_left.keys())
     fig = go.Figure()
     if not robots:
-        fig.update_layout(**_layout(xaxis={"title": "Time since server start (s)"}, yaxis={"title": "Robot"}))
+        fig.update_layout(
+            **_layout(xaxis={"title": "Time since server start (s)"}, yaxis={"title": "Robot"})
+        )
         return fig
 
     row_h = 20
@@ -715,7 +734,11 @@ def _stage_figs(snap: Snapshot, robot: str) -> tuple[go.Figure, go.Figure, go.Fi
     ]:
         f = go.Figure()
         if data:
-            f.add_trace(go.Histogram(x=data, nbinsx=100, marker_color=color, marker_opacity=0.85, name=title))
+            f.add_trace(
+                go.Histogram(
+                    x=data, nbinsx=100, marker_color=color, marker_opacity=0.85, name=title
+                )
+            )
         f.update_layout(
             **{
                 **small,
@@ -756,12 +779,25 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
             # Header
             html.H1(
                 "openpi · metrics",
-                style={"fontSize": "1.3em", "fontWeight": 700, "color": "#fff", "marginBottom": "2px"},
+                style={
+                    "fontSize": "1.3em",
+                    "fontWeight": 700,
+                    "color": "#fff",
+                    "marginBottom": "2px",
+                },
             ),
-            html.Div(id="div-subtitle", style={"color": "#555", "fontSize": "0.8em", "marginBottom": "4px"}),
+            html.Div(
+                id="div-subtitle",
+                style={"color": "#555", "fontSize": "0.8em", "marginBottom": "4px"},
+            ),
             html.Div(
                 meta_line,
-                style={"color": "#444", "fontSize": "0.75em", "marginBottom": "20px", "fontFamily": "inherit"},
+                style={
+                    "color": "#444",
+                    "fontSize": "0.75em",
+                    "marginBottom": "20px",
+                    "fontFamily": "inherit",
+                },
             ),
             # Toolbar
             html.Div(
@@ -803,7 +839,10 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
                         style={**_INPUT, "width": "80px", "padding": "5px 8px"},
                     ),
                     html.Label("seconds", style={"color": "#555", "fontSize": "0.85em"}),
-                    html.Span(id="span-status", style={"color": "#555", "fontSize": "0.8em", "marginLeft": "4px"}),
+                    html.Span(
+                        id="span-status",
+                        style={"color": "#555", "fontSize": "0.8em", "marginLeft": "4px"},
+                    ),
                 ],
             ),
             # Summary
@@ -860,10 +899,14 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
                         html.Div(
                             style={"display": "grid", "gridTemplateColumns": "repeat(4, 1fr)"},
                             children=[
-                                dcc.Graph(id="graph-inbound", config=_CFG, style={"height": "280px"}),
+                                dcc.Graph(
+                                    id="graph-inbound", config=_CFG, style={"height": "280px"}
+                                ),
                                 dcc.Graph(id="graph-queue", config=_CFG, style={"height": "280px"}),
                                 dcc.Graph(id="graph-infer", config=_CFG, style={"height": "280px"}),
-                                dcc.Graph(id="graph-outbound", config=_CFG, style={"height": "280px"}),
+                                dcc.Graph(
+                                    id="graph-outbound", config=_CFG, style={"height": "280px"}
+                                ),
                             ],
                         ),
                     ],
@@ -878,7 +921,11 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
                             children=[
                                 html.Div(
                                     "SLA threshold (%)",
-                                    style={"color": "#666", "fontSize": "0.8em", "marginBottom": "4px"},
+                                    style={
+                                        "color": "#666",
+                                        "fontSize": "0.8em",
+                                        "marginBottom": "4px",
+                                    },
                                 ),
                                 dcc.Slider(
                                     id="slider-sla-pct",
@@ -905,7 +952,9 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
                     style=_CARD,
                     children=[
                         html.Div("Healthy Robots Over Time", style=_CARD_HDR),
-                        dcc.Graph(id="graph-healthy-robots", config=_CFG, style={"height": "320px"}),
+                        dcc.Graph(
+                            id="graph-healthy-robots", config=_CFG, style={"height": "320px"}
+                        ),
                     ],
                 ),
                 # Batch sizes (resampled)
@@ -1036,8 +1085,12 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
             snap.kickoff_markers,
         )
 
-        robot_opts = [{"label": "all", "value": "all"}] + [{"label": rid, "value": rid} for rid in sorted(robots)]
-        status = "last refresh: " + datetime.datetime.now(datetime.UTC).astimezone().strftime("%H:%M:%S")
+        robot_opts = [{"label": "all", "value": "all"}] + [
+            {"label": rid, "value": rid} for rid in sorted(robots)
+        ]
+        status = "last refresh: " + datetime.datetime.now(datetime.UTC).astimezone().strftime(
+            "%H:%M:%S"
+        )
 
         return (
             subtitle,

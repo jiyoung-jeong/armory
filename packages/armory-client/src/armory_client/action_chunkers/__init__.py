@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Type
 
-from armory_client.client import BidirectionalWebsocket
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
-from armory_client.action_chunkers.sync import SyncBroker
 from armory_client.action_chunkers.naive_async import NaiveAsyncBroker
 from armory_client.action_chunkers.rtc import InferenceTimeRTCBroker
+from armory_client.action_chunkers.sync import SyncBroker
 from armory_client.action_chunkers.temporal_ensembling import TemporalEnsemblingBroker
+from armory_client.client import BidirectionalWebsocket
 
 
 @dataclass
@@ -38,7 +37,7 @@ class ActionChunkBrokerType(Enum):
     TEMPORAL_ENSEMBLING = "temporal_ensembling"
     # TODO: vlash
 
-    def get_class(self) -> Type[ActionChunkBroker]:
+    def get_class(self) -> type[ActionChunkBroker]:
         return _CLASS_MAPPING[self.value]
 
     def create(self, config) -> ActionChunkBroker:

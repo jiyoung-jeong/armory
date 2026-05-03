@@ -9,7 +9,9 @@ from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import SlotRequest
 
 
-def calculate_usable_time(latency_tracker: LatencyTracker, slot_request: SlotRequest, batch_size: int) -> float:
+def calculate_usable_time(
+    latency_tracker: LatencyTracker, slot_request: SlotRequest, batch_size: int
+) -> float:
     total_latency = latency_tracker.total_latency(slot_request.robot_id, batch_size)
     total_chunk_time = slot_request.execution_horizon / slot_request.control_hz
     return total_chunk_time - total_latency
@@ -57,13 +59,16 @@ class GreedyActionScheduler(RequestScheduler):
         potential_batches = itertools.chain.from_iterable(
             itertools.combinations(candidates, i) for i in range(1, self._max_batch_size + 1)
         )
-        return [list(max(potential_batches, key=lambda batch: self.calculate_actions_per_second(batch)))]
+        return [
+            list(max(potential_batches, key=lambda batch: self.calculate_actions_per_second(batch)))
+        ]
 
     def calculate_actions_per_second(self, batch: tuple[SlotRequest, ...]) -> float:
         """Return the number of usable actions created per second spent on inference."""
         return sum(
             calculate_usable_time(self.latency_tracker, request, len(batch)) for request in batch
         ) / self.latency_tracker.infer_latency(len(batch))
+
 
 class GreedyDeadlineScheduler(RequestScheduler):
     """Earliest-deadline-first: sort all pending requests by deadline."""
@@ -99,7 +104,11 @@ class GreedyDeadlineScheduler(RequestScheduler):
     @property
     def most_efficient_batch_size(self) -> int:
         """Batch size with the best throughput (requests / ms)."""
-        return max(range(1, self._max_batch_size + 1), key=lambda bs: bs / self.latency_tracker.infer_latency(bs))
+        return max(
+            range(1, self._max_batch_size + 1),
+            key=lambda bs: bs / self.latency_tracker.infer_latency(bs),
+        )
+
 
 class RoundRobinScheduler(RequestScheduler):
     """Cycle through robots starting from the current pointer, fill to max_batch_size."""

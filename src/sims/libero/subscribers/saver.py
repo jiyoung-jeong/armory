@@ -3,29 +3,33 @@ from __future__ import annotations
 import logging
 import pathlib
 import time
+
 import imageio
 import matplotlib
+
 matplotlib.use("Agg")
+import dataclasses
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 import numpy as np
-
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Dict, Optional, Tuple, TYPE_CHECKING
-import dataclasses
-from dataclasses import dataclass
-from armory_client.runtime import subscriber as _subscriber
 from typing_extensions import override
+
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
+from armory_client.runtime import subscriber as _subscriber
 from armory_client.schemas import (
-    Timestamp,
-    JSONDataclass,
-    ActionChunk,
-    Observation,
     Action,
+    ActionChunk,
+    JSONDataclass,
+    Observation,
+    Timestamp,
 )
 
 if TYPE_CHECKING:
     from libero.libero import benchmark
+
     from sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
@@ -46,14 +50,14 @@ class Result(JSONDataclass):
 class _EpisodeSaveData:
     """Snapshot of all data needed to persist one episode, safe to hand off to a thread."""
 
-    timestamps: List[Timestamp]
-    observations_buffer: Dict[int, Observation]
-    action_chunks: List[ActionChunk]
-    actions_left_snapshot: List[int]
-    cost_history: List[float]
+    timestamps: list[Timestamp]
+    observations_buffer: dict[int, Observation]
+    action_chunks: list[ActionChunk]
+    actions_left_snapshot: list[int]
+    cost_history: list[float]
     current_success: bool
     episode_idx: int
-    initial_state: Optional[np.ndarray]
+    initial_state: np.ndarray | None
 
 
 class Saver(_subscriber.Subscriber):
@@ -77,9 +81,9 @@ class Saver(_subscriber.Subscriber):
         self._robot_idx = robot_idx
         self._environment = environment
         self._action_chunk_broker = action_chunk_broker
-        self._timestamps: List[Timestamp] = []
+        self._timestamps: list[Timestamp] = []
         self._control_hz = environment.control_hz
-        self._observations_buffer: Dict[int, Observation] = {}
+        self._observations_buffer: dict[int, Observation] = {}
         self._executor = ThreadPoolExecutor(max_workers=5)
 
     @override
@@ -149,19 +153,15 @@ class Saver(_subscriber.Subscriber):
         self._save_actions_left(out_folder, data)
         self._save_cost_history(out_folder, data)
 
-    def _get_out_folder(self, data: _EpisodeSaveData) -> Tuple[pathlib.Path, int]:
+    def _get_out_folder(self, data: _EpisodeSaveData) -> tuple[pathlib.Path, int]:
         robot_folder = self._out_dir / str(self._robot_idx)
         pathlib.Path(robot_folder).mkdir(parents=True, exist_ok=True)
 
         existing = list(robot_folder.iterdir())
-        next_idx = (
-            max([int(p.name.split("_")[0]) for p in existing if p.is_dir()], default=-1)
-            + 1
-        )
+        next_idx = max([int(p.name.split("_")[0]) for p in existing if p.is_dir()], default=-1) + 1
         success_str = "success" if data.current_success else "failure"
         out_folder = (
-            robot_folder
-            / f"{next_idx}_{self._task_suite_name}_{self._task_id}_{success_str}"
+            robot_folder / f"{next_idx}_{self._task_suite_name}_{self._task_id}_{success_str}"
         )
         pathlib.Path(out_folder).mkdir(parents=True, exist_ok=True)
         return pathlib.Path(out_folder), next_idx
@@ -179,15 +179,11 @@ class Saver(_subscriber.Subscriber):
         )
         result.to_json(out_folder / "metadata.json")
 
-    def _save_timestamps(
-        self, out_folder: pathlib.Path, data: _EpisodeSaveData
-    ) -> None:
+    def _save_timestamps(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
         logger.info(f"Saving timestamps to {out_folder / 'timestamps.csv'}")
         Timestamp.to_csv(data.timestamps, out_folder / "timestamps.csv")
 
-    def _save_action_chunks(
-        self, out_folder: pathlib.Path, data: _EpisodeSaveData
-    ) -> None:
+    def _save_action_chunks(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
         logger.info(f"Saving action chunks to {out_folder}")
         ActionChunk.to_parquet(data.action_chunks, out_folder / "action_chunks.parquet")
 
@@ -200,9 +196,7 @@ class Saver(_subscriber.Subscriber):
             fps=self._control_hz,  # NOTE: saving in control hz fps for now
         )
 
-    def _save_debug_data(
-        self, out_folder: pathlib.Path, data: _EpisodeSaveData
-    ) -> None:
+    def _save_debug_data(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
         """Save debug data as a single .npz file with observations, noise, and actions."""
         # Check if we have noise data
         has_noise = any(chunk.noise is not None for chunk in data.action_chunks)
@@ -252,16 +246,12 @@ class Saver(_subscriber.Subscriber):
         np.savez_compressed(debug_data_file, **data_to_save)
         logger.info(f"Saved {len(data.action_chunks)} chunks to {debug_data_file}")
 
-    def _save_actions_left(
-        self, out_folder: pathlib.Path, data: _EpisodeSaveData
-    ) -> None:
+    def _save_actions_left(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
         path = out_folder / "actions_left.npy"
         np.save(path, np.array(data.actions_left_snapshot, dtype=np.int32))
         logger.info(f"Saved actions_left to {path}")
 
-    def _save_cost_history(
-        self, out_folder: pathlib.Path, data: _EpisodeSaveData
-    ) -> None:
+    def _save_cost_history(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
         costs = np.array(data.cost_history, dtype=np.float64)
         npy_path = out_folder / "cost_history.npy"
         np.save(npy_path, costs)

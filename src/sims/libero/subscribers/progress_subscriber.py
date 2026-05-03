@@ -1,12 +1,15 @@
 from __future__ import annotations
+
+import logging
 import multiprocessing
 import time
+from typing import TYPE_CHECKING
+
 import numpy as np
-from typing import List, TYPE_CHECKING
-from armory_client.runtime import subscriber as _subscriber
 from typing_extensions import override
+
+from armory_client.runtime import subscriber as _subscriber
 from sims.libero.episodes import Episode
-import logging
 
 if TYPE_CHECKING:
     from sims.libero.env import LiberoSimEnvironment
@@ -55,7 +58,7 @@ class ProgressSubscriber(_subscriber.Subscriber):
         # State tracking
         self.current_step_count = 0
         self.total_successes = 0
-        self.step_times: List[List[float]] = []
+        self.step_times: list[list[float]] = []
 
         # Send worker init message
         self._send_message(
@@ -93,9 +96,7 @@ class ProgressSubscriber(_subscriber.Subscriber):
         """Calculate steps per second for a robot."""
         if not self.step_times or len(self.step_times[-1]) <= 1:
             return 0.0
-        intervals = np.concatenate(
-            [np.diff(step_times) for step_times in self.step_times]
-        )
+        intervals = np.concatenate([np.diff(step_times) for step_times in self.step_times])
         steps_per_sec = 1.0 / float(np.mean(intervals))
         return steps_per_sec
 

@@ -1,13 +1,13 @@
 from dataclasses import dataclass
-from armory_client.runtime import environment as _environment
-from armory_client.schemas import Action
-from armory_client.schemas import Observation
+
 import numpy as np
-from armory_client import image_tools
 from libero.libero.envs import OffScreenRenderEnv
-from sims.libero import utils
-from typing import List
 from typing_extensions import override
+
+from armory_client import image_tools
+from armory_client.runtime import environment as _environment
+from armory_client.schemas import Action, Observation
+from sims.libero import utils
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 NUM_STEPS_WAIT = 10
@@ -52,8 +52,8 @@ class LiberoSimEnvironment(_environment.Environment):
         self._done = True
         self._step_counter = 0
         self._last_obs = None
-        self._episode_results: List[bool] = []
-        self._current_frames: List[np.ndarray] = []
+        self._episode_results: list[bool] = []
+        self._current_frames: list[np.ndarray] = []
         self._current_success = False
 
     def reset(self) -> None:
@@ -145,7 +145,7 @@ class LiberoSimEnvironment(_environment.Environment):
         return self._initial_states[self._episode_idx - 1]
 
     @property
-    def episode_results(self) -> List[bool]:
+    def episode_results(self) -> list[bool]:
         """Per-episode success flags accumulated so far."""
         return self._episode_results
 

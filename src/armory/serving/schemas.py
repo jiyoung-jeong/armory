@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from dataclasses import field
 import itertools
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import numpy as np
-from armory_client.messages import InferResponse
-from armory_client.messages import InferType
-from armory_client.messages import RTCParams
-from armory_client.messages import TrainTimeRTCParams
-from armory_client.messages import VlashParams
+
+from armory_client.messages import (
+    InferResponse,
+    InferType,
+    RTCParams,
+    TrainTimeRTCParams,
+    VlashParams,
+)
 
 _request_id_counter = itertools.count(1)
 

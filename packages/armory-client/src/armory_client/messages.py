@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
+
 import numpy as np
-from typing import Literal, Optional, Union
 from jaxtyping import Float
 
 
@@ -43,8 +44,8 @@ class InferRequest:
     deadline: float
     execution_horizon: int
     infer_type: InferType
-    params: Optional[Union[RTCParams, VlashParams, TrainTimeRTCParams]] = None
-    noise: Optional[Float[np.ndarray, "action_horizon noise_dim"]] = None
+    params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
+    noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
     type: Literal["infer"] = "infer"
 
     def __post_init__(self) -> None:
@@ -71,7 +72,7 @@ class InferResponse:
     request_timestamp: float  # from request
     actions: Float[np.ndarray, "1 action_horizon action_dim"]  # TODO: check the type on this
     execution_horizon: int
-    noise: Optional[Float[np.ndarray, "action_horizon noise_dim"]] = None
+    noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
     # Lifecycle timestamps (filled by server, all time.time()):
     server_arrival_time: float = 0.0  # WS: when observation arrived
     inference_start_time: float = 0.0  # GPU: before infer_batch

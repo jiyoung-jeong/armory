@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 
 # LIBERO state layout within the flat (8,) state vector
 _STATE_SLICES: list[tuple[str, slice]] = [
-    ("x",     slice(0, 1)),
-    ("y",     slice(1, 2)),
-    ("z",     slice(2, 3)),
-    ("roll",  slice(3, 4)),
+    ("x", slice(0, 1)),
+    ("y", slice(1, 2)),
+    ("z", slice(2, 3)),
+    ("roll", slice(3, 4)),
     ("pitch", slice(4, 5)),
-    ("yaw",   slice(5, 6)),
-    ("gripper", slice(6, 8)),   # 2-element gripper joint positions
+    ("yaw", slice(5, 6)),
+    ("gripper", slice(6, 8)),  # 2-element gripper joint positions
 ]
 
 # Action keys in concatenation order (must match modality config)
@@ -58,8 +58,8 @@ def _obs_to_groot(requests: list[InferRequest]) -> dict:
 
     H, W, _ = images[0].shape
 
-    video_image = np.stack(images).reshape(B, 1, H, W, 3)          # (B, 1, H, W, 3)
-    video_wrist = np.stack(wrist_images).reshape(B, 1, H, W, 3)    # (B, 1, H, W, 3)
+    video_image = np.stack(images).reshape(B, 1, H, W, 3)  # (B, 1, H, W, 3)
+    video_wrist = np.stack(wrist_images).reshape(B, 1, H, W, 3)  # (B, 1, H, W, 3)
 
     state_dict = {}
     for key, sl in _STATE_SLICES:
@@ -100,15 +100,17 @@ def _groot_action_to_armory(action_dict: dict, batch_size: int) -> list[dict[str
     for i in range(batch_size):
         parts = []
         for key in _ACTION_KEYS:
-            arr = action_dict[key][i]   # (horizon, dim)
+            arr = action_dict[key][i]  # (horizon, dim)
             parts.append(arr)
-        actions = np.concatenate(parts, axis=-1)   # (horizon, total_action_dim)
+        actions = np.concatenate(parts, axis=-1)  # (horizon, total_action_dim)
         actions = _convert_gripper(actions)
-        results.append({
-            "actions": actions,
-            "noise": None,           # GR00T does not expose diffusion noise
-            "rtc_prev_actions": actions,
-        })
+        results.append(
+            {
+                "actions": actions,
+                "noise": None,  # GR00T does not expose diffusion noise
+                "rtc_prev_actions": actions,
+            }
+        )
     return results
 
 

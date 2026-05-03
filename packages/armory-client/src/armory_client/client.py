@@ -1,15 +1,13 @@
 import logging
 import time
-from typing import Callable
-from typing import Optional
+from collections.abc import Callable
+from dataclasses import asdict
 
 import numpy as np
 import requests
-from dataclasses import asdict
 import websockets.sync.client
 
-from armory_client import messages
-from armory_client import msgpack_numpy
+from armory_client import messages, msgpack_numpy
 from armory_client.messages import (
     ConnectRequest,
     WarmupAck,
@@ -17,7 +15,6 @@ from armory_client.messages import (
     WarmupPong,
 )
 from armory_client.schemas import Observation, ServerMetadata
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +23,7 @@ WARMUP_OBS_BYTES = 3 * 224 * 224 * 3  # 3 channels, 224x224 pixels, 3 bytes per 
 
 
 # FIXME: need Tuple and not tuple to be backwards compatible with Python 3.8 (libero environment)
-def _parse_urls(host: str, port: Optional[int]) -> Tuple[str, str]:
+def _parse_urls(host: str, port: int | None) -> tuple[str, str]:
     """Parse host/port into (ws_uri, http_base) tuple."""
     explicit_scheme = False
     if host.startswith("https://"):
@@ -53,10 +50,10 @@ class BidirectionalWebsocket:
         self,
         robot_id: str,
         host: str = "0.0.0.0",
-        port: Optional[int] = None,
-        api_key: Optional[str] = None,
+        port: int | None = None,
+        api_key: str | None = None,
         control_hz: float = 10.0,
-        pre_send_hook: Optional[Callable[[], None]] = None,
+        pre_send_hook: Callable[[], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._ws_uri, self._http_base = _parse_urls(host, port)
@@ -80,7 +77,9 @@ class BidirectionalWebsocket:
             try:
                 resp = requests.get(
                     f"{self._http_base}/metadata",
-                    headers={"Authorization": f"Api-Key {self._api_key}"} if self._api_key else None,
+                    headers={"Authorization": f"Api-Key {self._api_key}"}
+                    if self._api_key
+                    else None,
                     timeout=5,
                 )
                 resp.raise_for_status()
@@ -91,7 +90,11 @@ class BidirectionalWebsocket:
 
     def _handshake(self, control_hz: float) -> None:
         """Send ConnectRequest with robot_id, wait for server acknowledgment."""
-        self._ws.send(msgpack_numpy.packb(asdict(ConnectRequest(robot_id=self._robot_id, control_hz=control_hz))))
+        self._ws.send(
+            msgpack_numpy.packb(
+                asdict(ConnectRequest(robot_id=self._robot_id, control_hz=control_hz))
+            )
+        )
         msgpack_numpy.unpackb(self._ws.recv())  # ConnectResponse ack
         logger.info("Connected as robot_id=%s", self._robot_id)
 
@@ -123,7 +126,7 @@ class BidirectionalWebsocket:
         action_start_step: int,
         infer_type: messages.InferType = messages.InferType.SYNC,
         execution_horizon: int = 0,
-        noise: Optional[np.ndarray] = None,
+        noise: np.ndarray | None = None,
     ) -> None:
         if self._pre_send_hook is not None:
             self._pre_send_hook()

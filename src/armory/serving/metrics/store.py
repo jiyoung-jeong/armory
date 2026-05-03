@@ -1,31 +1,26 @@
 from __future__ import annotations
 
 import bisect
-from dataclasses import dataclass
-from dataclasses import field
 import itertools
 import logging
 import threading
 import time
+from dataclasses import dataclass, field
 
 import numpy as np
-from armory_client.messages import EpisodeEnd
-from armory_client.messages import EpisodeStart
-from armory_client.messages import EpisodeStep
-from armory_client.messages import InferResponse
-from armory_client.messages import ResponseAck
-from armory_client.schemas import JSONDataclass
 
-from armory.serving.metrics.schemas import BatchSummary
-from armory.serving.metrics.schemas import Episode
-from armory.serving.metrics.schemas import RequestRecord
-from armory.serving.metrics.schemas import ResponseRecord
-from armory.serving.metrics.schemas import Robot
-from armory.serving.metrics.schemas import RobotID
-from armory.serving.metrics.schemas import window_filter
-from armory.serving.schemas import ResponseBatch
-from armory.serving.schemas import SchedulerDecision
-from armory.serving.schemas import SlotRequest
+from armory.serving.metrics.schemas import (
+    BatchSummary,
+    Episode,
+    RequestRecord,
+    ResponseRecord,
+    Robot,
+    RobotID,
+    window_filter,
+)
+from armory.serving.schemas import ResponseBatch, SchedulerDecision, SlotRequest
+from armory_client.messages import EpisodeEnd, EpisodeStart, EpisodeStep, InferResponse, ResponseAck
+from armory_client.schemas import JSONDataclass
 
 logger = logging.getLogger(__name__)
 
@@ -122,11 +117,19 @@ class Snapshot:
     def task_success_rate_pct(self) -> float:
         if not self.completed_episodes:
             return 0.0
-        return sum(1 for _, ep in self.completed_episodes if ep.success) / len(self.completed_episodes) * 100
+        return (
+            sum(1 for _, ep in self.completed_episodes if ep.success)
+            / len(self.completed_episodes)
+            * 100
+        )
 
     @property
     def tp_suc_per_sec_all(self) -> float:
-        return sum(1 for _, ep in self.completed_episodes if ep.success) / self.uptime_s if self.uptime_s > 0 else 0.0
+        return (
+            sum(1 for _, ep in self.completed_episodes if ep.success) / self.uptime_s
+            if self.uptime_s > 0
+            else 0.0
+        )
 
     @property
     def replan_times_s(self) -> list[float]:
@@ -154,7 +157,9 @@ class MetricsStore(JSONDataclass):
             else Robot(robot_id=robot_id, episodes=[])
             for robot_id, v in self.robots.items()
         }
-        self.scheduler_decisions = [SchedulerDecision.from_json(s) for s in self.scheduler_decisions]
+        self.scheduler_decisions = [
+            SchedulerDecision.from_json(s) for s in self.scheduler_decisions
+        ]
 
     def record_batch(self, batch: ResponseBatch) -> None:
         """Called once per batch by _router_task."""
@@ -236,7 +241,11 @@ class MetricsStore(JSONDataclass):
     def record_episode_step(self, robot_id: str, episode_step: EpisodeStep) -> None:
         with lock:
             if robot_id in self.robots and self.robots[robot_id].episodes:
-                timestamp = episode_step.client_timestamp if episode_step.client_timestamp > 0 else time.time()
+                timestamp = (
+                    episode_step.client_timestamp
+                    if episode_step.client_timestamp > 0
+                    else time.time()
+                )
                 self.robots[robot_id].add_step(timestamp)
                 self.end_time = max(self.end_time, timestamp)
 
@@ -265,12 +274,14 @@ class MetricsStore(JSONDataclass):
             )
             requests = list(
                 itertools.chain.from_iterable(
-                    robot.get_requests(start_timestamp, self.end_time) for robot in self.robots.values()
+                    robot.get_requests(start_timestamp, self.end_time)
+                    for robot in self.robots.values()
                 )
             )
             responses = list(
                 itertools.chain.from_iterable(
-                    robot.get_responses(start_timestamp, self.end_time) for robot in self.robots.values()
+                    robot.get_responses(start_timestamp, self.end_time)
+                    for robot in self.robots.values()
                 )
             )
 
@@ -308,10 +319,14 @@ class MetricsStore(JSONDataclass):
                 valid = alh[~np.isnan(alh)]
                 observed_steps = len(valid)
                 starved_steps = int(np.sum(valid == 0))
-                starvation_rate_pct = starved_steps / observed_steps * 100 if observed_steps > 0 else 0.0
+                starvation_rate_pct = (
+                    starved_steps / observed_steps * 100 if observed_steps > 0 else 0.0
+                )
 
                 robot_eps = eps_by_robot.get(robot_id, [])
-                tp = sum(1 for ep in robot_eps if ep.success) / duration_s if duration_s > 0 else 0.0
+                tp = (
+                    sum(1 for ep in robot_eps if ep.success) / duration_s if duration_s > 0 else 0.0
+                )
 
                 robot_resps = responses_by_robot.get(robot_id, [])
                 net_delays = [r.outbound_ms for r in robot_resps if r.receive_time > 0]
@@ -359,7 +374,9 @@ class MetricsStore(JSONDataclass):
                 w = _windows.setdefault(robot_id, deque(maxlen=k))
                 w.append(al)
                 active_count = len(_windows)
-                healthy_count = sum(1 for w in _windows.values() if sum(v == 0 for v in w) / len(w) * 100 <= sla_pct)
+                healthy_count = sum(
+                    1 for w in _windows.values() if sum(v == 0 for v in w) / len(w) * 100 <= sla_pct
+                )
                 healthy_robots_over_time.append(
                     {
                         "t": round(ts - t0, 3),
@@ -391,9 +408,15 @@ class MetricsStore(JSONDataclass):
             kickoff_markers = []
             kickoff_cursor = 0
             for plan_index, activation_ts in enumerate(plan_activation_abs):
-                while kickoff_cursor + 1 < len(kickoff_abs) and kickoff_abs[kickoff_cursor + 1] <= activation_ts:
+                while (
+                    kickoff_cursor + 1 < len(kickoff_abs)
+                    and kickoff_abs[kickoff_cursor + 1] <= activation_ts
+                ):
                     kickoff_cursor += 1
-                if kickoff_cursor < len(kickoff_abs) and kickoff_abs[kickoff_cursor] <= activation_ts:
+                if (
+                    kickoff_cursor < len(kickoff_abs)
+                    and kickoff_abs[kickoff_cursor] <= activation_ts
+                ):
                     kickoff_ts = kickoff_abs[kickoff_cursor]
                     if start_timestamp <= kickoff_ts < self.end_time:
                         kickoff_markers.append(
@@ -420,7 +443,8 @@ class MetricsStore(JSONDataclass):
                     resp = response_by_id.get(req_id)
                     if resp is not None:
                         inbound_ms = round(
-                            (resp.request.server_arrival_time - resp.request.request_timestamp) * 1000,
+                            (resp.request.server_arrival_time - resp.request.request_timestamp)
+                            * 1000,
                             2,
                         )
                         queue_ms = round(
@@ -481,9 +505,9 @@ class MetricsStore(JSONDataclass):
                     )
                 else:
                     # FIXME: idk what this is
-                    scheduler_timing_ms.setdefault(f"{sample.scheduler_name}.{sample.metric_name}", []).append(
-                        round(sample.duration * 1000, 3)
-                    )
+                    scheduler_timing_ms.setdefault(
+                        f"{sample.scheduler_name}.{sample.metric_name}", []
+                    ).append(round(sample.duration * 1000, 3))
 
             # ---- task events (completed episodes in window) ----
             task_events = []

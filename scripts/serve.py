@@ -36,7 +36,6 @@ class Default:
     """Use the default checkpoint for the given --env."""
 
 
-
 @dataclasses.dataclass
 class Mock:
     """Use a lightweight mock policy that does not load weights or use a GPU."""

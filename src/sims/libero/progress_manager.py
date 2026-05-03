@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from contextlib import nullcontext
+import logging
 import multiprocessing
 import queue as queue_module
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Literal, Optional
-
-import logging
+from typing import Literal
 
 from rich.console import Console
 from rich.live import Live
@@ -42,8 +41,8 @@ class RobotState:
     successes: int = 0
 
     # Progress bar IDs (Rich TaskIDs)
-    episode_bar_id: Optional[TaskID] = None
-    step_bar_id: Optional[TaskID] = None
+    episode_bar_id: TaskID | None = None
+    step_bar_id: TaskID | None = None
 
     # Step tracking
     steps_per_sec: float = 0.0
@@ -102,15 +101,15 @@ class ProgressManager:
         self.job_stats = JobStats(total_episodes=total_episodes)
 
         # Rich Progress components
-        self.progress: Optional[Progress] = None
-        self.live: Optional[Live] = None
+        self.progress: Progress | None = None
+        self.live: Live | None = None
         self.console = Console()
 
         # Overall job progress bar ID
-        self.overall_bar_id: Optional[TaskID] = None
+        self.overall_bar_id: TaskID | None = None
 
         # Threading
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
@@ -186,9 +185,7 @@ class ProgressManager:
         # Add stats summary
         with self._lock:
             elapsed = (
-                time.time() - self.job_stats.start_time
-                if self.job_stats.start_time > 0.0
-                else 0.0
+                time.time() - self.job_stats.start_time if self.job_stats.start_time > 0.0 else 0.0
             )
             success_rate = (
                 self.job_stats.total_successes / self.job_stats.completed_episodes * 100
@@ -204,11 +201,7 @@ class ProgressManager:
 
             # Add per-robot stats
             active_robots = sorted(
-                [
-                    rs
-                    for rs in self.robot_states.values()
-                    if rs.active and not rs.completed
-                ],
+                [rs for rs in self.robot_states.values() if rs.active and not rs.completed],
                 key=lambda rs: rs.robot_idx,
             )
 
@@ -372,9 +365,7 @@ class ProgressManager:
         """Print final summary after completion."""
         with self._lock:
             total_time = (
-                time.time() - self.job_stats.start_time
-                if self.job_stats.start_time > 0.0
-                else 0.0
+                time.time() - self.job_stats.start_time if self.job_stats.start_time > 0.0 else 0.0
             )
             success_rate = (
                 self.job_stats.total_successes / self.job_stats.completed_episodes * 100
@@ -382,9 +373,7 @@ class ProgressManager:
                 else 0.0
             )
 
-            self.console.print(
-                "\n[bold green]===== Evaluation Complete =====[/bold green]"
-            )
+            self.console.print("\n[bold green]===== Evaluation Complete =====[/bold green]")
             self.console.print(
                 f"Total Episodes: {self.job_stats.completed_episodes}/{self.job_stats.total_episodes}"
             )
@@ -453,9 +442,7 @@ class ConciseProgressManager(ProgressManager):
         # Add summary stats
         with self._lock:
             elapsed = (
-                time.time() - self.job_stats.start_time
-                if self.job_stats.start_time > 0.0
-                else 0.0
+                time.time() - self.job_stats.start_time if self.job_stats.start_time > 0.0 else 0.0
             )
             success_rate = (
                 self.job_stats.total_successes / self.job_stats.completed_episodes * 100
@@ -472,11 +459,7 @@ class ConciseProgressManager(ProgressManager):
 
             # Add compact robot grid in two columns
             active_robots = sorted(
-                [
-                    rs
-                    for rs in self.robot_states.values()
-                    if rs.active and not rs.completed
-                ],
+                [rs for rs in self.robot_states.values() if rs.active and not rs.completed],
                 key=lambda rs: rs.robot_idx,
             )
 
@@ -492,9 +475,7 @@ class ConciseProgressManager(ProgressManager):
                 columns.add_column()
 
                 # Create left table
-                left_table = Table(
-                    show_header=True, box=None, padding=(0, 1), show_edge=False
-                )
+                left_table = Table(show_header=True, box=None, padding=(0, 1), show_edge=False)
                 left_table.add_column("Robot", style="cyan", width=6)
                 left_table.add_column("T", width=3)
                 left_table.add_column("Ep", justify="right", width=8)
@@ -503,9 +484,7 @@ class ConciseProgressManager(ProgressManager):
 
                 for rs in left_robots:
                     success_pct = (
-                        rs.successes / rs.current_episode * 100
-                        if rs.current_episode > 0
-                        else 0.0
+                        rs.successes / rs.current_episode * 100 if rs.current_episode > 0 else 0.0
                     )
                     left_table.add_row(
                         f"R{rs.robot_idx}",
@@ -516,9 +495,7 @@ class ConciseProgressManager(ProgressManager):
                     )
 
                 # Create right table
-                right_table = Table(
-                    show_header=True, box=None, padding=(0, 1), show_edge=False
-                )
+                right_table = Table(show_header=True, box=None, padding=(0, 1), show_edge=False)
                 right_table.add_column("Robot", style="cyan", width=6)
                 right_table.add_column("T", width=3)
                 right_table.add_column("Ep", justify="right", width=8)
@@ -527,9 +504,7 @@ class ConciseProgressManager(ProgressManager):
 
                 for rs in right_robots:
                     success_pct = (
-                        rs.successes / rs.current_episode * 100
-                        if rs.current_episode > 0
-                        else 0.0
+                        rs.successes / rs.current_episode * 100 if rs.current_episode > 0 else 0.0
                     )
                     right_table.add_row(
                         f"R{rs.robot_idx}",
@@ -718,9 +693,7 @@ class LoggingProgressManager(ProgressManager):
         """Print final summary after completion."""
         with self._lock:
             total_time = (
-                time.time() - self.job_stats.start_time
-                if self.job_stats.start_time > 0.0
-                else 0.0
+                time.time() - self.job_stats.start_time if self.job_stats.start_time > 0.0 else 0.0
             )
             success_rate = (
                 self.job_stats.total_successes / self.job_stats.completed_episodes * 100
@@ -745,13 +718,9 @@ class DebugQueue:
     def put_nowait(self, message: dict):
         msg_type = message["type"]
         if msg_type == "worker_init":
-            print(
-                f"[Robot {message['robot_idx']}] Starting task {message['episode'].task_id}"
-            )
+            print(f"[Robot {message['robot_idx']}] Starting task {message['episode'].task_id}")
         elif msg_type == "episode_start":
-            print(
-                f"[Robot {message['robot_idx']}] Episode {message['episode'].idx} started"
-            )
+            print(f"[Robot {message['robot_idx']}] Episode {message['episode'].idx} started")
         elif msg_type == "episode_end":
             status = "SUCCESS" if message["success"] else "FAILURE"
             print(
@@ -788,12 +757,8 @@ def get_progress_manager(
     if progress_type == "verbose":
         return ProgressManager(num_robots, total_episodes, max_steps, update_interval)
     elif progress_type == "concise":
-        return ConciseProgressManager(
-            num_robots, total_episodes, max_steps, update_interval
-        )
+        return ConciseProgressManager(num_robots, total_episodes, max_steps, update_interval)
     elif progress_type == "logging":
-        return LoggingProgressManager(
-            num_robots, total_episodes, max_steps, update_interval
-        )
+        return LoggingProgressManager(num_robots, total_episodes, max_steps, update_interval)
     else:
         return nullcontext()
