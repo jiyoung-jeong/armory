@@ -2,6 +2,7 @@ from armory.scheduling import RequestScheduler
 from armory.serving.schemas import SlotRequest
 from armory.scheduling.mirror import search
 import multiprocessing as mp
+import time
 
 
 class LookaheadActionsScheduler(RequestScheduler):
@@ -15,4 +16,8 @@ class LookaheadActionsScheduler(RequestScheduler):
         if not self._batch_queue.empty() or self.schedulable_requests == []:
             return []
 
-        return search(self.mirror, self.latency_tracker, self.horizon)
+        schedule = search(self.mirror, self.latency_tracker, time.time(), self.horizon)
+        return [
+            [self._latest_requests[robot_id] for robot_id in batch]
+            for batch in schedule
+        ]

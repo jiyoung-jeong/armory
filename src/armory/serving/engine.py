@@ -255,6 +255,9 @@ def _run_gpu_worker(
                     request_id=sd.request_id,
                     batch_size=actual_batch_size,
                     inference_duration=inference_duration,
+                    observation_step=sd.observation_step,
+                    execution_horizon=sd.execution_horizon,
+                    server_arrival_time=sd.arrival_timestamp,
                 )
                 for sr, sd in zip(slot_reqs, slot_datas, strict=True)
                 if not sr.is_padding

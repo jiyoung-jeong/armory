@@ -45,6 +45,9 @@ class CompletionNotification:
     request_id: int
     batch_size: int
     inference_duration: float
+    observation_step: int
+    execution_horizon: int
+    server_arrival_time: float
 
 
 @dataclass(frozen=True)

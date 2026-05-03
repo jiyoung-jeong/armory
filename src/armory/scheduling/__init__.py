@@ -10,6 +10,7 @@ import time
 
 from armory_client.messages import InferType
 from armory.scheduling.latency import EMALatencyTracker
+from armory.scheduling.mirror import Mirror
 from armory.serving.schemas import AckNotification
 from armory.serving.schemas import CompletionNotification
 from armory.serving.schemas import RequestBatch
@@ -28,6 +29,9 @@ class RequestScheduler(ABC):
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
 
+        self.mirror = Mirror()
+
+        # TODO: eventually a bunch of this can be moved to the mirror
         self._latest_requests: dict[str, SlotRequest] = {}
         self._latest_scheduled_requests: dict[str, SlotRequest] = {}
         self._deadlines: dict[
@@ -49,11 +53,13 @@ class RequestScheduler(ABC):
         self.latency_tracker.update_obs(
             request.robot_id, request.arrival_timestamp, request.request_timestamp
         )
+        self.mirror.receive_request(request, request.control_hz)
 
     def update_completion(self, notification: CompletionNotification) -> None:
         self.latency_tracker.update_infer(
             notification.batch_size, notification.inference_duration
         )
+        self.mirror.send_response(notification)
 
     def update_ack(self, notification: AckNotification) -> None:
         self.latency_tracker.update_action_delivery(
@@ -61,6 +67,7 @@ class RequestScheduler(ABC):
             notification.receive_time,
             notification.server_send_time,
         )
+        self.mirror.receive_response(notification)
 
     def schedule(self) -> None:
         """Return a list of batches of requests to be sent to the GPU."""
