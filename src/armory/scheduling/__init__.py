@@ -30,20 +30,30 @@ class RequestScheduler(ABC):
 
         self._latest_requests: dict[str, SlotRequest] = {}
         self._latest_scheduled_requests: dict[str, SlotRequest] = {}
-        self._deadlines: dict[str, float] = {}  # includes chunks that have been sent to the GPU but not yet completed
+        self._deadlines: dict[
+            str, float
+        ] = {}  # includes chunks that have been sent to the GPU but not yet completed
         self._decisions: list[SchedulerDecision] = []
-        self.latency_tracker = EMALatencyTracker()  # TODO: allow different latency trackers
+        self.latency_tracker = (
+            EMALatencyTracker()
+        )  # TODO: allow different latency trackers
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
 
     def update(self, request: SlotRequest) -> None:
         self._latest_requests[request.robot_id] = request
-        if request.deadline is not None and request.deadline > self._deadlines.get(request.robot_id, 0):
+        if request.deadline is not None and request.deadline > self._deadlines.get(
+            request.robot_id, 0
+        ):
             self._deadlines[request.robot_id] = request.deadline
-        self.latency_tracker.update_obs(request.robot_id, request.arrival_timestamp, request.request_timestamp)
+        self.latency_tracker.update_obs(
+            request.robot_id, request.arrival_timestamp, request.request_timestamp
+        )
 
     def update_completion(self, notification: CompletionNotification) -> None:
-        self.latency_tracker.update_infer(notification.batch_size, notification.inference_duration)
+        self.latency_tracker.update_infer(
+            notification.batch_size, notification.inference_duration
+        )
 
     def update_ack(self, notification: AckNotification) -> None:
         self.latency_tracker.update_action_delivery(
@@ -101,16 +111,22 @@ class RequestScheduler(ABC):
                 # FIXME: this might monotonically increase if we end up serving a newer observation?
                 if not request.is_padding:
                     self._deadlines[request.robot_id] = (
-                        request.request_timestamp + request.execution_horizon / request.control_hz
+                        request.request_timestamp
+                        + request.execution_horizon / request.control_hz
                     )
                     self._latest_scheduled_requests[request.robot_id] = request
-                observation_latency = self.latency_tracker.observation_latency(request.robot_id)
+                observation_latency = self.latency_tracker.observation_latency(
+                    request.robot_id
+                )
                 inference_latency = self.latency_tracker.infer_latency(batch_size)
                 action_latency = self.latency_tracker.action_latency(request.robot_id)
                 total_latency_steps = (
-                    (observation_latency + inference_latency + action_latency) * request.control_hz
-                )
-                if request.infer_type == InferType.INFERENCE_TIME_RTC and not request.is_padding:
+                    observation_latency + inference_latency + action_latency
+                ) * request.control_hz
+                if (
+                    request.infer_type == InferType.INFERENCE_TIME_RTC
+                    and not request.is_padding
+                ):
                     logger.info(
                         "RTC d estimate: robot=%s request_id=%d batch_size=%d "
                         "obs_step=%d action_start_step=%d control_hz=%.2f "
@@ -129,7 +145,9 @@ class RequestScheduler(ABC):
                         request.execution_horizon,
                     )
                 # FIXME: only pass inference + action latency, can determine observation latency when processing
-                annotated.append(dataclasses.replace(request, estimated_d_param=total_latency_steps))
+                annotated.append(
+                    dataclasses.replace(request, estimated_d_param=total_latency_steps)
+                )
 
             batch_id = next(self.next_batch_id)
 
@@ -146,7 +164,9 @@ class RequestScheduler(ABC):
                     batch_id=batch_id,
                 )
             )
-            self._batch_queue.put_nowait(RequestBatch(requests=annotated, batch_id=batch_id))
+            self._batch_queue.put_nowait(
+                RequestBatch(requests=annotated, batch_id=batch_id)
+            )
             self._in_flight += 1
 
     def notify_batch_complete(self) -> None:
