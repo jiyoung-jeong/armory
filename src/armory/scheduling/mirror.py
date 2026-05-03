@@ -13,7 +13,7 @@ from collections import deque
 import copy
 
 from armory.scheduling.latency import LatencyTracker
-from armory.serving.schemas import AckNotification, CompletionNotification, SlotRequest
+from armory.serving.schemas import AckNotification, SlotRequest
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -37,9 +37,6 @@ class ControlStep(Event):
 # TODO: will improve speed later, focus on correctness for now
 @dataclass(frozen=True)
 class ActionChunk:
-    request_id: (
-        int  # matches CompletionNotification.request_id / AckNotification.request_id
-    )
     observation_step: int  # step when observation was captured
     arrival_time: float  # time when the chunk becomes available on the robot
     action_start_step: int  # action index of the first action in the chunk
@@ -52,23 +49,26 @@ class Robot:
         self.control_hz = control_hz
         self.execution_horizon = execution_horizon
 
-        # Both lists should be sorted increasing by time
+        # Both lists will be sorted increasing by time by assertion
         self.steps: list[ControlStep] = []
         # includes chunks that are in-transit
-        self.chunks: deque[ActionChunk] = deque()
+        self.chunks: list[ActionChunk] = []
 
     def step(self, control_step: ControlStep) -> None:
         # TODO: pass more info from client and directly assert/test here
-        assert self.steps == [] or self.steps[-1].time < control_step.time
+        assert not self.steps or self.steps[-1].time < control_step.time
         self.steps.append(control_step)
 
     def send_response(self, chunk: ActionChunk) -> None:
+        assert (
+            not self.chunks or self.chunks[-1].observation_step < chunk.observation_step
+        )
         self.chunks.append(chunk)
 
     def receive_response(self, ack: AckNotification) -> None:
         """Updates a chunk's actual arrival time."""
         for i, chunk in enumerate(self.chunks):
-            if chunk.request_id == ack.request_id:
+            if chunk.observation_step == ack.observation_step:
                 self.chunks[i] = replace(
                     chunk, arrival_time=ack.receive_time, arrived=True
                 )
@@ -92,34 +92,49 @@ class Robot:
                 return step
         return None
 
-    def step_forward(self, time: float) -> None:
-        if not self.steps:
-            return
-        while self.steps[-1].time < time:
-            prev_step = self.steps[-1]
-            # FIXME: way too subtle logic here
-            action_step = (
-                (prev_step.action_step + 1)
-                if prev_step.action_step is not None
-                and prev_step.action_step < self.max_arrived_action_step
-                else None
-            )
-            self.steps.append(
-                ControlStep(
-                    time=prev_step.time + 1 / self.control_hz,
-                    observation_step=prev_step.observation_step + 1,
-                    action_step=action_step,
-                    next_action_step=action_step + 1
-                    if action_step is not None
-                    else prev_step.next_action_step,
-                )
-            )
-
     def actions_executed(self) -> int:
         steps = [s for s in self.steps if s.action_step is not None]
         if not steps:
             return 0
         return steps[-1].action_step - steps[0].action_step + 1
+
+    def action_is_available(self, action_step: int, time: float) -> bool:
+        for chunk in self.chunks:
+            if (
+                chunk.action_start_step
+                <= action_step
+                <= chunk.action_start_step + chunk.execution_horizon - 1
+            ) and chunk.arrival_time <= time:
+                return True
+        return False
+
+    def advance_step(self, prev_step: ControlStep) -> ControlStep:
+        next_time = prev_step.time + 1 / self.control_hz
+        action_step = (
+            prev_step.next_action_step
+            if self.action_is_available(prev_step.next_action_step, next_time)
+            else None
+        )
+        return ControlStep(
+            time=next_time,
+            observation_step=prev_step.observation_step + 1,
+            action_step=action_step,
+            next_action_step=action_step + 1
+            if action_step is not None
+            else prev_step.next_action_step,
+        )
+
+    def deadline(self) -> float:
+        step = self.steps[-1]
+
+        while step.action_step <= self.max_overall_action_step:
+            step = self.advance_step(step)
+
+        return step.time
+
+    def step_forward(self, time: float) -> None:
+        while self.steps[-1].time < time:
+            self.steps.append(self.advance_step(self.steps[-1]))
 
 
 class Mirror:
@@ -139,17 +154,8 @@ class Mirror:
             )
         )
 
-    def send_response(self, notification: CompletionNotification) -> None:
-        self.robots[notification.robot_id].send_response(
-            ActionChunk(
-                request_id=notification.request_id,
-                observation_step=notification.observation_step,
-                arrival_time=notification.server_arrival_time,
-                action_start_step=notification.action_start_step,
-                execution_horizon=notification.execution_horizon,
-                arrived=False,
-            )
-        )
+    def schedule_pending_chunk(self, robot_id: str, chunk: ActionChunk) -> None:
+        self.robots[robot_id].send_response(chunk)
 
     def receive_response(self, ack: AckNotification) -> None:
         self.robots[ack.robot_id].receive_response(ack)
@@ -165,11 +171,8 @@ class Mirror:
             )
 
         inference_latency = latency_tracker.infer_latency(len(robot_ids))
-        # synthesized chunks use a synthetic, monotonically-decreasing request_id
-        # so they don't collide with real ones from the wire
         return [
             ActionChunk(
-                request_id=-(i + 1),
                 observation_step=control_step.observation_step,
                 arrival_time=time
                 + inference_latency
@@ -237,20 +240,17 @@ def search(
 
     def generate_candidates(mirror: Mirror):
         # TODO: for now just return combinations
-        # available = [
-        #     rid
-        #     for rid in mirror.robots
-        #     if mirror.robots[rid].get_latest_control_step_before(
-        #         mirror.time - latency_tracker.observation_latency(rid)
-        #     )
-        #     is not None
-        # ]
         return itertools.chain.from_iterable(
             itertools.combinations(mirror.robots.keys(), i)
             for i in range(1, max_batch_size + 1)
         )
 
-    def dfs(mirror: Mirror, time: float, schedule: list[tuple[robot_id, ...]]) -> None:
+    def dfs(
+        mirror: Mirror,
+        time: float,
+        schedule: list[tuple[robot_id, ...]],
+        max_depth: int = 1,
+    ) -> None:
         nonlocal \
             best_objective, \
             best_schedule, \
@@ -269,8 +269,7 @@ def search(
                 schedule,
             )
 
-        # FIXME: for now, just search 1 deep
-        if len(schedule) >= 1:
+        if len(schedule) == max_depth:
             return
 
         candidates = list(generate_candidates(mirror))
@@ -316,11 +315,3 @@ def search(
         len(best_schedule),
     )
     return best_schedule
-
-
-"""
-simulating the future:
-- i could have api that gets next action index at any time,
-    - i need this to know which chunks to queue
-- if i don't maintain any sort of curren state and calculate everything on the fly, i can just queue all events that I know
-"""

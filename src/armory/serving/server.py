@@ -106,7 +106,10 @@ async def _router_task(
                 if queue is not None:
                     await queue.put(response)
                 else:
-                    logger.info("No active connection for robot %s, dropping response", response.robot_id)
+                    logger.info(
+                        "No active connection for robot %s, dropping response",
+                        response.robot_id,
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -134,8 +137,12 @@ async def _ws_handshake(
     state.response_queues[robot_id] = asyncio.Queue()
     state.robot_metadata[robot_id] = connect_req
 
-    await websocket.send_bytes(msgpack_numpy.packb(dataclasses.asdict(ConnectResponse())))
-    logger.info("Robot %s connected (control_hz=%.1f)", robot_id, connect_req.control_hz)
+    await websocket.send_bytes(
+        msgpack_numpy.packb(dataclasses.asdict(ConnectResponse()))
+    )
+    logger.info(
+        "Robot %s connected (control_hz=%.1f)", robot_id, connect_req.control_hz
+    )
     return robot_id, slot_index, connect_req
 
 
@@ -169,11 +176,17 @@ async def _ws_warmup(
         ack_raw = await websocket.receive_bytes()
         ack_msg = msgpack_numpy.unpackb(ack_raw)
         if ack_msg.get("type") == "warmup_ack":
-            delivery_samples.append((ack_msg["client_receive_time"], ack_msg["server_send_time"]))
+            delivery_samples.append(
+                (ack_msg["client_receive_time"], ack_msg["server_send_time"])
+            )
 
     if obs_samples or delivery_samples:
         await state.scheduler_sock.send_pyobj(
-            WarmupSeed(robot_id=robot_id, obs_samples=obs_samples, delivery_samples=delivery_samples)
+            WarmupSeed(
+                robot_id=robot_id,
+                obs_samples=obs_samples,
+                delivery_samples=delivery_samples,
+            )
         )
         logger.info(
             "Robot %s warmup complete (%d obs, %d delivery samples)",
@@ -189,7 +202,11 @@ async def _watchdog_task(gpu_proc: mp.Process, scheduler_proc: mp.Process) -> No
         await asyncio.sleep(1)
         for proc in (gpu_proc, scheduler_proc):
             if not proc.is_alive():
-                logger.critical("Backend process %s died (exit code %s), crashing server", proc.name, proc.exitcode)
+                logger.critical(
+                    "Backend process %s died (exit code %s), crashing server",
+                    proc.name,
+                    proc.exitcode,
+                )
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
 
@@ -260,7 +277,14 @@ def _start_backend(
     logger.info("Starting scheduler subprocess…")
     scheduler_proc.start()
 
-    return scheduler_proc, gpu_proc, slots, sched_ready, gpu_ready, scheduler_metrics_queue
+    return (
+        scheduler_proc,
+        gpu_proc,
+        slots,
+        sched_ready,
+        gpu_ready,
+        scheduler_metrics_queue,
+    )
 
 
 def create_app(
@@ -273,7 +297,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        scheduler_proc, gpu_proc, slots, sched_ready, gpu_ready, scheduler_metrics_queue = _start_backend(
+        (
+            scheduler_proc,
+            gpu_proc,
+            slots,
+            sched_ready,
+            gpu_ready,
+            scheduler_metrics_queue,
+        ) = _start_backend(
             metadata,
             policy_factory,
             scheduler_kwargs,
@@ -307,8 +338,12 @@ def create_app(
             robot_metadata={},
         )
 
-        router = asyncio.create_task(_router_task(response_sock, response_queues, metrics_store))
-        scheduler_metrics = asyncio.create_task(_scheduler_metrics_task(scheduler_metrics_queue, metrics_store))
+        router = asyncio.create_task(
+            _router_task(response_sock, response_queues, metrics_store)
+        )
+        scheduler_metrics = asyncio.create_task(
+            _scheduler_metrics_task(scheduler_metrics_queue, metrics_store)
+        )
         watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
 
         yield
@@ -344,7 +379,9 @@ def create_app(
             return
         robot_id, slot_index, _connect_req = result
 
-        action_payload_size = metadata.action_horizon * metadata.action_dim * 4  # float32 bytes
+        action_payload_size = (
+            metadata.action_horizon * metadata.action_dim * 4
+        )  # float32 bytes
         await _ws_warmup(websocket, state, robot_id, action_payload_size)
 
         # Normal operation
@@ -359,7 +396,9 @@ def create_app(
 
                     match msg.get("type"):
                         case "reset":
-                            await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
+                            await state.scheduler_sock.send_pyobj(
+                                ResetRequest(robot_id=robot_id)
+                            )
                             continue
                         case "ack":
                             ack = ResponseAck(**msg)
@@ -369,19 +408,26 @@ def create_app(
                                 AckNotification(
                                     robot_id=robot_id,
                                     request_id=ack.request_id,
+                                    observation_step=response.observation_step,
                                     receive_time=ack.receive_time,
                                     server_send_time=response.server_send_time,
                                 )
                             )
                             continue
                         case "episode_start":
-                            state.metrics_store.record_episode_start(robot_id, EpisodeStart(**msg))
+                            state.metrics_store.record_episode_start(
+                                robot_id, EpisodeStart(**msg)
+                            )
                             continue
                         case "episode_step":
-                            state.metrics_store.record_episode_step(robot_id, EpisodeStep(**msg))
+                            state.metrics_store.record_episode_step(
+                                robot_id, EpisodeStep(**msg)
+                            )
                             continue
                         case "episode_end":
-                            state.metrics_store.record_episode_end(robot_id, EpisodeEnd(**msg))
+                            state.metrics_store.record_episode_end(
+                                robot_id, EpisodeEnd(**msg)
+                            )
                             continue
                         case "infer":
                             pass
@@ -455,8 +501,12 @@ def create_app(
         return asdict(metadata)
 
     @app.get("/")
-    async def get_metrics(request: Request, window_s: float | None = None, sla_pct: float = 10.0) -> dict:
-        return request.app.state.server.metrics_store.snapshot(window_s, sla_pct=sla_pct)
+    async def get_metrics(
+        request: Request, window_s: float | None = None, sla_pct: float = 10.0
+    ) -> dict:
+        return request.app.state.server.metrics_store.snapshot(
+            window_s, sla_pct=sla_pct
+        )
 
     @app.get("/save-metrics")
     async def save_metrics(request: Request) -> dict:
@@ -488,5 +538,10 @@ class PolicyServer:
         self._log_queue = log_queue
 
     def serve_forever(self, host="0.0.0.0", port=8000):
-        app = create_app(self._metadata, self._policy_factory, self._scheduler_kwargs, self._log_queue)
+        app = create_app(
+            self._metadata,
+            self._policy_factory,
+            self._scheduler_kwargs,
+            self._log_queue,
+        )
         uvicorn.run(app, host=host, port=port)

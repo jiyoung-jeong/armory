@@ -10,7 +10,7 @@ import time
 
 from armory_client.messages import InferType
 from armory.scheduling.latency import EMALatencyTracker
-from armory.scheduling.mirror import Mirror
+from armory.scheduling.mirror import ActionChunk, Mirror
 from armory.serving.schemas import AckNotification
 from armory.serving.schemas import CompletionNotification
 from armory.serving.schemas import RequestBatch
@@ -59,7 +59,6 @@ class RequestScheduler(ABC):
         self.latency_tracker.update_infer(
             notification.batch_size, notification.inference_duration
         )
-        self.mirror.send_response(notification)
 
     def update_ack(self, notification: AckNotification) -> None:
         self.latency_tracker.update_action_delivery(
@@ -155,6 +154,18 @@ class RequestScheduler(ABC):
                 annotated.append(
                     dataclasses.replace(request, estimated_d_param=total_latency_steps)
                 )
+                if not request.is_padding:
+                    # FIXME: observation_step may change between scheduling and gpu processing
+                    self.mirror.schedule_pending_chunk(
+                        request.robot_id,
+                        ActionChunk(
+                            observation_step=request.observation_step,
+                            arrival_time=now + inference_latency + action_latency,
+                            action_start_step=request.action_start_step,
+                            execution_horizon=request.execution_horizon,
+                            arrived=False,
+                        ),
+                    )
 
             batch_id = next(self.next_batch_id)
 

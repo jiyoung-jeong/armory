@@ -33,7 +33,9 @@ class SlotRequest:
     noise: np.ndarray | None
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
-    is_padding: bool = False  # true for artificial slots used only to pad GPU batch size
+    is_padding: bool = (
+        False  # true for artificial slots used only to pad GPU batch size
+    )
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class AckNotification:
 
     robot_id: str
     request_id: int
+    observation_step: int
     receive_time: float
     server_send_time: float
 
@@ -71,7 +74,9 @@ class BatchProfile:
 class WarmupSeed:
     robot_id: str
     obs_samples: list[tuple[float, float]]  # (arrival_ts, request_ts) per ping
-    delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
+    delivery_samples: list[
+        tuple[float, float]
+    ]  # (client_receive_time, server_send_time) per ack
 
 
 class RequestBatch(NamedTuple):
