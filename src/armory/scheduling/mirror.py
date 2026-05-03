@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import itertools
 from typing import TypeAlias
-from sortedcontainers import SortedList
+from collections import deque
 import copy
 
 from armory_client.messages import InferRequest, InferResponse, ResponseAck
@@ -36,6 +36,7 @@ class ActionChunk:
     arrival_time: float  # step when the chunk becomes available
     action_start_index: int  # action index of the first action in the chunk
     horizon: int
+    arrived: bool = False
 
 
 class Robot:
@@ -43,61 +44,49 @@ class Robot:
         self.control_hz = control_hz
         self.horizon = horizon
 
-        self.steps: SortedList[ControlStep] = (
-            SortedList()
-        )  # steps that we have collected for sure
-        self.arrived_chunks: SortedList[ActionChunk] = (
-            SortedList()
-        )  # steps that we have arrived but not processed yet
-        # we keep these separate so we can make best-effort estimates of when chunks will be available
-        self.pending_chunks: SortedList[ActionChunk] = (
-            SortedList()
-        )  # this is separate because we add to pending chunks only after we ack from robot
+        # Both lists should be sorted increasing by time
+        self.steps: list[ControlStep] = []
+        # includes chunks that are in-transit
+        self.chunks: deque[ActionChunk] = deque()
 
     def step(self, control_step: ControlStep) -> None:
         # TODO: pass more info from client and directly assert/test here
+        assert self.steps == [] or self.steps[-1].time < control_step.time
         self.steps.add(control_step)
 
     def send_response(self, response: InferResponse) -> None:
-        self.pending_chunks.add(
+        self.chunks.append(
             ActionChunk(
                 response.server_arrival_time,
                 response.observation_step,
                 response.action_start_index,
                 response.horizon,
+                arrived=False,
             )
         )
 
     def receive_response(self, response: ResponseAck) -> None:
-        # TODO: remove from pending chunks
-        self.arrived_chunks.add(
-            ActionChunk(
-                response.observation_step,
-                response.arrival_step,
-                response.action_start_index,
-                response.horizon,
-            )
-        )
+        """Updates a chunk's actual arrival time"""
+        for i, chunk in reversed(list(enumerate(self.chunks))):
+            # FIXME: hack for now, should really check IDs
+            if chunk.observation_step == response.observation_step:
+                self.chunks[i] = ActionChunk(
+                    chunk.observation_step,
+                    response.server_arrival_time,
+                    chunk.action_start_index,
+                    chunk.horizon,
+                    arrived=True,
+                )
 
     @property
     def max_arrived_action_step(self) -> int:
-        return (
-            self.arrived_chunks[-1].action_start_index
-            + self.arrived_chunks[-1].horizon
-            - 1
-        )
+        for chunk in reversed(self.chunks):
+            if chunk.arrived:
+                return chunk.action_start_index + chunk.horizon - 1
 
     @property
     def max_overall_action_step(self) -> int:
-        max_overall_action_step = self.max_arrived_action_step
-        if self.pending_chunks:
-            max_overall_action_step = max(
-                max_overall_action_step,
-                self.pending_chunks[-1].action_start_index
-                + self.pending_chunks[-1].horizon
-                - 1,
-            )
-        return max_overall_action_step
+        return self.chunks[-1].action_start_index + self.chunks[-1].horizon - 1
 
     def get_latest_control_step_before(self, time: float) -> ControlStep | None:
         for step in reversed(self.steps):
@@ -108,14 +97,14 @@ class Robot:
     def step_forward(self, time: float) -> None:
         while self.steps[-1].time < time:
             prev_step = self.steps[-1]
-            next_action_step = prev_step.action_step
+            next_action_step = prev_step.action_step + 1
             self.steps.append(
                 ControlStep(
                     prev_step.time + 1 / self.control_hz,
                     prev_step.observation_step + 1,
                     next_action_step
                     if next_action_step <= self.max_arrived_action_step
-                    else self.max_arrived_action_step(),
+                    else self.max_arrived_action_step,
                 )
             )
 
@@ -201,7 +190,7 @@ def search(
         # TODO: for now just return combinations
         return itertools.chain.from_iterable(
             [
-                itertools.combinations(mirror.robots, i)
+                itertools.combinations(mirror.robots.keys(), i)
                 for i in range(1, max_batch_size + 1)
             ]
         )
