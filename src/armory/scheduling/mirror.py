@@ -176,7 +176,7 @@ class Mirror:
             ActionChunk(
                 observation_step=control_step.observation_step,
                 arrival_time=time + inference_latency + latency_tracker.action_latency(rid),
-                action_start_step=control_step.action_step,
+                action_start_step=control_step.next_action_step,
                 execution_horizon=self.robots[rid].execution_horizon,
                 arrived=True,
             )

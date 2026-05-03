@@ -1,5 +1,4 @@
 import copy
-import itertools
 import logging
 import multiprocessing as mp
 import time
@@ -22,7 +21,7 @@ class Search:
         latency_tracker: LatencyTracker,
         start_time: float,
         horizon: float,
-        max_depth: int = 1,
+        max_depth: int = 2,
     ) -> None:
         self.mirror = mirror
         self.latency_tracker = latency_tracker
@@ -67,10 +66,15 @@ class Search:
         return gained_time / gpu_time
 
     def _generate_candidates(self, mirror: Mirror):
-        # TODO: for now just return combinations
-        return itertools.chain.from_iterable(
-            itertools.combinations(mirror.robots.keys(), i)
-            for i in range(1, self.max_batch_size + 1)
+        # FIXME: reducing search space for now
+        # Sort robots by their deadlines (earliest first)
+        deadlines = mirror.deadlines()
+        sorted_robot_ids = sorted(mirror.robots.keys(), key=lambda rid: deadlines[rid])
+
+        # Yield batch choices of increasing size up to max_batch_size, always prefixing the sorted list
+        return (
+            tuple(sorted_robot_ids[:i])
+            for i in range(1, min(self.max_batch_size, len(sorted_robot_ids)) + 1)
         )
 
     def _dfs(
