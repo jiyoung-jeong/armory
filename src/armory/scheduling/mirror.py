@@ -4,11 +4,11 @@ TODO: docs
 action indexes vs. control steps
 """
 from __future__ import annotations
-from collections.abc import Callable
 from dataclasses import dataclass
 import itertools
 from typing import TypeAlias
 from sortedcontainers import SortedList
+import copy
 
 from armory_client.messages import InferRequest, InferResponse, ResponseAck
 from armory.scheduling.latency import LatencyTracker
@@ -28,87 +28,118 @@ class ControlStep(Event):
 @dataclass(frozen=True)
 class ActionChunk:
     observation_step: int # step when observation was captured
-    arrival_step: int # step when the chunk becomes available
+    arrival_time: float # step when the chunk becomes available
     action_start_index: int # action index of the first action in the chunk
     horizon: int
 
 class Robot:
-    def __init__(self, robot_id: int):
-        self.robot_id = robot_id
+    def __init__(self, control_hz: float, horizon: int):
+        self.control_hz = control_hz
+        self.horizon = horizon
+
         self.steps: SortedList[ControlStep] = SortedList() # steps that we have collected for sure
-        self.chunks: SortedList[ActionChunk] = [] # includes both pending and arrived chunks
+        self.arrived_chunks: SortedList[ActionChunk] = SortedList() # steps that we have arrived but not processed yet
+        # we keep these separate so we can make best-effort estimates of when chunks will be available
+        self.pending_chunks: SortedList[ActionChunk] = SortedList() # this is separate because we add to pending chunks only after we ack from robot
 
     def step(self, control_step: ControlStep) -> None:
         # TODO: pass more info from client and directly assert/test here
         self.steps.add(control_step)
 
-    def receive_request(self, request: InferRequest) -> None:
-
-
-        pass
-
     def send_response(self, response: InferResponse) -> None:
-        pass
+        self.pending_chunks.add(ActionChunk(response.server_arrival_time, response.observation_step, response.action_start_index, response.horizon))
 
-    def step_info(self) -> tuple[int, int]:
-        """action steps, total steps"""
-        return len(self.steps), len(self.steps)
+    def receive_response(self, response: ResponseAck) -> None:
+        # TODO: remove from pending chunks
+        self.arrived_chunks.add(ActionChunk(response.observation_step, response.arrival_step, response.action_start_index, response.horizon))
 
-    def steps_left() -> int:
-        pass
+    @property
+    def max_arrived_action_step(self) -> int:
+        return self.arrived_chunks[-1].action_start_index + self.arrived_chunks[-1].horizon - 1
+    
+    @property
+    def max_overall_action_step(self) -> int:
+        max_overall_action_step = self.max_arrived_action_step
+        if self.pending_chunks:
+            max_overall_action_step = max(max_overall_action_step, self.pending_chunks[-1].action_start_index + self.pending_chunks[-1].horizon - 1)
+        return max_overall_action_step
 
-    def time_left(self) -> float:
-        pass
+    def get_latest_control_step_before(self, time: float) -> ControlStep | None:
+        for step in reversed(self.steps):
+            if step.time < time:
+                return step
+        return None
 
-    def next_action_index_at_time(self, time: float) -> int:
-        # two cases: either it's 
+    def step_forward(self, time: float) -> None:
+        while self.steps[-1].time < time:
+            prev_step = self.steps[-1]
+            next_action_step = prev_step.action_step
+            self.steps.append(ControlStep(prev_step.time + 1/self.control_hz, prev_step.observation_step + 1, next_action_step if next_action_step <= self.max_arrived_action_step else self.max_arrived_action_step()))
 
-        pass
+        self.steps.pop()
 
-# TODO: wire classes from __init__.py
 class Mirror:
+    """Represents """
     def __init__(self):
         self.time: float = 0
-        self.robots: list[Robot] = []
+        self.robots: dict[robot_id, Robot] = {}
 
-    def step(robot: Robot, ControlStep: ControlStep):
-        pass
+    def receive_request(self, request: InferRequest) -> None:
+        if request.robot_id not in self.robots:
+            # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
+            self.robots[request.robot_id] = Robot(request.control_hz, request.execution_horizon)
+        self.robots[request.robot_id].step(ControlStep(request.observation_step, request.action_start_step))
 
-    def receive_request(request: InferRequest):
-        pass
-
-    def send_response(response: InferResponse):
-        pass
+    def send_response(self, response: InferResponse) -> None:
+        self.robots[response.robot_id].send_response(response)
     
-    def receive_response(response: ResponseAck):
-        pass
+    def receive_response(self, response: ResponseAck) -> None:
+        self.robots[response.robot_id].receive_response(response)
 
-    def fast_forward(time: float):
-        # queue known events
+    def get_control_steps(self, robot_ids: list[robot_id], latency_tracker: LatencyTracker) -> list[ControlStep]:
+        control_steps = []
+        for robot_id in robot_ids:
+            time = self.time - latency_tracker.observation_latency(robot_id)
+            control_steps.append(self.robots[robot_id].get_latest_control_step_before(time))
 
-        # TODO: save a checkpoint
-        pass
+        return control_steps
 
-    def rollback():
-        # TODO: restore from checkpoint
-        pass
+    def fast_forward(self, time: float, chunks: list[ActionChunk]) -> None:
+        # process chunks
+        for chunk in chunks:
+            self.robots[chunk.robot_id].receive_response(chunk)
 
-# TODO: could search on horizon of gpu end times
-def search(mirror: Mirror, latency_tracker: LatencyTracker, horizon: float, objective: Callable[None, float]) -> list[Robot]:
+        # step forward in time
+        for robot in self.robots.values():
+            robot.step_forward(time)
+
+    def total_actions(self) -> int:
+        return sum(robot.actions_executed for robot in self.robots.values())
+
+# TODO: can be modified to support different search strategies/pruning/stopping criteria
+def search(initial_mirror: Mirror, latency_tracker: LatencyTracker, horizon: float) -> list[Robot]:
     """Search through all schedules that keep the GPU busy until time + horizon"""
 
     best_objective = -float('inf')
     best_schedule = []
-    end_time = mirror.time + horizon
+    end_time = initial_mirror.time + horizon
+    # FIXME: don't access private
+    max_batch_size = max(latency_tracker._infer_latency.keys())
+
+    def objective(mirror: Mirror) -> float:
+        gpu_time = mirror.time - initial_mirror.time
+        new_actions = mirror.total_actions() - initial_mirror.total_actions()
+        return new_actions / gpu_time
 
     def generate_candidates(mirror: Mirror) -> list[Robot]:
         # TODO: for now just return combinations
-        return itertools.combinations(mirror.robots, len(mirror.robots))
+        return itertools.chain.from_iterable([itertools.combinations(mirror.robots, i) for i in range(1, max_batch_size + 1)])
 
-    def dfs(schedule: list[list[robot_id]]):
+    def dfs(mirror: Mirror, schedule: list[list[robot_id]]):
         nonlocal best_objective, best_schedule
-        if objective() > best_objective:
-            best_objective = objective()
+        objective_value = objective(mirror)
+        if objective_value > best_objective:
+            best_objective = objective_value
             best_schedule = schedule
 
         candidates = generate_candidates(mirror)
@@ -117,12 +148,19 @@ def search(mirror: Mirror, latency_tracker: LatencyTracker, horizon: float, obje
             if next_time > end_time:
                 continue
 
-            # TODO: what do I need to queue here?
-            mirror.fast_forward(next_time)
-            dfs([schedule + [batch]])
-            mirror.rollback()
+            next_state = copy.deepcopy(mirror)
+            control_steps = mirror.get_control_steps(batch, latency_tracker)
+            chunks = [ActionChunk(control_step.observation_step, , control_step.action_step, robot.horizon) for control_step, robot in zip(control_steps, batch)]
+            next_state.fast_forward(next_time, chunks)
+            dfs(next_state, schedule + [batch])
     
-    dfs([])
+    dfs(initial_mirror, [])
     return best_schedule
 
+"""
+simulating the future:
+- i could have api that gets next action index at any time, 
+    - i need this to know which chunks to queue
+- if i don't maintain any sort of curren state and calculate everything on the fly, i can just queue all events that I know
+"""
 
