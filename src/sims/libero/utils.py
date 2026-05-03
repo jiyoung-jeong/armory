@@ -1,5 +1,6 @@
-import pathlib
 import math
+import pathlib
+
 import numpy as np
 from libero.libero import get_libero_path
 from libero.libero.envs import OffScreenRenderEnv
@@ -11,9 +12,7 @@ def _get_libero_env(task, seed):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
     task_bddl_file = (
-        pathlib.Path(get_libero_path("bddl_files"))
-        / task.problem_folder
-        / task.bddl_file
+        pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
     )
     env_args = {
         "bddl_file_name": task_bddl_file,

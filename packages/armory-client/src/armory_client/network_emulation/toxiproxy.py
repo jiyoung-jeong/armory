@@ -6,25 +6,19 @@ import pathlib
 import subprocess
 import time
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Union
 
 import numpy as np
 import requests
 
-
 DEFAULT_TOXIC_UPSTREAM = "latency_upstream"
 DEFAULT_TOXIC_DOWNSTREAM = "latency_downstream"
 
-ExperimentConfig = Dict[str, Any]
+ExperimentConfig = dict[str, Any]
 NetworkEmulationConfig = ExperimentConfig
-WorkerNetworkContext = Dict[str, Any]
+WorkerNetworkContext = dict[str, Any]
 
 
-def robot_profile_disables_network_emulation(robot_cfg: Dict[str, Any]) -> bool:
+def robot_profile_disables_network_emulation(robot_cfg: dict[str, Any]) -> bool:
     return (
         float(robot_cfg["uplink_median_ms"]) == 0.0
         and float(robot_cfg["uplink_sigma"]) == 0.0
@@ -35,10 +29,12 @@ def robot_profile_disables_network_emulation(robot_cfg: Dict[str, Any]) -> bool:
 
 def experiment_requires_network_emulation(
     config: ExperimentConfig,
-    worker_count: Optional[int] = None,
+    worker_count: int | None = None,
 ) -> bool:
     robots_cfg = config["robots"]
-    max_workers = int(config["experiment"]["num_robots"]) if worker_count is None else int(worker_count)
+    max_workers = (
+        int(config["experiment"]["num_robots"]) if worker_count is None else int(worker_count)
+    )
     for idx in range(max(0, max_workers)):
         robot_id = f"robot_{idx}"
         robot_cfg = robots_cfg.get(robot_id)
@@ -49,7 +45,7 @@ def experiment_requires_network_emulation(
     return False
 
 
-def load_experiment_config(path: Union[str, pathlib.Path]) -> ExperimentConfig:
+def load_experiment_config(path: str | pathlib.Path) -> ExperimentConfig:
     """Load and validate experiment config, returning a normalized dict."""
 
     raw = json.loads(pathlib.Path(path).read_text())
@@ -60,7 +56,9 @@ def load_experiment_config(path: Union[str, pathlib.Path]) -> ExperimentConfig:
     robots_raw = raw.get("robots")
 
     experiment = {
-        "action_chunk_broker_type": str(experiment_raw.get("action_chunk_broker_type", "")).strip().lower(),
+        "action_chunk_broker_type": str(experiment_raw.get("action_chunk_broker_type", ""))
+        .strip()
+        .lower(),
         "num_robots": int(experiment_raw.get("num_robots", 0)),
         "trials_per_robot": int(experiment_raw.get("trials_per_robot", 0)),
     }
@@ -77,7 +75,7 @@ def load_experiment_config(path: Union[str, pathlib.Path]) -> ExperimentConfig:
         "resample_every_requests": int(sampling_raw.get("resample_every_requests", 1)),
     }
 
-    robots: Dict[str, Dict[str, Any]] = {}
+    robots: dict[str, dict[str, Any]] = {}
     for robot_id, robot_cfg in robots_raw.items():
         uplink_median = float(robot_cfg["uplink_median_ms"])
         uplink_sigma = float(robot_cfg["uplink_sigma"])
@@ -116,9 +114,9 @@ class ToxiproxyController:
         self,
         api_url: str,
         *,
-        server_bin: Optional[str] = None,
-        server_args: Optional[List[str]] = None,
-        session: Optional[requests.Session] = None,
+        server_bin: str | None = None,
+        server_args: list[str] | None = None,
+        session: requests.Session | None = None,
         timeout_s: float = 2.0,
     ) -> None:
         self._api_url = api_url.rstrip("/")
@@ -126,14 +124,18 @@ class ToxiproxyController:
         self._server_args = list(server_args or [])
         self._session = session or requests.Session()
         self._timeout_s = timeout_s
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
 
     def _url(self, path: str) -> str:
         return f"{self._api_url}{path}"
 
-    def _request(self, method: str, path: str, *, expected: Tuple[int, ...], **kwargs) -> requests.Response:
+    def _request(
+        self, method: str, path: str, *, expected: tuple[int, ...], **kwargs
+    ) -> requests.Response:
         try:
-            response = self._session.request(method, self._url(path), timeout=self._timeout_s, **kwargs)
+            response = self._session.request(
+                method, self._url(path), timeout=self._timeout_s, **kwargs
+            )
         except requests.RequestException as exc:
             raise RuntimeError(f"toxiproxy request failed: {method} {path}: {exc}") from exc
 
@@ -145,7 +147,7 @@ class ToxiproxyController:
 
     def wait_until_ready(self, timeout_s: float = 10.0, poll_interval_s: float = 0.1) -> None:
         deadline = time.time() + timeout_s
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         while time.time() < deadline:
             try:
                 self._request("GET", "/proxies", expected=(200,))
@@ -172,7 +174,9 @@ class ToxiproxyController:
         except TimeoutError:
             pass
         else:
-            raise RuntimeError("toxiproxy API is already reachable; refusing to reuse an existing server instance")
+            raise RuntimeError(
+                "toxiproxy API is already reachable; refusing to reuse an existing server instance"
+            )
 
         self._proc = subprocess.Popen(
             [str(bin_path), *self._server_args],
@@ -207,7 +211,9 @@ class ToxiproxyController:
     def delete_proxy(self, name: str) -> None:
         self._request("DELETE", f"/proxies/{name}", expected=(200, 204, 404))
 
-    def _upsert_latency_toxic(self, proxy_name: str, toxic_name: str, stream: str, latency_ms: int) -> None:
+    def _upsert_latency_toxic(
+        self, proxy_name: str, toxic_name: str, stream: str, latency_ms: int
+    ) -> None:
         payload = {
             "name": toxic_name,
             "type": "latency",
@@ -226,11 +232,15 @@ class ToxiproxyController:
             json=payload,
         )
         if response.status_code in (404, 405):
-            self._request("POST", f"/proxies/{proxy_name}/toxics", expected=(200, 201), json=payload)
+            self._request(
+                "POST", f"/proxies/{proxy_name}/toxics", expected=(200, 201), json=payload
+            )
 
     def set_latency(self, proxy_name: str, upstream_ms: int, downstream_ms: int) -> None:
         self._upsert_latency_toxic(proxy_name, DEFAULT_TOXIC_UPSTREAM, "upstream", upstream_ms)
-        self._upsert_latency_toxic(proxy_name, DEFAULT_TOXIC_DOWNSTREAM, "downstream", downstream_ms)
+        self._upsert_latency_toxic(
+            proxy_name, DEFAULT_TOXIC_DOWNSTREAM, "downstream", downstream_ms
+        )
 
 
 class RobotNetworkHook:
@@ -253,7 +263,7 @@ class RobotNetworkHook:
         self._last_upstream_ms = max(0, int(round(self._uplink_median_ms)))
         self._last_downstream_ms = max(0, int(round(self._downlink_median_ms)))
 
-        self._trace: List[Dict[str, Any]] = []
+        self._trace: list[dict[str, Any]] = []
         self._flushed_count = 0
 
     def _sample_latency(self, median_ms: float, sigma: float, mu: float) -> float:
@@ -263,7 +273,9 @@ class RobotNetworkHook:
 
     def before_send(self) -> None:
         self._request_index += 1
-        should_resample = self._request_index == 1 or ((self._request_index - 1) % self._resample_every == 0)
+        should_resample = self._request_index == 1 or (
+            (self._request_index - 1) % self._resample_every == 0
+        )
 
         if should_resample:
             sampled_uplink = self._sample_latency(
@@ -326,7 +338,7 @@ class NetworkEmulationManager:
         upstream_host: str,
         upstream_port: int,
         worker_count: int,
-        output_dir: Union[str, pathlib.Path],
+        output_dir: str | pathlib.Path,
     ) -> None:
         self._config = config
         self._upstream_host = upstream_host
@@ -341,14 +353,14 @@ class NetworkEmulationManager:
             server_args=list(toxi.get("server_args", [])),
         )
 
-        self._worker_contexts: Dict[str, WorkerNetworkContext] = {}
-        self._active_proxy_names: List[str] = []
+        self._worker_contexts: dict[str, WorkerNetworkContext] = {}
+        self._active_proxy_names: list[str] = []
 
     @property
-    def worker_contexts(self) -> Dict[str, WorkerNetworkContext]:
+    def worker_contexts(self) -> dict[str, WorkerNetworkContext]:
         return dict(self._worker_contexts)
 
-    def start(self) -> Dict[str, WorkerNetworkContext]:
+    def start(self) -> dict[str, WorkerNetworkContext]:
         self._worker_contexts = {}
         self._active_proxy_names = []
 

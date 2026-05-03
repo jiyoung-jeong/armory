@@ -1,26 +1,25 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 import logging
 import multiprocessing as mp
-from multiprocessing.synchronize import Event
 import signal
 import time
+from collections.abc import Callable
+from multiprocessing.synchronize import Event
 
 import numpy as np
-from armory_client.messages import InferRequest
-from armory_client.messages import InferResponse
-from armory_client.messages import InferType
-from armory_client.messages import RTCParams
 import zmq
 
-from armory.serving.schemas import BatchProfile
-from armory.serving.schemas import CompletionNotification
-from armory.serving.schemas import RequestBatch
-from armory.serving.schemas import ResponseBatch
-from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import (
+    BatchProfile,
+    CompletionNotification,
+    RequestBatch,
+    ResponseBatch,
+    SlotRequest,
+)
 from armory.serving.slots import RobotSlots
 from armory.utils import logging_config
+from armory_client.messages import InferRequest, InferResponse, InferType, RTCParams
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +88,9 @@ def _run_gpu_worker(
     _last_infer_step: dict[str, int] = {}
     _prev_actions: dict[str, np.ndarray] = {}
     _action_shape: tuple[int, int] | None = None
-    _last_served_request_id: dict[str, int] = {}  # robot_id -> last sd.request_id sent as a response
+    _last_served_request_id: dict[
+        str, int
+    ] = {}  # robot_id -> last sd.request_id sent as a response
 
     def _make_rtc_params(
         robot_id: str,
@@ -229,7 +230,9 @@ def _run_gpu_worker(
         # Update per-robot RTC state
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
             if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
-                prev_action = action_dict.get("rtc_prev_actions", action_dict["actions"])  # shape (ah, ad)
+                prev_action = action_dict.get(
+                    "rtc_prev_actions", action_dict["actions"]
+                )  # shape (ah, ad)
                 if _action_shape is None:
                     _action_shape = prev_action.shape
                 _last_infer_step[sr.robot_id] = sd.observation_step
@@ -242,7 +245,9 @@ def _run_gpu_worker(
 
         # Send responses directly to WS — not via scheduler
         response_sock.send_pyobj(
-            ResponseBatch(responses=responses, batch_id=batch.batch_id, batch_size=actual_batch_size)
+            ResponseBatch(
+                responses=responses, batch_id=batch.batch_id, batch_size=actual_batch_size
+            )
         )
 
         # Notify scheduler of completion so it can update latency estimates

@@ -4,11 +4,11 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from armory_client.client import BidirectionalWebsocket
 from armory_client.runtime import subscriber as _subscriber
-from armory_client.schemas import Action
-from armory_client.schemas import Observation
-from typing_extensions import override
+from armory_client.schemas import Action, Observation
 
 if TYPE_CHECKING:
     from libero.libero import benchmark
@@ -67,7 +67,7 @@ class TaskMetricsPublisher(_subscriber.Subscriber):
                 self._task_suite_name,
                 self._task_id,
             )
-            
+
     @override
     def on_episode_end(self) -> None:
         duration_s = time.perf_counter() - self._episode_start_perf

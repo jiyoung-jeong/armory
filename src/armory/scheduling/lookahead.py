@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from functools import cache
 import math
 import multiprocessing as mp
 import time
+from functools import cache
 
 from armory.scheduling import RequestScheduler
 from armory.serving.schemas import SlotRequest
@@ -72,7 +72,9 @@ class LookaheadScheduler(RequestScheduler):
             return []
 
         request_by_robot = {request.robot_id: request for request in schedulable}
-        active_robot_ids = sorted(set(self._latest_requests) | set(self._deadlines) | set(self._predicted_valid_until))
+        active_robot_ids = sorted(
+            set(self._latest_requests) | set(self._deadlines) | set(self._predicted_valid_until)
+        )
         if not active_robot_ids:
             active_robot_ids = sorted(request_by_robot)
 
@@ -92,14 +94,20 @@ class LookaheadScheduler(RequestScheduler):
 
             best_cost = math.inf
             for candidate in self._candidate_prefixes(active_robot_ids, valid_until):
-                arrival_tick = min(self._horizon_ticks, current_tick + self._latency_ticks[len(candidate)])
-                interval_cost = self._interval_starvation_cost(valid_until, current_tick, arrival_tick)
+                arrival_tick = min(
+                    self._horizon_ticks, current_tick + self._latency_ticks[len(candidate)]
+                )
+                interval_cost = self._interval_starvation_cost(
+                    valid_until, current_tick, arrival_tick
+                )
                 next_state = self._apply_batch(valid_until, candidate, arrival_tick)
                 total_cost = interval_cost + dfs(arrival_tick, next_state)
                 best_cost = min(best_cost, total_cost)
 
             if best_cost is math.inf:
-                return self._interval_starvation_cost(valid_until, current_tick, self._horizon_ticks)
+                return self._interval_starvation_cost(
+                    valid_until, current_tick, self._horizon_ticks
+                )
 
             return best_cost
 
@@ -111,7 +119,8 @@ class LookaheadScheduler(RequestScheduler):
             next_state = self._apply_batch(initial_state, candidate, arrival_tick)
             total_cost = interval_cost + dfs(arrival_tick, next_state)
             if total_cost < best_cost or (
-                total_cost == best_cost and self._prefer_candidate(candidate, best_candidate, active_robot_ids)
+                total_cost == best_cost
+                and self._prefer_candidate(candidate, best_candidate, active_robot_ids)
             ):
                 best_cost = total_cost
                 best_candidate = candidate
@@ -147,12 +156,16 @@ class LookaheadScheduler(RequestScheduler):
         arrival_tick: int,
     ) -> tuple[int, ...]:
         updated = list(valid_until)
-        refreshed_until = min(self._horizon_ticks + self._chunk_ticks, arrival_tick + self._chunk_ticks)
+        refreshed_until = min(
+            self._horizon_ticks + self._chunk_ticks, arrival_tick + self._chunk_ticks
+        )
         for index in candidate:
             updated[index] = refreshed_until
         return tuple(updated)
 
-    def _interval_starvation_cost(self, valid_until: tuple[int, ...], start_tick: int, end_tick: int) -> int:
+    def _interval_starvation_cost(
+        self, valid_until: tuple[int, ...], start_tick: int, end_tick: int
+    ) -> int:
         if end_tick <= start_tick:
             return 0
         return sum(max(0, end_tick - max(start_tick, expiry_tick)) for expiry_tick in valid_until)
@@ -161,11 +174,15 @@ class LookaheadScheduler(RequestScheduler):
         valid_until = max(
             self._deadlines.get(robot_id, 0.0),
             self._predicted_valid_until.get(robot_id, 0.0),
-            self._latest_requests.get(robot_id, None).deadline if robot_id in self._latest_requests else 0.0,
+            self._latest_requests.get(robot_id, None).deadline
+            if robot_id in self._latest_requests
+            else 0.0,
         )
         if valid_until <= now:
             return 0
-        return min(self._horizon_ticks + self._chunk_ticks, self._to_ticks((valid_until - now) * 1000.0))
+        return min(
+            self._horizon_ticks + self._chunk_ticks, self._to_ticks((valid_until - now) * 1000.0)
+        )
 
     def _latency_ms(self, batch_size: int) -> float:
         latency_ms = self.latency_tracker.infer_latency(batch_size) * 1000.0
@@ -179,7 +196,9 @@ class LookaheadScheduler(RequestScheduler):
 
     def _prune_predictions(self, now: float) -> None:
         self._predicted_valid_until = {
-            robot_id: valid_until for robot_id, valid_until in self._predicted_valid_until.items() if valid_until > now
+            robot_id: valid_until
+            for robot_id, valid_until in self._predicted_valid_until.items()
+            if valid_until > now
         }
         self._server_available_at = max(now, self._server_available_at)
 
@@ -193,6 +212,10 @@ class LookaheadScheduler(RequestScheduler):
             return True
         if len(candidate) != len(best_candidate):
             return len(candidate) > len(best_candidate)
+        candidate_robot_ids = tuple(robot_ids[index] for index in candidate)
+        best_robot_ids = tuple(robot_ids[index] for index in best_candidate)
+        return candidate_robot_ids < best_robot_ids
+        return len(candidate) > len(best_candidate)
         candidate_robot_ids = tuple(robot_ids[index] for index in candidate)
         best_robot_ids = tuple(robot_ids[index] for index in best_candidate)
         return candidate_robot_ids < best_robot_ids

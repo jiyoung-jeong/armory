@@ -1,46 +1,46 @@
+import datetime
 import json
 import logging
-import pathlib
 import multiprocessing
+import pathlib
 import queue
 import shutil
+import time
+from dataclasses import dataclass, field
 from typing import (
     Any,
-    List,
     Literal,
-    Optional,
-    Dict,
-    Type,
 )  # Any used for shared globals
-import datetime
-import time
 
 import numpy as np
-from armory_client.client import BidirectionalWebsocket
-from armory_client.network_emulation import load_experiment_config
-from armory_client.network_emulation import NetworkEmulationManager
-from armory_client.network_emulation import RobotNetworkHook
-from armory_client.network_emulation import WorkerNetworkContext
-from armory_client.network_emulation import experiment_requires_network_emulation
-from armory_client.runtime import runtime as _runtime, subscriber as _subscriber
-from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
-from armory_client.schemas import RuntimeMetadata, ServerMetadata
 import requests
 import tyro
-from dataclasses import dataclass, field
 
+from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory_client.client import BidirectionalWebsocket
+from armory_client.network_emulation import (
+    NetworkEmulationManager,
+    RobotNetworkHook,
+    WorkerNetworkContext,
+    experiment_requires_network_emulation,
+    load_experiment_config,
+)
+from armory_client.runtime import runtime as _runtime
+from armory_client.runtime import subscriber as _subscriber
+from armory_client.runtime.agents import policy_agent as _policy_agent
+from armory_client.schemas import RuntimeMetadata, ServerMetadata
 from sims.libero import logging_config
-from sims.libero.seeding import seed_everything
 from sims.libero.episodes import Episode, create_episodes, create_mock_episodes
+from sims.libero.metrics import calculate_metrics, generate_all_plots
 from sims.libero.mock_env import MockEnvironment
 from sims.libero.progress_manager import get_progress_manager
+from sims.libero.seeding import seed_everything
+from sims.libero.subscribers.progress_subscriber import ProgressSubscriber
 from sims.libero.subscribers.saver import Saver
 from sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
-from sims.libero.metrics import calculate_metrics, generate_all_plots
-from sims.libero.subscribers.progress_subscriber import ProgressSubscriber
 
 logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Args:
@@ -51,7 +51,7 @@ class Args:
     port: int = 8080
     resize_size: int = 224
     action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
-    execution_horizon: List[int] = field(default_factory=list)
+    execution_horizon: list[int] = field(default_factory=list)
 
     #################################################################################################################
     # LIBERO environment-specific parameters
@@ -65,15 +65,15 @@ class Args:
     # Multi-robot / threading parameters
     #################################################################################################################
     num_robots: int = 5  # Number of always-running sims (robots)
-    control_hz: int = 20  # Target control frequency for each sim #NOTE: int because this is the fps of the video
+    control_hz: int = (
+        20  # Target control frequency for each sim #NOTE: int because this is the fps of the video
+    )
 
     #################################################################################################################
     # Network emulation parameters
     #################################################################################################################
-    experiment_config: Optional[str] = None
-    toxiproxy_server_bin: Optional[str] = (
-        "../toxiproxy-server-linux-amd64"
-    )
+    experiment_config: str | None = None
+    toxiproxy_server_bin: str | None = "../toxiproxy-server-linux-amd64"
 
     #################################################################################################################
     # Utils
@@ -82,7 +82,7 @@ class Args:
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
     overwrite: bool = False
     progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
-    log_dir: Optional[pathlib.Path] = None
+    log_dir: pathlib.Path | None = None
     debug: bool = False  # Run in single process with immediate progress output
 
     def execution_horizon_for_robot(self, robot_idx: int) -> int:
@@ -95,7 +95,7 @@ class Args:
         return f"http://{self.host}:{self.port}"
 
 
-def _apply_experiment_config(args: Args, experiment_config: Dict[str, object]) -> None:
+def _apply_experiment_config(args: Args, experiment_config: dict[str, object]) -> None:
     """Apply experiment config settings onto runtime args."""
     experiment = experiment_config["experiment"]
     robots = experiment_config["robots"]
@@ -108,25 +108,24 @@ def _apply_experiment_config(args: Args, experiment_config: Dict[str, object]) -
     args.num_robots = int(experiment["num_robots"])
     args.num_trials_per_task = int(experiment["trials_per_robot"])
     args.execution_horizon = [
-        int(robots[f"robot_{idx}"]["execution_horizon"])
-        for idx in range(args.num_robots)
+        int(robots[f"robot_{idx}"]["execution_horizon"]) for idx in range(args.num_robots)
     ]
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
 # processes rather than pickled as task arguments (multiprocessing.Queue and Barrier
 # cannot be pickled after spawning).
-_episode_queue: Optional[Any] = None
-_progress_queue: Optional[Any] = None
-_start_barrier: Optional[Any] = None
-_network_worker_contexts: Optional[Dict[str, WorkerNetworkContext]] = None
+_episode_queue: Any | None = None
+_progress_queue: Any | None = None
+_start_barrier: Any | None = None
+_network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
 
 
 def _init_worker_shared(
     episode_queue,
     progress_queue,
     start_barrier,
-    network_worker_contexts: Optional[Dict[str, WorkerNetworkContext]] = None,
+    network_worker_contexts: dict[str, WorkerNetworkContext] | None = None,
 ) -> None:
     global _episode_queue, _progress_queue, _start_barrier, _network_worker_contexts
     _episode_queue = episode_queue
@@ -185,9 +184,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     if _network_worker_contexts is not None:
         context = _network_worker_contexts.get(robot_id)
         if context is None:
-            raise RuntimeError(
-                f"Missing network context for worker robot_id={robot_id}"
-            )
+            raise RuntimeError(f"Missing network context for worker robot_id={robot_id}")
         if bool(context.get("emulate_network", True)):
             ws_host = str(context["proxy_host"])
             ws_port = int(context["proxy_port"])
@@ -211,12 +208,11 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
 
     if args.env == "libero":
         from libero.libero import benchmark
+
         from sims.libero import utils as libero_utils
         from sims.libero.env import LiberoSimEnvironment
 
-        benchmark_dict: Dict[str, Type[benchmark.Benchmark]] = (
-            benchmark.get_benchmark_dict()
-        )
+        benchmark_dict: dict[str, type[benchmark.Benchmark]] = benchmark.get_benchmark_dict()
         task_suite = benchmark_dict[args.task_suite_name]()
 
     # Single instance reused across episodes so _done persists across iterations.
@@ -252,7 +248,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
             else:
                 raise ValueError(f"Invalid environment: {args.env}")
 
-            subscribers: List[_subscriber.Subscriber] = [
+            subscribers: list[_subscriber.Subscriber] = [
                 startup_sync,
                 Saver(
                     out_dir=args.output_dir,
@@ -299,9 +295,9 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
 
 def run_robots(
     args: Args,
-    episodes: List[Episode],
+    episodes: list[Episode],
     server_metadata: ServerMetadata,
-    network_worker_contexts: Optional[Dict[str, WorkerNetworkContext]] = None,
+    network_worker_contexts: dict[str, WorkerNetworkContext] | None = None,
 ) -> None:
     if args.debug:
         # Debug mode: single process for pdb compatibility, no progress manager.
@@ -309,16 +305,12 @@ def run_robots(
         for ep in episodes:
             ep_queue.put(ep)
         _init_worker_shared(ep_queue, None, None, network_worker_contexts)
-        _robot_worker(
-            _WorkerArgs(args=args, server_metadata=server_metadata, robot_idx=0)
-        )
+        _robot_worker(_WorkerArgs(args=args, server_metadata=server_metadata, robot_idx=0))
     else:
         total_episodes = len(episodes)
         active_workers = min(args.num_robots, total_episodes)
         start_barrier = multiprocessing.Barrier(active_workers, timeout=60)
-        logging.info(
-            "Using one-time startup barrier across %d worker(s)", active_workers
-        )
+        logging.info("Using one-time startup barrier across %d worker(s)", active_workers)
 
         mp_episode_queue: multiprocessing.Queue = multiprocessing.Queue()
         for ep in episodes:
@@ -394,9 +386,7 @@ def validate_args(args: Args) -> None:
     assert args.overwrite or not args.output_dir.exists(), (
         f"Output path {args.output_dir} already exists"
     )
-    assert (
-        not args.execution_horizon or len(args.execution_horizon) == args.num_robots
-    ), (
+    assert not args.execution_horizon or len(args.execution_horizon) == args.num_robots, (
         f"execution_horizon must either be empty or have exactly {args.num_robots} values (one per robot), but got {len(args.execution_horizon)} values"
     )
     assert args.num_robots > 0, "num_robots must be positive"
@@ -426,16 +416,14 @@ def main(args: Args) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.log_dir is not None:
-        log_file_name = f"libero_multi_robot_runtime_{datetime.datetime.now(tz=datetime.timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
+        log_file_name = f"libero_multi_robot_runtime_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
         log_file_path = args.log_dir / log_file_name
         args.log_dir.mkdir(parents=True, exist_ok=True)
         logging_config.setup_logging(
             log_path=log_file_path, level=logging.DEBUG if args.debug else logging.INFO
         )
     else:
-        logging_config.setup_logging(
-            level=logging.DEBUG if args.debug else logging.INFO
-        )
+        logging_config.setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
 
     seed_everything(args.seed)
     if args.env == "libero":
@@ -447,11 +435,9 @@ def main(args: Args) -> None:
     active_workers = 1 if args.debug else min(args.num_robots, len(episodes))
 
     network_manager = None
-    network_worker_contexts: Optional[Dict[str, WorkerNetworkContext]] = None
+    network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
     if experiment_config is not None:
-        if experiment_requires_network_emulation(
-            experiment_config, worker_count=active_workers
-        ):
+        if experiment_requires_network_emulation(experiment_config, worker_count=active_workers):
             if not args.toxiproxy_server_bin:
                 raise ValueError(
                     "--toxiproxy-server-bin is required when experiment config enables network emulation"
@@ -497,9 +483,7 @@ def main(args: Args) -> None:
     )
 
     runtime_metadata.to_json(args.output_dir / "runtime_metadata.json")
-    logging.info(
-        f"Saved runtime metadata to {args.output_dir / 'runtime_metadata.json'}"
-    )
+    logging.info(f"Saved runtime metadata to {args.output_dir / 'runtime_metadata.json'}")
 
     server_metadata.to_json(args.output_dir / "server_metadata.json")
     logging.info(f"Saved server metadata to {args.output_dir / 'server_metadata.json'}")

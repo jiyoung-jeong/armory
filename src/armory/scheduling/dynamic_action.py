@@ -1,12 +1,9 @@
-import dataclasses
-import itertools
 import multiprocessing as mp
-import random
 import time
 
 from armory.scheduling import RequestScheduler
-from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import SlotRequest
+
 
 class DynamicActionScheduler(RequestScheduler):
     """Greedy-deadline baseline with weighted useful-action adjustments.
@@ -94,26 +91,32 @@ class DynamicActionScheduler(RequestScheduler):
             return
 
         for robot_id, demand_rate in self._demand_rate.items():
-            self._service_debt[robot_id] = self._service_debt.get(robot_id, 0.0) + elapsed * demand_rate
+            self._service_debt[robot_id] = (
+                self._service_debt.get(robot_id, 0.0) + elapsed * demand_rate
+            )
         self._last_debt_update_time = now
 
     def _charge_service(self, batch: tuple[SlotRequest, ...]) -> None:
         for request in batch:
             if request.is_padding:
                 continue
-            self._service_debt[request.robot_id] = max(0.0, self._service_debt.get(request.robot_id, 0.0) - 1.0)
+            self._service_debt[request.robot_id] = max(
+                0.0, self._service_debt.get(request.robot_id, 0.0) - 1.0
+            )
 
     def _infer_deadline(self, request: SlotRequest) -> float:
-        return self._deadlines.get(request.robot_id, request.deadline) - self.latency_tracker.action_latency(
-            request.robot_id
-        )
+        return self._deadlines.get(
+            request.robot_id, request.deadline
+        ) - self.latency_tracker.action_latency(request.robot_id)
 
     def _score_batch(self, batch: tuple[SlotRequest, ...], now: float) -> tuple:
         infer_latency = self.latency_tracker.infer_latency(len(batch))
         earliest_infer_deadline = min(self._infer_deadline(request) for request in batch)
         time_remaining = earliest_infer_deadline - now
         fits_earliest_deadline = int(infer_latency <= time_remaining)
-        base_greedy_value = len(batch) if fits_earliest_deadline else len(batch) / max(infer_latency, 1e-6)
+        base_greedy_value = (
+            len(batch) if fits_earliest_deadline else len(batch) / max(infer_latency, 1e-6)
+        )
 
         weighted_useful_actions = 0.0
         feasible_count = 0
@@ -125,7 +128,9 @@ class DynamicActionScheduler(RequestScheduler):
         for request in batch:
             robot_id = request.robot_id
             demand_rate = self._demand_rate.get(robot_id, self._compute_demand_rate(request))
-            predicted_latency_steps = self.latency_tracker.total_latency(robot_id, len(batch)) * request.control_hz
+            predicted_latency_steps = (
+                self.latency_tracker.total_latency(robot_id, len(batch)) * request.control_hz
+            )
             useful_actions = max(0.0, request.execution_horizon - predicted_latency_steps)
             tardiness_steps = max(0.0, predicted_latency_steps - request.execution_horizon)
 

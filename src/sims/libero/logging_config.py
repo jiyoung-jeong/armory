@@ -2,12 +2,11 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from rich.logging import RichHandler
 
 
-def setup_logging(level: int = logging.INFO, log_path: Optional[Path] = None) -> None:
+def setup_logging(level: int = logging.INFO, log_path: Path | None = None) -> None:
     """Configure logging for the entire application.
 
     Args:

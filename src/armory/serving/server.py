@@ -20,52 +20,52 @@ ZMQ topology (all ipc://, unique per server instance):
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 import dataclasses
-from dataclasses import asdict
-from dataclasses import dataclass
 import logging
 import multiprocessing as mp
-from multiprocessing.synchronize import Event
 import os
 import queue
 import signal
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from multiprocessing.synchronize import Event
 
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi import WebSocket
-from fastapi.concurrency import asynccontextmanager
-from armory_client import msgpack_numpy
-from armory_client.messages import ConnectRequest
-from armory_client.messages import ConnectResponse
-from armory_client.messages import EpisodeEnd
-from armory_client.messages import EpisodeStart
-from armory_client.messages import EpisodeStep
-from armory_client.messages import InferRequest
-from armory_client.messages import InferResponse
-from armory_client.messages import ResetRequest
-from armory_client.messages import ResponseAck
-from armory_client.messages import WarmupPong
-from armory_client.schemas import ServerMetadata
-from starlette.middleware.wsgi import WSGIMiddleware
-from starlette.websockets import WebSocketDisconnect
 import uvicorn
 import zmq.asyncio
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.concurrency import asynccontextmanager
+from starlette.middleware.wsgi import WSGIMiddleware
+from starlette.websockets import WebSocketDisconnect
 
 from armory.serving.engine import _run_gpu_worker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
 from armory.serving.scheduler import _run_scheduler
-from armory.serving.schemas import AckNotification
-from armory.serving.schemas import ResponseBatch
-from armory.serving.schemas import SchedulerDecision
-from armory.serving.schemas import SlotRequest
-from armory.serving.schemas import WarmupSeed
-from armory.serving.schemas import _request_id_counter
-from armory.serving.slots import RobotSlots
-from armory.serving.slots import SlotData
+from armory.serving.schemas import (
+    AckNotification,
+    ResponseBatch,
+    SchedulerDecision,
+    SlotRequest,
+    WarmupSeed,
+    _request_id_counter,
+)
+from armory.serving.slots import RobotSlots, SlotData
+from armory_client import msgpack_numpy
+from armory_client.messages import (
+    ConnectRequest,
+    ConnectResponse,
+    EpisodeEnd,
+    EpisodeStart,
+    EpisodeStep,
+    InferRequest,
+    InferResponse,
+    ResetRequest,
+    ResponseAck,
+    WarmupPong,
+)
+from armory_client.schemas import ServerMetadata
 
 MAX_ROBOTS = 100
 NUM_WARMUP = 100
@@ -106,7 +106,9 @@ async def _router_task(
                 if queue is not None:
                     await queue.put(response)
                 else:
-                    logger.info("No active connection for robot %s, dropping response", response.robot_id)
+                    logger.info(
+                        "No active connection for robot %s, dropping response", response.robot_id
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -173,7 +175,9 @@ async def _ws_warmup(
 
     if obs_samples or delivery_samples:
         await state.scheduler_sock.send_pyobj(
-            WarmupSeed(robot_id=robot_id, obs_samples=obs_samples, delivery_samples=delivery_samples)
+            WarmupSeed(
+                robot_id=robot_id, obs_samples=obs_samples, delivery_samples=delivery_samples
+            )
         )
         logger.info(
             "Robot %s warmup complete (%d obs, %d delivery samples)",
@@ -189,7 +193,11 @@ async def _watchdog_task(gpu_proc: mp.Process, scheduler_proc: mp.Process) -> No
         await asyncio.sleep(1)
         for proc in (gpu_proc, scheduler_proc):
             if not proc.is_alive():
-                logger.critical("Backend process %s died (exit code %s), crashing server", proc.name, proc.exitcode)
+                logger.critical(
+                    "Backend process %s died (exit code %s), crashing server",
+                    proc.name,
+                    proc.exitcode,
+                )
                 os.kill(os.getpid(), signal.SIGTERM)
                 return
 
@@ -273,11 +281,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        scheduler_proc, gpu_proc, slots, sched_ready, gpu_ready, scheduler_metrics_queue = _start_backend(
-            metadata,
-            policy_factory,
-            scheduler_kwargs,
-            log_queue,
+        scheduler_proc, gpu_proc, slots, sched_ready, gpu_ready, scheduler_metrics_queue = (
+            _start_backend(
+                metadata,
+                policy_factory,
+                scheduler_kwargs,
+                log_queue,
+            )
         )
 
         loop = asyncio.get_event_loop()
@@ -308,7 +318,9 @@ def create_app(
         )
 
         router = asyncio.create_task(_router_task(response_sock, response_queues, metrics_store))
-        scheduler_metrics = asyncio.create_task(_scheduler_metrics_task(scheduler_metrics_queue, metrics_store))
+        scheduler_metrics = asyncio.create_task(
+            _scheduler_metrics_task(scheduler_metrics_queue, metrics_store)
+        )
         watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
 
         yield
@@ -455,7 +467,9 @@ def create_app(
         return asdict(metadata)
 
     @app.get("/")
-    async def get_metrics(request: Request, window_s: float | None = None, sla_pct: float = 10.0) -> dict:
+    async def get_metrics(
+        request: Request, window_s: float | None = None, sla_pct: float = 10.0
+    ) -> dict:
         return request.app.state.server.metrics_store.snapshot(window_s, sla_pct=sla_pct)
 
     @app.get("/save-metrics")
@@ -488,5 +502,7 @@ class PolicyServer:
         self._log_queue = log_queue
 
     def serve_forever(self, host="0.0.0.0", port=8000):
-        app = create_app(self._metadata, self._policy_factory, self._scheduler_kwargs, self._log_queue)
+        app = create_app(
+            self._metadata, self._policy_factory, self._scheduler_kwargs, self._log_queue
+        )
         uvicorn.run(app, host=host, port=port)

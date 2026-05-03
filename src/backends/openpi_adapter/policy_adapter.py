@@ -131,29 +131,44 @@ class OpenPiPolicyAdapter:
             return {
                 "state": np.stack([obs["observation/state"] for obs in observations]),
                 "base_0_rgb": np.stack([obs["observation/image"] for obs in observations]),
-                "left_wrist_0_rgb": np.stack([obs["observation/wrist_image"] for obs in observations]),
-                "right_wrist_0_rgb": np.stack([obs["observation/wrist_image"] for obs in observations]),
+                "left_wrist_0_rgb": np.stack(
+                    [obs["observation/wrist_image"] for obs in observations]
+                ),
+                "right_wrist_0_rgb": np.stack(
+                    [obs["observation/wrist_image"] for obs in observations]
+                ),
                 "prompt": np.stack([obs["prompt"] for obs in observations]),
             }
 
         # Apply transform to each observation independently (tokenization, image parsing etc.)
-        transformed = [self._input_transform(jax.tree.map(lambda x: x, obs)) for obs in observations]
+        transformed = [
+            self._input_transform(jax.tree.map(lambda x: x, obs)) for obs in observations
+        ]
 
         # Recursively stack nested dicts/arrays into a single batched dict
         batched = _recursive_stack(transformed)
 
         if not self._is_pytorch_model:
-            batched = jax.tree.map(lambda x: jnp.asarray(x) if isinstance(x, np.ndarray) else x, batched)
+            batched = jax.tree.map(
+                lambda x: jnp.asarray(x) if isinstance(x, np.ndarray) else x, batched
+            )
         else:
             import torch
+
             batched = jax.tree.map(
-                lambda x: torch.from_numpy(np.array(x)).to(self._pytorch_device) if isinstance(x, np.ndarray) else x,
+                lambda x: (
+                    torch.from_numpy(np.array(x)).to(self._pytorch_device)
+                    if isinstance(x, np.ndarray)
+                    else x
+                ),
                 batched,
             )
 
         return _model.Observation.from_dict(batched)
 
-    def _infer_batch_group(self, requests: list[InferRequest], *, use_rtc: bool) -> list[dict[str, Any]]:
+    def _infer_batch_group(
+        self, requests: list[InferRequest], *, use_rtc: bool
+    ) -> list[dict[str, Any]]:
         """Run a homogeneous sub-batch (all RTC or all non-RTC) in a single GPU call."""
         batch_size = len(requests)
 
@@ -186,7 +201,9 @@ class OpenPiPolicyAdapter:
                 result: dict[str, Any] = {"state": state_norm[i], "actions": raw_actions[i]}
                 result = self._output_transform(result)
                 noise_np = np.asarray(noise_to_use) if noise_to_use is not None else None
-                result["noise"] = noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
+                result["noise"] = (
+                    noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
+                )
                 result["rtc_prev_actions"] = raw_actions[i]
                 results.append(result)
             return results
@@ -223,7 +240,9 @@ class OpenPiPolicyAdapter:
         for i in range(batch_size):
             sample = {"actions": raw_actions[i], "state": raw_state[i]}
             result = self._output_transform(sample)
-            result["noise"] = noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
+            result["noise"] = (
+                noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
+            )
             result["rtc_prev_actions"] = raw_actions[i]
             results.append(result)
 

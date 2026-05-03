@@ -2,17 +2,16 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from dataclasses import asdict
+from typing import Any
 
 import numpy as np
-from dataclasses import asdict
-from typing_extensions import override
-import websockets.sync.client
 import websockets.asyncio.client
+import websockets.sync.client
+from typing_extensions import override
 
 from armory_client import base_policy as _base_policy
-from armory_client import msgpack_numpy
-from armory_client import messages
+from armory_client import messages, msgpack_numpy
 from armory_client.schemas import Observation, ServerMetadata
 
 
@@ -26,8 +25,8 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         self,
         robot_id: str,
         host: str = "0.0.0.0",
-        port: Optional[int] = None,
-        api_key: Optional[str] = None,
+        port: int | None = None,
+        api_key: str | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._uri = f"ws://{host}"
@@ -44,7 +43,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
 
     def _wait_for_server(
         self,
-    ) -> Tuple[websockets.sync.client.ClientConnection, ServerMetadata]:
+    ) -> tuple[websockets.sync.client.ClientConnection, ServerMetadata]:
         logging.info(f"Waiting for server at {self._uri}...")
         while True:
             try:
@@ -65,13 +64,13 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
     @override
     def infer(
         self,
-        obs: Dict,
+        obs: dict,
         use_rtc: bool = False,
-        deadline: Optional[float] = None,
-        s_param: Optional[int] = None,
-        d_param: Optional[int] = None,
-        noise: Optional[np.ndarray] = None,
-    ) -> Dict:  # noqa: UP006
+        deadline: float | None = None,
+        s_param: int | None = None,
+        d_param: int | None = None,
+        noise: np.ndarray | None = None,
+    ) -> dict:
         infer_type = messages.InferType.SYNC
         params = None
         if use_rtc:
@@ -116,8 +115,8 @@ class AsyncWebsocketClientPolicy:
     def __init__(
         self,
         host: str = "0.0.0.0",
-        port: Optional[int] = None,
-        api_key: Optional[str] = None,
+        port: int | None = None,
+        api_key: str | None = None,
         num_connections: int = 100,
     ) -> None:
         self._uri = f"ws://{host}"
@@ -132,14 +131,16 @@ class AsyncWebsocketClientPolicy:
 
     async def connect(self) -> ServerMetadata:
         """Connect to the server and retrieve metadata."""
-        results = await asyncio.gather(*[self._create_connection() for _ in range(self._num_connections)])
+        results = await asyncio.gather(
+            *[self._create_connection() for _ in range(self._num_connections)]
+        )
         self._connection_pool = [conn for conn, _ in results]
         self._server_metadata = results[0][1]
         return self._server_metadata
 
     async def _create_connection(
         self,
-    ) -> Tuple[websockets.asyncio.client.ClientConnection, ServerMetadata]:
+    ) -> tuple[websockets.asyncio.client.ClientConnection, ServerMetadata]:
         """Create a new websocket connection and retrieve metadata."""
         logging.info(f"Waiting for server at {self._uri}...")
         start = time.time()
@@ -181,9 +182,9 @@ class AsyncWebsocketClientPolicy:
         self,
         obs: Observation,
         use_rtc: bool = False,
-        s_param: Optional[int] = None,
-        d_param: Optional[int] = None,
-    ) -> Dict:
+        s_param: int | None = None,
+        d_param: int | None = None,
+    ) -> dict:
         """Send an observation and receive an action asynchronously.
 
         Each request uses its own connection from the pool to avoid

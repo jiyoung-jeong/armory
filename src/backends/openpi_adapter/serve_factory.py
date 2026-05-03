@@ -26,13 +26,21 @@ class EnvMode(str, enum.Enum):
 
 def _make_example_fn(env_mode: EnvMode | None):
     """Return the env-specific make_*_example() function for profiling/warmup."""
-    if env_mode in (EnvMode.LIBERO, EnvMode.LIBERO_PI0, EnvMode.LIBERO_PYTORCH, EnvMode.LIBERO_REALTIME):
+    if env_mode in (
+        EnvMode.LIBERO,
+        EnvMode.LIBERO_PI0,
+        EnvMode.LIBERO_PYTORCH,
+        EnvMode.LIBERO_REALTIME,
+    ):
         from openpi.policies.libero_policy import make_libero_example
+
         return make_libero_example
     if env_mode == EnvMode.DROID:
         from openpi.policies.droid_policy import make_droid_example
+
         return make_droid_example
     from openpi.policies.aloha_policy import make_aloha_example
+
     return make_aloha_example
 
 
