@@ -9,6 +9,7 @@ from armory.scheduling.mirror import Mirror, robot_id
 from armory.serving.schemas import SlotRequest
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 # TODO: can be modified to support different search strategies/pruning/stopping criteria
@@ -21,7 +22,7 @@ class Search:
         latency_tracker: LatencyTracker,
         start_time: float,
         horizon: float,
-        max_depth: int = 2,
+        max_depth: int = 1,
     ) -> None:
         self.mirror = mirror
         self.latency_tracker = latency_tracker

@@ -1303,6 +1303,88 @@ def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
     logger.info("Saved server timings over time plot to %s", out)
 
 
+def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
+    """Plot server inference batches as robot-lane Gantt bars over wall-clock time."""
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        logger.warning("No server_metrics_history.json; skipping server batch Gantt plot")
+        return
+    data = json.loads(history_path.read_text())
+
+    batch_rows = []
+    for batch in data.get("batches", []):
+        batch_id, robot_ids, _, start, end, batch_size = _server_batch_fields(batch)
+        if start is None or end is None:
+            continue
+        if not robot_ids:
+            continue
+        start = float(start)
+        end = float(end)
+        if end < start:
+            continue
+        batch_rows.append(
+            {
+                "batch_id": batch_id,
+                "robot_ids": list(robot_ids),
+                "start": start,
+                "duration": max(end - start, 0.0),
+                "batch_size": int(batch_size),
+            }
+        )
+
+    if not batch_rows:
+        logger.warning("No valid server batches; skipping server batch Gantt plot")
+        return
+
+    batch_rows.sort(key=lambda row: (row["start"], str(row["batch_id"])))
+    t0 = float(data.get("start_time") or min(row["start"] for row in batch_rows))
+
+    robot_ids = sorted({str(rid) for row in batch_rows for rid in row["robot_ids"]})
+    robot_y = {rid: i for i, rid in enumerate(robot_ids)}
+    cmap = matplotlib.colormaps["tab20" if len(robot_ids) > 10 else "tab10"]
+    robot_color = {rid: cmap(i % cmap.N) for i, rid in enumerate(robot_ids)}
+
+    fig_height = max(3.0, len(robot_ids) * 0.45 + 1.5)
+    fig, ax = plt.subplots(figsize=(14, fig_height))
+
+    for row in batch_rows:
+        start_t = row["start"] - t0
+        duration = row["duration"]
+        for rid_raw in row["robot_ids"]:
+            rid = str(rid_raw)
+            ax.barh(
+                robot_y[rid],
+                duration,
+                left=start_t,
+                height=0.72,
+                color=robot_color[rid],
+                edgecolor="black",
+                linewidth=0.35,
+                alpha=0.9,
+            )
+
+    ax.set_yticks(range(len(robot_ids)))
+    ax.set_yticklabels(robot_ids, fontsize=9)
+    ax.invert_yaxis()
+
+    ax.set_title("GPU Gantt", fontsize=14, fontweight="bold")
+    ax.set_xlabel("Time since server start (s)", fontsize=12)
+    ax.set_ylabel("Robot", fontsize=12)
+    ax.grid(axis="x", alpha=0.3)
+
+    handles = [Patch(facecolor=robot_color[rid], label=rid) for rid in robot_ids]
+    if len(handles) <= 20:
+        ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=False)
+
+    fig.tight_layout()
+
+    out = output_path / "plots" / "server_batch_gantt.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    logger.info("Saved server batch Gantt plot to %s", out)
+
+
 def generate_all_plots(output_path: pathlib.Path) -> None:
     """Generate all plots."""
     logger.info("Generating plots...")
@@ -1318,6 +1400,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     generate_batch_size_plot(output_path)
     generate_server_timings_plot(output_path)
     generate_server_timings_over_time_plot(output_path)
+    generate_server_batch_gantt_plot(output_path)
     logger.info("Done!")
 
 

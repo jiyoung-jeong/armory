@@ -74,6 +74,18 @@ class RequestScheduler(ABC):
 
         now = time.time()
         for batch in batches:
+            batch = [
+                request for request in batch if request.is_padding or self._is_new_request(request)
+            ]
+            real_robot_ids = {request.robot_id for request in batch if not request.is_padding}
+            batch = [
+                request
+                for request in batch
+                if not request.is_padding or request.robot_id in real_robot_ids
+            ]
+            if not real_robot_ids:
+                continue
+
             batch_size = len(batch)
             real_batch = [request for request in batch if not request.is_padding]
             # Capture deadlines before the loop overwrites them, sort earliest first.
@@ -191,6 +203,7 @@ class RequestScheduler(ABC):
         self._deadlines.pop(robot_id, None)
         self._latest_requests.pop(robot_id, None)
         self._latest_scheduled_requests.pop(robot_id, None)
+        self.mirror.reset_robot(robot_id)
 
     def clear(self, robot_id: str) -> None:
         self.reset_robot(robot_id)
@@ -211,8 +224,16 @@ class RequestScheduler(ABC):
         """Get all requests that have a greater action start step."""
         result = []
         for req in self._latest_requests.values():
-            last = self._latest_scheduled_requests.get(req.robot_id)
-            if last is not None and req.action_start_step <= last.action_start_step:
+            if not self._is_new_request(req):
                 continue
             result.append(req)
         return result
+
+    def _is_new_request(self, request: SlotRequest) -> bool:
+        last = self._latest_scheduled_requests.get(request.robot_id)
+        if last is None:
+            return True
+        return (
+            request.action_start_step > last.action_start_step
+            and request.observation_step > last.observation_step
+        )

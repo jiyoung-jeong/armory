@@ -21,12 +21,8 @@ robot_id: TypeAlias = str
 
 
 @dataclass
-class Event:
+class ControlStep:
     time: float
-
-
-@dataclass
-class ControlStep(Event):
     observation_step: int
     action_step: int | None
     next_action_step: int
@@ -125,13 +121,8 @@ class Robot:
 
         step = self.steps[-1]
 
-        logger.debug(
-            "deadline start: step=%s max_overall_action_step=%d", step, self.max_overall_action_step
-        )
         while step.next_action_step <= self.max_overall_action_step:
             step = self.advance_step(step)
-
-        logger.debug("deadline end: step=%s", step)
 
         return step.time
 
@@ -143,6 +134,9 @@ class Robot:
 class Mirror:
     def __init__(self):
         self.robots: dict[robot_id, Robot] = {}
+
+    def reset_robot(self, robot_id: str) -> None:
+        self.robots.pop(robot_id, None)
 
     def receive_request(self, request: SlotRequest, control_hz: float) -> None:
         if request.robot_id not in self.robots:
@@ -161,11 +155,18 @@ class Mirror:
         self.robots[robot_id].send_response(chunk)
 
     def receive_response(self, ack: AckNotification) -> None:
-        self.robots[ack.robot_id].receive_response(ack)
+        robot = self.robots.get(ack.robot_id)
+        if robot is None:
+            logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
+            return
+        robot.receive_response(ack)
 
     def get_chunks(
         self, robot_ids: list[robot_id], latency_tracker: LatencyTracker, time: float
     ) -> list[ActionChunk]:
+        """
+        Returns a list of ActionChunks that would be queued if we started an inference for the robot_ids at the given time.
+        """
         control_steps = []
         for rid in robot_ids:
             obs_time = time - latency_tracker.observation_latency(rid)
@@ -189,7 +190,7 @@ class Mirror:
         robot_ids: list[robot_id],
         chunks: list[ActionChunk],
     ) -> None:
-        """Jumps to next time the GPU is available."""
+        """Simulates time forward to the given time, sending responses and advancing robot steps."""
         # NOTE: we send responses here so they are available while stepping
         # it doesn't matter that they are "sent" before the actual sending time
         # because arrival_time handles the timing around this
@@ -198,9 +199,6 @@ class Mirror:
 
         for robot in self.robots.values():
             robot.step_forward(time)
-
-    def total_actions(self) -> int:
-        return sum(robot.actions_executed() for robot in self.robots.values())
 
     def deadlines(self) -> dict[robot_id, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}
