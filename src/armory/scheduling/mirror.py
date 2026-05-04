@@ -24,7 +24,7 @@ robot_id: TypeAlias = str
 class ControlStep:
     time: float
     observation_step: int
-    action_step: int | None
+    action_step: int | None  # which action index was executed at this step
     next_action_step: int
 
 
@@ -49,9 +49,38 @@ class Robot:
         # includes chunks that are in-transit
         self.chunks: list[ActionChunk] = []
 
-    def step(self, control_step: ControlStep) -> None:
-        # TODO: pass more info from client and directly assert/test here
-        assert not self.steps or self.steps[-1].time < control_step.time
+    def step(self, request: SlotRequest) -> None:
+        if not self.steps:
+            assert request.action_start_step == 0
+            control_step = ControlStep(
+                time=request.request_timestamp,
+                observation_step=request.observation_step,
+                action_step=None,
+                next_action_step=0,
+            )
+        else:
+            executed_action_on_step = request.action_start_step == self.steps[-1].next_action_step
+            control_step = ControlStep(
+                time=request.request_timestamp,
+                observation_step=request.observation_step,
+                action_step=request.action_start_step if executed_action_on_step else None,
+                next_action_step=request.action_start_step + 1
+                if executed_action_on_step
+                else request.action_start_step,
+            )
+            assert control_step.time > self.steps[-1].time
+            assert control_step.observation_step == self.steps[-1].observation_step + 1
+            assert (
+                control_step.action_step is None
+                or control_step.action_step == self.steps[-1].next_action_step
+            ), (
+                f"action_step {control_step.action_step} is not the next action step {self.steps[-1].next_action_step}, steps: {self.steps}"
+            )
+            assert (
+                control_step.action_step is None
+                or control_step.next_action_step == control_step.action_step + 1
+            )
+
         self.steps.append(control_step)
 
     def send_response(self, chunk: ActionChunk) -> None:
@@ -142,14 +171,7 @@ class Mirror:
         if request.robot_id not in self.robots:
             # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
             self.robots[request.robot_id] = Robot(control_hz, request.execution_horizon)
-        self.robots[request.robot_id].step(
-            ControlStep(
-                time=request.request_timestamp,
-                observation_step=request.observation_step,
-                action_step=request.action_start_step,
-                next_action_step=request.action_start_step + 1,
-            )
-        )
+        self.robots[request.robot_id].step(request)
 
     def schedule_pending_chunk(self, robot_id: str, chunk: ActionChunk) -> None:
         self.robots[robot_id].send_response(chunk)
