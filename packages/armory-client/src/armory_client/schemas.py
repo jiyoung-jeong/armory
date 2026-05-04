@@ -196,7 +196,7 @@ class Action:
     The action_chunk_index and index_in_chunk will be None for the null action.
     """
 
-    step: int
+    step: int  # TODO: should be renamed as action_index
     action: Float[np.ndarray, " action_dim"]  # TODO: check the shape on this
     action_chunk_index: int | None
     index_in_chunk: int | None

@@ -214,12 +214,12 @@ class Mirror:
     ) -> None:
         """Simulates time forward to the given time, sending responses and advancing robot steps."""
         # NOTE: we send responses here so they are available while stepping
-        # it doesn't matter that they are "sent" before the actual sending time
+        # it doesn't matter thaot they are "sent" before the actual sending time
         # because arrival_time handles the timing around this
         for rid, chunk in zip(robot_ids, chunks):
             self.robots[rid].send_response(chunk)
 
-        for robot in self.robots.values():
+        for robot in self.robts.values():
             robot.step_forward(time)
 
     def deadlines(self) -> dict[robot_id, float]:
