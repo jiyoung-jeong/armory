@@ -7366,3 +7366,379 @@ bash: no job control in this shell
 2026-05-03 19:39:04,545 [INFO] Unselected WS-14.
 2026-05-03 19:39:04,948 [INFO] Selected WS-14.
 2026-05-03 19:39:05,249 [INFO] Unselected WS-14.
+2026-05-03 19:44:16,783 [INFO] ARMory dashboard started.
+2026-05-03 19:44:16,783 [INFO] Querying workstation status...
+2026-05-03 19:44:20,014 [INFO] WS-11: container running (booted)
+2026-05-03 19:44:21,831 [INFO] WS-12: container running (booted)
+2026-05-03 19:44:23,648 [INFO] WS-13: container running (booted)
+2026-05-03 19:44:24,656 [INFO] WS-14: container running (booted)
+2026-05-03 19:44:24,656 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 19:44:24,656 [INFO] Status refresh complete.
+2026-05-03 19:44:26,372 [INFO] Selected WS-11.
+2026-05-03 19:44:26,875 [INFO] Selected WS-12.
+2026-05-03 19:44:27,177 [INFO] Selected WS-13.
+2026-05-03 19:44:27,379 [INFO] Selected WS-14.
+2026-05-03 19:44:28,584 [INFO] Unselected WS-13.
+2026-05-03 19:44:28,987 [INFO] Unselected WS-14.
+2026-05-03 19:44:29,489 [INFO] Unselected WS-12.
+2026-05-03 19:44:29,792 [INFO] Unselected WS-11.
+2026-05-03 19:59:45,232 [INFO] Selected WS-14.
+2026-05-03 20:01:15,022 [INFO] Unselected WS-14.
+2026-05-03 20:01:15,424 [INFO] Selected WS-14.
+2026-05-03 20:01:37,065 [INFO] Starting client on WS-14...
+2026-05-03 20:01:37,468 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:01:38,373 [INFO] WS-14: Piper client started (pid 1103); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:01:38,373 [INFO]   WS-14: Piper client started (pid 1103); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:01:38,374 [INFO] Start Client complete.
+2026-05-03 20:01:55,755 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 20:01:55,956 [INFO] WS-14: stopping Piper client
+2026-05-03 20:01:57,064 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:01:57,064 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:01:57,064 [INFO] Emergency client stop complete.
+2026-05-03 20:10:28,541 [INFO] Starting client on WS-14...
+2026-05-03 20:10:29,346 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:10:30,452 [INFO] WS-14: Piper client started (pid 1210); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:10:30,452 [INFO]   WS-14: Piper client started (pid 1210); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:10:30,552 [INFO] Start Client complete.
+2026-05-03 20:10:43,113 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 20:10:43,314 [INFO] WS-14: stopping Piper client
+2026-05-03 20:10:44,220 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:10:44,220 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:10:44,220 [INFO] Emergency client stop complete.
+2026-05-03 20:11:25,106 [INFO] Starting client on WS-14...
+2026-05-03 20:11:25,611 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:11:28,425 [INFO] WS-14: Piper client started (pid 1319); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:11:28,425 [INFO]   WS-14: Piper client started (pid 1319); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:11:28,425 [INFO] Start Client complete.
+2026-05-03 20:11:42,493 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 20:11:42,694 [INFO] WS-14: stopping Piper client
+2026-05-03 20:11:44,102 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:11:44,102 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:11:44,202 [INFO] Emergency client stop complete.
+2026-05-03 20:15:34,393 [INFO] Unselected WS-14.
+2026-05-03 20:15:36,704 [INFO] Selected WS-12.
+2026-05-03 20:15:43,527 [INFO] ARMory dashboard started.
+2026-05-03 20:15:43,527 [INFO] Querying workstation status...
+2026-05-03 20:15:46,757 [INFO] WS-11: container running (booted)
+2026-05-03 20:15:48,067 [INFO] WS-12: container running (booted)
+2026-05-03 20:15:49,984 [INFO] WS-13: container running (booted)
+2026-05-03 20:15:51,999 [INFO] WS-14: container running (booted)
+2026-05-03 20:15:51,999 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 20:15:52,099 [INFO] Status refresh complete.
+2026-05-03 20:15:54,417 [INFO] Selected WS-12.
+2026-05-03 20:15:57,495 [INFO] Starting client on WS-12...
+2026-05-03 20:15:58,102 [INFO] WS-12: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 20:16:00,411 [INFO] WS-12: Piper client started (pid 745); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 20:16:00,412 [INFO]   WS-12: Piper client started (pid 745); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/
+2026-05-03 20:16:00,412 [INFO] Start Client complete.
+2026-05-03 20:16:20,905 [INFO] EMERGENCY STOP: killing clients on WS-12.
+2026-05-03 20:16:21,106 [INFO] WS-12: stopping Piper client
+2026-05-03 20:16:22,012 [INFO] WS-12: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 20:16:22,012 [INFO]   WS-12: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:16:22,012 [INFO] Emergency client stop complete.
+2026-05-03 20:16:37,312 [INFO] Executing 'Goto Init' on WS-12...
+2026-05-03 20:16:37,915 [INFO] WS-12: running 'p goto init'
+2026-05-03 20:16:39,524 [INFO] WS-12: Go to init complete.
+2026-05-03 20:16:39,524 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 20:16:39,524 [INFO]   WS-12: Go to init complete.
+2026-05-03 20:16:39,524 [INFO] WS-12 is ready. Runtime controls unlocked.
+2026-05-03 20:16:39,524 [INFO] 'Goto Init' complete.
+2026-05-03 20:16:40,831 [INFO] Unselected WS-12.
+2026-05-03 20:16:41,437 [INFO] Selected WS-11.
+2026-05-03 20:16:43,480 [INFO] Starting client on WS-11...
+2026-05-03 20:16:43,783 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:16:46,093 [INFO] WS-11: Piper client started (pid 1414); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:16:46,093 [INFO]   WS-11: Piper client started (pid 1414); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:16:46,093 [INFO] Start Client complete.
+2026-05-03 20:17:11,807 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 20:17:12,008 [INFO] WS-11: stopping Piper client
+2026-05-03 20:17:13,014 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:17:13,014 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:17:13,014 [INFO] Emergency client stop complete.
+2026-05-03 20:32:20,968 [INFO] Executing 'Goto Init' on WS-11...
+2026-05-03 20:32:21,572 [INFO] WS-11: running 'p goto init'
+2026-05-03 20:32:23,387 [INFO] WS-11: Go to init complete.
+2026-05-03 20:32:23,387 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 20:32:23,387 [INFO]   WS-11: Go to init complete.
+2026-05-03 20:32:23,387 [INFO] WS-11 is ready. Runtime controls unlocked.
+2026-05-03 20:32:23,387 [INFO] 'Goto Init' complete.
+2026-05-03 20:36:57,668 [INFO] Unselected WS-11.
+2026-05-03 20:37:01,394 [INFO] Stopping listener on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 20:37:01,595 [INFO] WS-11: stopping data listener
+2026-05-03 20:37:01,796 [INFO] WS-12: stopping data listener
+2026-05-03 20:37:01,997 [INFO] WS-13: stopping data listener
+2026-05-03 20:37:02,098 [INFO] WS-14: stopping data listener
+2026-05-03 20:37:03,106 [INFO] WS-11: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 20:37:03,513 [INFO] WS-12: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 20:37:03,815 [INFO] WS-13: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 20:37:04,519 [INFO] WS-14: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 20:37:04,519 [INFO]   WS-11: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/lo
+2026-05-03 20:37:04,519 [INFO]   WS-12: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/lo
+2026-05-03 20:37:04,519 [INFO]   WS-13: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/lo
+2026-05-03 20:37:04,620 [INFO]   WS-14: data listener stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/lo
+2026-05-03 20:37:04,620 [INFO] Stop Listener complete.
+2026-05-03 20:37:34,907 [INFO] Starting listener on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 20:37:36,117 [INFO] WS-11: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 20:37:36,218 [INFO] WS-12: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 20:37:36,318 [INFO] WS-13: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 20:37:36,520 [INFO] WS-14: starting data listener; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 20:37:39,232 [INFO] WS-12: data listener started (pid 959); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-listener.log
+2026-05-03 20:37:39,434 [INFO] WS-13: data listener started (pid 789); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_13-listener.log
+2026-05-03 20:37:39,434 [INFO] WS-14: data listener started (pid 2256); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-listener.log
+2026-05-03 20:37:39,534 [INFO] WS-11: data listener started (pid 1611); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-listener.log
+2026-05-03 20:37:39,535 [INFO]   WS-11: data listener started (pid 1611); log: /nethome/rbansal66/CS4803ARM_Lab/user_dat
+2026-05-03 20:37:39,535 [INFO]   WS-12: data listener started (pid 959); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:37:39,535 [INFO]   WS-13: data listener started (pid 789); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:37:39,535 [INFO]   WS-14: data listener started (pid 2256); log: /nethome/rbansal66/CS4803ARM_Lab/user_dat
+2026-05-03 20:37:39,535 [INFO] Start Listener complete.
+2026-05-03 20:37:40,439 [INFO] Selected WS-11.
+2026-05-03 20:37:46,115 [INFO] Starting client on WS-11...
+2026-05-03 20:37:46,524 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:37:48,835 [INFO] WS-11: Piper client started (pid 1839); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:37:48,836 [INFO]   WS-11: Piper client started (pid 1839); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:37:48,836 [INFO] Start Client complete.
+2026-05-03 20:37:57,481 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 20:37:57,682 [INFO] WS-11: stopping Piper client
+2026-05-03 20:37:59,595 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:37:59,695 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:37:59,695 [INFO] Emergency client stop complete.
+2026-05-03 20:38:11,163 [INFO] Starting client on WS-11...
+2026-05-03 20:38:11,868 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:38:14,380 [INFO] WS-11: Piper client started (pid 1962); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:38:14,380 [INFO]   WS-11: Piper client started (pid 1962); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:38:14,380 [INFO] Start Client complete.
+2026-05-03 20:38:46,032 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 20:38:46,234 [INFO] WS-11: stopping Piper client
+2026-05-03 20:38:47,140 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 20:38:47,140 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:38:47,140 [INFO] Emergency client stop complete.
+2026-05-03 20:40:44,925 [INFO] Unselected WS-11.
+2026-05-03 20:44:05,397 [INFO] Selected WS-12.
+2026-05-03 20:44:08,430 [INFO] Starting client on WS-12...
+2026-05-03 20:44:08,833 [INFO] WS-12: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 20:44:11,445 [INFO] WS-12: Piper client started (pid 1223); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 20:44:11,647 [INFO]   WS-12: Piper client started (pid 1223); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:44:11,647 [INFO] Start Client complete.
+2026-05-03 20:44:28,429 [INFO] EMERGENCY STOP: killing clients on WS-12.
+2026-05-03 20:44:28,731 [INFO] WS-12: stopping Piper client
+2026-05-03 20:44:29,739 [INFO] WS-12: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_12-client.log
+2026-05-03 20:44:29,740 [INFO]   WS-12: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:44:29,740 [INFO] Emergency client stop complete.
+2026-05-03 20:44:35,478 [INFO] Selected WS-14.
+2026-05-03 20:44:36,683 [INFO] Unselected WS-12.
+2026-05-03 20:44:39,222 [INFO] Starting client on WS-14...
+2026-05-03 20:44:39,827 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:44:42,138 [INFO] WS-14: Piper client started (pid 2538); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:44:42,339 [INFO]   WS-14: Piper client started (pid 2538); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 20:44:42,439 [INFO] Start Client complete.
+2026-05-03 20:45:37,589 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 20:45:37,990 [INFO] WS-14: stopping Piper client
+2026-05-03 20:45:39,401 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 20:45:39,401 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 20:45:39,401 [INFO] Emergency client stop complete.
+2026-05-03 21:09:30,146 [INFO] Unselected WS-14.
+2026-05-03 21:09:31,051 [INFO] Selected WS-11.
+2026-05-03 21:09:33,874 [INFO] Executing 'Goto Init' on WS-11...
+2026-05-03 21:09:34,177 [INFO] WS-11: running 'p goto init'
+2026-05-03 21:09:35,887 [INFO] WS-11: Go to init complete.
+2026-05-03 21:09:35,987 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:09:35,987 [INFO]   WS-11: Go to init complete.
+2026-05-03 21:09:35,987 [INFO] WS-11 is ready. Runtime controls unlocked.
+2026-05-03 21:09:35,987 [INFO] 'Goto Init' complete.
+2026-05-03 21:09:43,490 [INFO] Starting client on WS-11...
+2026-05-03 21:09:44,295 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:09:46,907 [INFO] WS-11: Piper client started (pid 2182); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:09:46,907 [INFO]   WS-11: Piper client started (pid 2182); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 21:09:46,907 [INFO] Start Client complete.
+2026-05-03 21:10:29,814 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 21:10:29,915 [INFO] WS-11: stopping Piper client
+2026-05-03 21:10:31,026 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:10:31,026 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 21:10:31,026 [INFO] Emergency client stop complete.
+2026-05-03 21:14:34,309 [INFO] Starting client on WS-11...
+2026-05-03 21:14:34,914 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:14:37,326 [INFO] WS-11: Piper client started (pid 2306); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:14:37,326 [INFO]   WS-11: Piper client started (pid 2306); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 21:14:37,326 [INFO] Start Client complete.
+2026-05-03 21:15:00,337 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 21:15:00,538 [INFO] WS-11: stopping Piper client
+2026-05-03 21:15:01,444 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:15:01,444 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 21:15:01,545 [INFO] Emergency client stop complete.
+2026-05-03 21:18:46,407 [INFO] Executing 'Goto Init' on WS-11...
+2026-05-03 21:18:47,012 [INFO] WS-11: running 'p goto init'
+2026-05-03 21:18:48,620 [INFO] WS-11: Go to init complete.
+2026-05-03 21:18:48,620 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:18:48,620 [INFO]   WS-11: Go to init complete.
+2026-05-03 21:18:48,620 [INFO] 'Goto Init' complete.
+2026-05-03 21:18:49,022 [INFO] Unselected WS-11.
+2026-05-03 21:18:50,591 [INFO] Executing 'Goto Init' on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 21:18:50,894 [INFO] WS-11: running 'p goto init'
+2026-05-03 21:18:51,095 [INFO] WS-12: running 'p goto init'
+2026-05-03 21:18:51,297 [INFO] WS-13: running 'p goto init'
+2026-05-03 21:18:51,804 [INFO] WS-14: running 'p goto init'
+2026-05-03 21:18:52,510 [INFO] WS-11: Go to init complete.
+2026-05-03 21:18:52,510 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:18:52,812 [INFO] WS-12: Go to init complete.
+2026-05-03 21:18:52,812 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:18:53,013 [INFO] WS-13: Go to init complete.
+2026-05-03 21:18:53,013 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:18:53,718 [INFO] WS-14: Go to init complete.
+2026-05-03 21:18:53,818 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:18:54,019 [INFO]   WS-11: Go to init complete.
+2026-05-03 21:18:54,019 [INFO]   WS-12: Go to init complete.
+2026-05-03 21:18:54,019 [INFO]   WS-13: Go to init complete.
+2026-05-03 21:18:54,019 [INFO]   WS-14: Go to init complete.
+2026-05-03 21:18:54,019 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 21:18:54,019 [INFO] 'Goto Init' complete.
+2026-05-03 21:18:54,923 [INFO] Selected WS-11.
+2026-05-03 21:19:03,944 [INFO] Starting client on WS-11...
+2026-05-03 21:19:04,246 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:19:06,556 [INFO] WS-11: Piper client started (pid 2554); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:19:06,556 [INFO]   WS-11: Piper client started (pid 2554); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 21:19:06,556 [INFO] Start Client complete.
+2026-05-03 21:19:38,306 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 21:19:38,507 [INFO] WS-11: stopping Piper client
+2026-05-03 21:19:39,514 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:19:39,614 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 21:19:39,614 [INFO] Emergency client stop complete.
+2026-05-03 21:20:24,104 [INFO] Executing 'Goto Init' on WS-11...
+2026-05-03 21:20:24,508 [INFO] WS-11: running 'p goto init'
+2026-05-03 21:20:26,215 [INFO] WS-11: Go to init complete.
+2026-05-03 21:20:26,316 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:20:26,316 [INFO]   WS-11: Go to init complete.
+2026-05-03 21:20:26,316 [INFO] WS-11 is ready. Runtime controls unlocked.
+2026-05-03 21:20:26,316 [INFO] 'Goto Init' complete.
+2026-05-03 21:20:51,937 [INFO] Unselected WS-11.
+2026-05-03 21:20:52,841 [INFO] Selected WS-14.
+2026-05-03 21:20:55,304 [INFO] Starting client on WS-14...
+2026-05-03 21:20:56,312 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 21:20:58,925 [INFO] WS-14: Piper client started (pid 2776); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 21:20:59,026 [INFO]   WS-14: Piper client started (pid 2776); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 21:20:59,026 [INFO] Start Client complete.
+2026-05-03 21:21:41,911 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 21:21:42,213 [INFO] WS-14: stopping Piper client
+2026-05-03 21:21:43,924 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 21:21:43,924 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 21:21:44,024 [INFO] Emergency client stop complete.
+2026-05-03 21:21:51,777 [INFO] Executing 'Goto Init' on WS-14...
+2026-05-03 21:21:52,081 [INFO] WS-14: running 'p goto init'
+2026-05-03 21:21:53,689 [INFO] WS-14: Go to init complete.
+2026-05-03 21:21:53,689 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:21:53,689 [INFO]   WS-14: Go to init complete.
+2026-05-03 21:21:53,689 [INFO] WS-14 is ready. Runtime controls unlocked.
+2026-05-03 21:21:53,689 [INFO] 'Goto Init' complete.
+2026-05-03 21:21:55,281 [INFO] Starting client on WS-14...
+2026-05-03 21:21:56,187 [INFO] WS-14: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 21:21:58,702 [INFO] WS-14: Piper client started (pid 2962); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 21:21:58,702 [INFO]   WS-14: Piper client started (pid 2962); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 21:21:58,702 [INFO] Start Client complete.
+2026-05-03 21:22:58,772 [INFO] EMERGENCY STOP: killing clients on WS-14.
+2026-05-03 21:22:59,075 [INFO] WS-14: stopping Piper client
+2026-05-03 21:23:00,081 [INFO] WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_14-client.log
+2026-05-03 21:23:00,081 [INFO]   WS-14: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 21:23:00,081 [INFO] Emergency client stop complete.
+2026-05-03 21:23:18,269 [INFO] Unselected WS-14.
+2026-05-03 21:23:19,174 [INFO] Selected WS-11.
+2026-05-03 21:23:20,178 [INFO] Starting client on WS-11...
+2026-05-03 21:23:20,585 [INFO] WS-11: starting Piper client; log /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:23:22,996 [INFO] WS-11: Piper client started (pid 2776); log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:23:23,096 [INFO]   WS-11: Piper client started (pid 2776); log: /nethome/rbansal66/CS4803ARM_Lab/user_data
+2026-05-03 21:23:23,096 [INFO] Start Client complete.
+2026-05-03 21:24:07,294 [INFO] EMERGENCY STOP: killing clients on WS-11.
+2026-05-03 21:24:07,496 [INFO] WS-11: stopping Piper client
+2026-05-03 21:24:08,603 [INFO] WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/logs/workstation_11-client.log
+2026-05-03 21:24:08,603 [INFO]   WS-11: Piper client stopped; log: /nethome/rbansal66/CS4803ARM_Lab/user_data/armory/log
+2026-05-03 21:24:08,603 [INFO] Emergency client stop complete.
+2026-05-03 21:24:13,332 [INFO] Unselected WS-11.
+2026-05-03 21:24:17,922 [INFO] Executing 'Goto Init' on WS-11, WS-12, WS-13, WS-14...
+2026-05-03 21:24:18,325 [INFO] WS-11: running 'p goto init'
+2026-05-03 21:24:18,530 [INFO] WS-12: running 'p goto init'
+2026-05-03 21:24:18,933 [INFO] WS-13: running 'p goto init'
+2026-05-03 21:24:19,237 [INFO] WS-14: running 'p goto init'
+2026-05-03 21:24:19,941 [INFO] WS-11: Go to init complete.
+2026-05-03 21:24:19,941 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:24:20,445 [INFO] WS-12: Go to init complete.
+2026-05-03 21:24:20,546 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:24:20,848 [INFO] WS-13: Go to init complete.
+2026-05-03 21:24:20,948 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:24:21,049 [INFO] WS-14: Go to init complete.
+2026-05-03 21:24:21,049 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:24:21,049 [INFO]   WS-11: Go to init complete.
+2026-05-03 21:24:21,049 [INFO]   WS-12: Go to init complete.
+2026-05-03 21:24:21,049 [INFO]   WS-13: Go to init complete.
+2026-05-03 21:24:21,049 [INFO]   WS-14: Go to init complete.
+2026-05-03 21:24:21,049 [INFO] ALL is ready. Runtime controls unlocked.
+2026-05-03 21:24:21,049 [INFO] 'Goto Init' complete.
+2026-05-03 21:25:14,667 [INFO] Disabling, killing tunnels, and shutting down WS-11, WS-12, WS-13, WS-14...
+2026-05-03 21:25:15,573 [INFO] WS-11: running 'p goto reset'
+2026-05-03 21:25:15,676 [INFO] WS-12: running 'p goto reset'
+2026-05-03 21:25:16,180 [INFO] WS-13: running 'p goto reset'
+2026-05-03 21:25:16,684 [INFO] WS-14: running 'p goto reset'
+2026-05-03 21:25:17,190 [INFO] WS-11: Go to reset complete.
+2026-05-03 21:25:17,190 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:25:17,593 [INFO] WS-12: Go to reset complete.
+2026-05-03 21:25:17,593 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:25:18,095 [INFO] WS-13: Go to reset complete.
+2026-05-03 21:25:18,095 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:25:18,397 [INFO] WS-14: Go to reset complete.
+2026-05-03 21:25:18,397 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+2026-05-03 21:25:19,205 [INFO] WS-11: running 'p disable'
+2026-05-03 21:25:19,407 [INFO] WS-12: running 'p disable'
+2026-05-03 21:25:19,810 [INFO] WS-13: running 'p disable'
+2026-05-03 21:25:20,114 [INFO] WS-14: running 'p disable'
+2026-05-03 21:25:24,136 [INFO] WS-11: Piper disable sequence complete.
+2026-05-03 21:25:24,136 [INFO] WS-11 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+INFO:Pip
+2026-05-03 21:25:24,639 [INFO] WS-12: Piper disable sequence complete.
+2026-05-03 21:25:24,639 [INFO] WS-12 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+INFO:Pip
+2026-05-03 21:25:24,639 [INFO] WS-13: Piper disable sequence complete.
+2026-05-03 21:25:24,639 [INFO] WS-13 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+INFO:Pip
+2026-05-03 21:25:25,043 [INFO] WS-14: Piper disable sequence complete.
+2026-05-03 21:25:25,043 [INFO] WS-14 err: bash: cannot set terminal process group (-1): Inappropriate ioctl for device
+bash: no job control in this shell
+INFO:Pip
+2026-05-03 21:25:25,245 [INFO] WS-11: killing tunnel for zhurong:8080
+2026-05-03 21:25:25,447 [INFO] WS-11: tunnel kill FAILED — tunnel kill failed
+2026-05-03 21:25:25,447 [INFO] WS-12: killing tunnel for zhurong:8080
+2026-05-03 21:25:25,749 [INFO] WS-12: tunnel kill FAILED — tunnel kill failed
+2026-05-03 21:25:25,750 [INFO] WS-13: killing tunnel for zhurong:8080
+2026-05-03 21:25:25,952 [INFO] WS-13: tunnel kill FAILED — tunnel kill failed
+2026-05-03 21:25:25,952 [INFO] WS-14: killing tunnel for zhurong:8080
+2026-05-03 21:25:26,154 [INFO] WS-14: tunnel kill FAILED — tunnel kill failed
+2026-05-03 21:25:26,858 [INFO] WS-11: stopping Docker container...
+2026-05-03 21:25:27,663 [INFO] WS-12: stopping Docker container...
+2026-05-03 21:25:27,865 [INFO] WS-11: shutdown complete
+2026-05-03 21:25:28,168 [INFO] WS-13: stopping Docker container...
+2026-05-03 21:25:28,269 [INFO] WS-12: shutdown complete
+2026-05-03 21:25:28,471 [INFO] WS-14: stopping Docker container...
+2026-05-03 21:25:29,075 [INFO] WS-13: shutdown complete
+2026-05-03 21:25:29,778 [INFO] WS-14: shutdown complete
+2026-05-03 21:25:29,879 [INFO]   WS-11: Reset: Go to reset complete.; Disable: Piper disable sequence complete.; Tunnel:
+2026-05-03 21:25:29,879 [INFO]   WS-12: Reset: Go to reset complete.; Disable: Piper disable sequence complete.; Tunnel:
+2026-05-03 21:25:29,879 [INFO]   WS-13: Reset: Go to reset complete.; Disable: Piper disable sequence complete.; Tunnel:
+2026-05-03 21:25:29,879 [INFO]   WS-14: Reset: Go to reset complete.; Disable: Piper disable sequence complete.; Tunnel:
+2026-05-03 21:25:29,879 [INFO] Shutdown complete.
