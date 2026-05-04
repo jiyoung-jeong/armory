@@ -5,7 +5,7 @@ import multiprocessing as mp
 import time
 from functools import cache
 
-from armory.scheduling import RequestScheduler
+from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import SlotRequest
 
 

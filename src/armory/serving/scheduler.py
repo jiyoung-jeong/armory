@@ -7,7 +7,7 @@ from multiprocessing.synchronize import Event
 
 import zmq
 
-from armory.scheduling import RequestScheduler
+from armory.scheduling.base import RequestScheduler
 from armory.scheduling.baselines import (
     FixedMaxBatchScheduler,
     GreedyActionScheduler,

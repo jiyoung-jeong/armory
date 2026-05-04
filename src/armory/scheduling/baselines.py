@@ -4,7 +4,7 @@ import multiprocessing as mp
 import random
 import time
 
-from armory.scheduling import RequestScheduler
+from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import SlotRequest
 

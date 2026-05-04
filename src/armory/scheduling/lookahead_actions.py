@@ -3,7 +3,7 @@ import logging
 import multiprocessing as mp
 import time
 
-from armory.scheduling import RequestScheduler
+from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
 from armory.scheduling.mirror import Mirror, robot_id
 from armory.serving.schemas import SlotRequest
