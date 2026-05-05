@@ -24,6 +24,8 @@ from armory_client.messages import InferRequest, InferResponse, InferType, RTCPa
 
 logger = logging.getLogger(__name__)
 
+PROFILE_ITERATIONS = 5
+
 
 def _profile_and_send(policy, max_batch_size: int, notify_sock: zmq.Socket) -> None:
     """Profile inference latency for each batch size and send a BatchProfile to the scheduler."""
@@ -33,12 +35,10 @@ def _profile_and_send(policy, max_batch_size: int, notify_sock: zmq.Socket) -> N
     request = policy.make_infer_request()
     for batch_size in range(1, max_batch_size + 1):
         latencies = []
-        for _ in range(5):
-            t0 = time.perf_counter()
+        for _ in range(PROFILE_ITERATIONS):
+            start = time.perf_counter()
             policy.infer_batch([request] * batch_size)
-            t1 = time.perf_counter()
-            latency = t1 - t0
-            latencies.append(latency)
+            latencies.append(time.perf_counter() - start)
         profile[batch_size] = sum(latencies) / len(latencies)
         logger.info("  batch_size=%d: %.1f ms", batch_size, profile[batch_size] * 1000)
     notify_sock.send_pyobj(BatchProfile(latencies=profile))
