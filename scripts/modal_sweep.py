@@ -378,10 +378,11 @@ def main(
         order_outputs=False,
     ):
         artifact_bytes = result.pop("artifact_tgz")
-        artifact_path = artifacts_dir / f"{result['run_id']}.tgz"
-        artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        artifact_path.write_bytes(artifact_bytes)
-        result["artifact_path"] = str(artifact_path)
+        run_dir = artifacts_dir / result["run_id"]
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(artifact_bytes), mode="r:gz") as tar:
+            tar.extractall(run_dir)
+        result["artifact_path"] = str(run_dir)
         rows.append(result)
         print(
             f"{result['status']}: {result['run_id']} "
