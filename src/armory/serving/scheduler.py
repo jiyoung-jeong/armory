@@ -10,7 +10,6 @@ import zmq
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.baselines import (
     FixedMaxBatchScheduler,
-    GreedyActionScheduler,
     GreedyDeadlineScheduler,
     MaxBatchScheduler,
     RandomBatchScheduler,
@@ -46,7 +45,6 @@ def _recv_batch_profile(result_sock: zmq.Socket) -> dict[int, float]:
 SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "max-batch": MaxBatchScheduler,
     "fixed-max-batch": FixedMaxBatchScheduler,
-    "greedy-action": GreedyActionScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
     "dynamic-action": DynamicActionScheduler,
     "lookahead": LookaheadScheduler,

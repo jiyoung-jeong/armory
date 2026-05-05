@@ -1,20 +1,12 @@
 import dataclasses
-import itertools
 import multiprocessing as mp
 import random
 import time
 
 from armory.scheduling.base import RequestScheduler
-from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import RobotID, SlotRequest
 
-
-def calculate_usable_time(
-    latency_tracker: LatencyTracker, slot_request: SlotRequest, batch_size: int
-) -> float:
-    total_latency = latency_tracker.total_latency(slot_request.robot_id, batch_size)
-    total_chunk_time = slot_request.execution_horizon / slot_request.control_hz
-    return total_chunk_time - total_latency
+# TODO: fix schedulable requests so it uses mirror instead
 
 
 class MaxBatchScheduler(RequestScheduler):
@@ -47,27 +39,6 @@ class FixedMaxBatchScheduler(RequestScheduler):
             batch.append(dataclasses.replace(source, is_padding=True))
             pad_index += 1
         return [batch]
-
-
-class GreedyActionScheduler(RequestScheduler):
-    """Earliest-deadline-first: sort all pending requests by deadline."""
-
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty() or (candidates := self.schedulable_requests) == []:
-            return []
-
-        potential_batches = itertools.chain.from_iterable(
-            itertools.combinations(candidates, i) for i in range(1, self._max_batch_size + 1)
-        )
-        return [
-            list(max(potential_batches, key=lambda batch: self.calculate_actions_per_second(batch)))
-        ]
-
-    def calculate_actions_per_second(self, batch: tuple[SlotRequest, ...]) -> float:
-        """Return the number of usable actions created per second spent on inference."""
-        return sum(
-            calculate_usable_time(self.latency_tracker, request, len(batch)) for request in batch
-        ) / self.latency_tracker.infer_latency(len(batch))
 
 
 class GreedyDeadlineScheduler(RequestScheduler):
