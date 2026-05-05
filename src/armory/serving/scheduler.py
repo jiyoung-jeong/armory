@@ -72,23 +72,6 @@ def _run_scheduler(
     from GPU for state bookkeeping.
     """
 
-    # NOTE: uncomment this to attach a debugger to the scheduler process
-    # import debugpy
-
-    # debugpy.listen(("0.0.0.0", 5679))  # different port from main process
-    # debugpy.wait_for_client()
-
-    # might need to run `ssh -NL 5679:localhost:5679 <server node>`
-    # also might need to add this to vscode launch.json:
-    # "configurations": [
-    #     {
-    #         "name": "Attach scheduler",
-    #         "type": "debugpy",
-    #         "request": "attach",
-    #         "connect": {"host": "localhost", "port": 5679}
-    #     }
-    # ]
-
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
