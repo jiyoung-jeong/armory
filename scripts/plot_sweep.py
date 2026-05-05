@@ -69,7 +69,7 @@ def _plot_metric(
     line_col: str,
     output_dir: pathlib.Path,
 ) -> pathlib.Path:
-    agg = df.groupby([line_col, x_col], as_index=False)[metric].agg(["mean", "count"])
+    agg = df.groupby([line_col, x_col])[metric].agg(["mean", "count"]).reset_index()
     agg.columns = [line_col, x_col, "value", "n"]
     agg = agg.sort_values([line_col, x_col])
 
