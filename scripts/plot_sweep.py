@@ -22,7 +22,6 @@ DEFAULT_METRICS = [
     "starvation_rate",
     "post_first_starvation_rate",
     "robot_starvation_rate_max",
-    "service_jain_fairness",
     "success_rate",
 ]
 
@@ -33,7 +32,6 @@ METRIC_LABELS = {
     "robot_starvation_rate_max": "Worst robot starvation rate",
     "robot_starvation_rate_std": "Robot starvation std. dev.",
     "robot_starvation_rate_cvar90": "Tail robot starvation rate",
-    "service_jain_fairness": "Service Jain fairness",
     "success_rate": "Success rate",
 }
 

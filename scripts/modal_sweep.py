@@ -1,9 +1,10 @@
-"""Run small server/client scheduler sweeps on Modal.
+"""Run server/client scheduler sweeps on Modal.
 
 Example:
     modal run scripts/modal_sweep.py \
         --schedulers fixed-max-batch,greedy-deadline,round-robin \
-        --num-robots 2,4,6 \
+        --experiment-configs configs/experiments/mock/2_robots.json,configs/experiments/mock/4_robots.json,configs/experiments/mock/6_robots.json \
+        --server-config configs/server/mock.json \
         --output-dir experiments/sweeps/mock
 """
 
@@ -15,18 +16,15 @@ import datetime as dt
 import io
 import json
 import pathlib
-import shlex
 import subprocess
 import sys
 import tarfile
-import time
-import urllib.request
 from typing import Any
 
 import modal
 
 APP_NAME = "armory-scheduler-sweep"
-REMOTE_ROOT = pathlib.Path("/root/codex")
+REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_sweep")
 PYTHONPATH = ":".join(
     [
@@ -60,35 +58,18 @@ app = modal.App(APP_NAME)
 @dataclasses.dataclass(frozen=True)
 class SweepCase:
     scheduler: str
+    experiment_config: str  # path relative to repo root
     num_robots: int
     seed: int
 
     @property
     def run_id(self) -> str:
-        return f"scheduler={self.scheduler}__robots={self.num_robots}__seed={self.seed}"
+        config_name = pathlib.Path(self.experiment_config).stem
+        return f"scheduler={self.scheduler}__config={config_name}__robots={self.num_robots}__seed={self.seed}"
 
 
 def _parse_csv(value: str, *, cast=str) -> list[Any]:
     return [cast(item.strip()) for item in value.split(",") if item.strip()]
-
-
-def _append_args(base: list[str], extra: str) -> list[str]:
-    return base + shlex.split(extra)
-
-
-def _wait_for_server(port: int, timeout_s: float = 180.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    url = f"http://127.0.0.1:{port}/metadata"
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=5.0) as resp:
-                if resp.status == 200:
-                    return
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-        time.sleep(2.0)
-    raise TimeoutError(f"server did not become ready at {url}: {last_error}")
 
 
 def _run_subprocess(
@@ -114,8 +95,7 @@ def _run_subprocess(
 
 def _tar_directory(path: pathlib.Path) -> bytes:
     def compact_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        artifact_path = pathlib.Path(info.name)
-        if artifact_path.suffix in {".mp4", ".parquet", ".npz"}:
+        if pathlib.Path(info.name).suffix in {".mp4", ".parquet", ".npz"}:
             return None
         return info
 
@@ -134,11 +114,65 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _jain_fairness(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    denom = len(values) * sum(v * v for v in values)
-    return (sum(values) ** 2 / denom) if denom > 0 else 0.0
+def _build_server_cmd(srv_cfg: dict[str, Any], *, port: int, scheduler: str) -> list[str]:
+    cmd = [
+        sys.executable,
+        "scripts/serve.py",
+        "--port",
+        str(port),
+        "--env",
+        srv_cfg.get("env", "LIBERO"),
+        "--max-batch-size",
+        str(srv_cfg.get("max_batch_size", 1)),
+        "--scheduling-algorithm",
+        scheduler,
+        f"policy:{srv_cfg.get('policy_type', 'default')}",
+    ]
+    for k, v in srv_cfg.get("policy", {}).items():
+        cmd += [f"--policy.{k.replace('_', '-')}", str(v)]
+    return cmd
+
+
+def _expand_experiment_config(exp_cfg: dict[str, Any], num_robots: int) -> dict[str, Any]:
+    """Return a copy of exp_cfg with robot_0's profile replicated to num_robots robots."""
+    robot_template = exp_cfg["robots"]["robot_0"]
+    expanded = {
+        **exp_cfg,
+        "experiment": {**exp_cfg["experiment"], "num_robots": num_robots},
+        "robots": {f"robot_{i}": dict(robot_template) for i in range(num_robots)},
+    }
+    return expanded
+
+
+def _build_client_cmd(
+    *,
+    port: int,
+    seed: int,
+    output_dir: pathlib.Path,
+    experiment_config_path: pathlib.Path,
+    max_steps: int,
+) -> list[str]:
+    return [
+        sys.executable,
+        "scripts/run_libero.py",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--env",
+        "mock",
+        "--overwrite",
+        "--progress-type",
+        "logging",
+        "--max-steps",
+        str(max_steps),
+        "--seed",
+        str(seed),
+        "--output-dir",
+        str(output_dir),
+        "--experiment-config",
+        str(experiment_config_path),
+    ]
 
 
 def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
@@ -187,13 +221,13 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
 
     runtime = json.loads(runtime_path.read_text()) if runtime_path.exists() else {}
     server = json.loads(server_path.read_text()) if server_path.exists() else {}
-    service_rates = [1.0 - rate for rate in robot_rates]
     sorted_rates = sorted(robot_rates)
     tail_count = max(1, int(len(sorted_rates) * 0.1)) if sorted_rates else 0
 
     return {
         "run_id": case.run_id,
         "scheduler": case.scheduler,
+        "experiment_config": case.experiment_config,
         "num_robots": case.num_robots,
         "seed": case.seed,
         "success_rate": total_success,
@@ -206,7 +240,6 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
         "robot_starvation_rate_cvar90": sum(sorted_rates[-tail_count:]) / tail_count
         if tail_count
         else 0.0,
-        "service_jain_fairness": _jain_fairness(service_rates),
         "max_batch_size": server.get("max_batch_size", ""),
         "action_horizon": server.get("action_horizon", ""),
         "max_steps": runtime.get("max_steps", ""),
@@ -218,57 +251,40 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
 def run_case(
     case: SweepCase,
     *,
-    server_extra: str,
-    client_extra: str,
-    max_batch_size: int,
-    max_steps: int,
-    num_trials_per_task: int,
+    server_config: str,
     port: int,
+    max_batch_size_override: int | None = None,
+    max_steps_override: int | None = None,
 ) -> dict[str, Any]:
+    exp_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / case.experiment_config).read_text())
+    srv_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / server_config).read_text())
+
+    if max_batch_size_override is not None:
+        srv_cfg["max_batch_size"] = max_batch_size_override
+    if max_steps_override is not None:
+        exp_cfg["experiment"]["max_steps"] = max_steps_override
+
+    exp_cfg = _expand_experiment_config(exp_cfg, case.num_robots)
+    max_steps = int(exp_cfg["experiment"]["max_steps"])
+
     run_dir = REMOTE_OUTPUT_ROOT / case.run_id
     output_dir = run_dir / "output"
     log_dir = run_dir / "logs"
     run_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    server_cmd = _append_args(
-        [
-            sys.executable,
-            "scripts/serve.py",
-            "--port",
-            str(port),
-            "--max-batch-size",
-            str(max_batch_size),
-            "--scheduling-algorithm",
-            case.scheduler,
-        ],
-        server_extra,
-    )
-    client_cmd = _append_args(
-        [
-            sys.executable,
-            "scripts/run_libero.py",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "--env",
-            "mock",
-            "--overwrite",
-            "--progress-type",
-            "logging",
-            "--num-robots",
-            str(case.num_robots),
-            "--max-steps",
-            str(max_steps),
-            "--num-trials-per-task",
-            str(num_trials_per_task),
-            "--seed",
-            str(case.seed),
-            "--output-dir",
-            str(output_dir),
-        ],
-        client_extra,
+    saved_exp_config = run_dir / "experiment_config.json"
+    (run_dir / "case.json").write_text(json.dumps(dataclasses.asdict(case), indent=2))
+    saved_exp_config.write_text(json.dumps(exp_cfg, indent=2))
+    (run_dir / "server_config.json").write_text(json.dumps(srv_cfg, indent=2))
+
+    server_cmd = _build_server_cmd(srv_cfg, port=port, scheduler=case.scheduler)
+    client_cmd = _build_client_cmd(
+        port=port,
+        seed=case.seed,
+        output_dir=output_dir,
+        experiment_config_path=saved_exp_config,
+        max_steps=max_steps,
     )
 
     server_log = log_dir / "server.log"
@@ -285,7 +301,6 @@ def run_case(
             },
         )
     try:
-        _wait_for_server(port)
         _run_subprocess(client_cmd, log_path=log_dir / "client.log", timeout_s=60 * 45)
         summary = _summarize_run(output_dir, case)
         summary["status"] = "ok"
@@ -293,6 +308,7 @@ def run_case(
         summary = {
             "run_id": case.run_id,
             "scheduler": case.scheduler,
+            "experiment_config": case.experiment_config,
             "num_robots": case.num_robots,
             "seed": case.seed,
             "status": "failed",
@@ -306,8 +322,6 @@ def run_case(
             server_proc.kill()
             server_proc.wait(timeout=20)
 
-    (run_dir / "case.json").write_text(json.dumps(dataclasses.asdict(case), indent=2))
-    (run_dir / "summary_row.json").write_text(json.dumps(summary, indent=2))
     summary["artifact_tgz"] = _tar_directory(run_dir)
     return summary
 
@@ -329,24 +343,24 @@ def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
 @app.local_entrypoint()
 def main(
     schedulers: str = "fixed-max-batch,greedy-deadline,round-robin",
+    experiment_configs: str = "configs/experiments/mock/short.json",
     num_robots: str = "2,4,6",
+    server_config: str = "configs/server/mock.json",
     seeds: str = "7",
     output_dir: str = "experiments/sweeps/mock",
-    max_batch_size: int = 4,
-    max_steps: int = 50,
-    num_trials_per_task: int = 1,
-    server_extra: str = "--env LIBERO policy:mock --policy.action-horizon 10 --policy.action-dim 7 --policy.profile l40s_pi05",
-    client_extra: str = "",
     port: int = 8080,
+    max_batch_size: int | None = None,
+    max_steps: int | None = None,
 ) -> None:
-    """Run the Cartesian product of schedulers, num_robots, and seeds."""
+    """Run the Cartesian product of schedulers, experiment_configs, num_robots, and seeds."""
     out = pathlib.Path(output_dir)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     artifacts_dir = out / "artifacts"
     cases = [
-        SweepCase(scheduler=scheduler, num_robots=robots, seed=seed)
+        SweepCase(scheduler=scheduler, experiment_config=cfg, num_robots=n, seed=seed)
         for scheduler in _parse_csv(schedulers)
-        for robots in _parse_csv(num_robots, cast=int)
+        for cfg in _parse_csv(experiment_configs)
+        for n in _parse_csv(num_robots, cast=int)
         for seed in _parse_csv(seeds, cast=int)
     ]
 
@@ -354,12 +368,10 @@ def main(
     for result in run_case.map(
         cases,
         kwargs={
-            "server_extra": server_extra,
-            "client_extra": client_extra,
-            "max_batch_size": max_batch_size,
-            "max_steps": max_steps,
-            "num_trials_per_task": num_trials_per_task,
+            "server_config": server_config,
             "port": port,
+            "max_batch_size_override": max_batch_size,
+            "max_steps_override": max_steps,
         },
         order_outputs=False,
     ):
@@ -372,7 +384,6 @@ def main(
         print(
             f"{result['status']}: {result['run_id']} "
             f"starvation={_safe_float(result.get('starvation_rate')):.3f} "
-            f"fairness={_safe_float(result.get('service_jain_fairness')):.3f}"
         )
 
     sweep_csv = out / f"sweep_results_{stamp}.csv"
