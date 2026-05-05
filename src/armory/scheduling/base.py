@@ -120,7 +120,7 @@ class RequestScheduler(ABC):
                 {
                     "robot_id": request.robot_id,
                     "observation_step": request.observation_step,
-                    "action_start_step": request.action_start_step,
+                    "action_index_start": request.action_index_start,
                     "deadline": self._deadlines.get(request.robot_id, request.deadline) - now,
                 }
                 for request in requests
@@ -164,14 +164,14 @@ class RequestScheduler(ABC):
             if request.infer_type == InferType.INFERENCE_TIME_RTC and not request.is_padding:
                 logger.info(
                     "RTC d estimate: robot=%s request_id=%d batch_size=%d "
-                    "obs_step=%d action_start_step=%d control_hz=%.2f "
+                    "obs_step=%d action_index_start=%d control_hz=%.2f "
                     "obs_latency_ms=%.1f infer_latency_ms=%.1f "
                     "action_latency_ms=%.1f d_steps=%.2f execution_horizon=%d",
                     request.robot_id,
                     request.request_id,
                     batch_size,
                     request.observation_step,
-                    request.action_start_step,
+                    request.action_index_start,
                     request.control_hz,
                     observation_latency * 1000,
                     inference_latency * 1000,
@@ -202,7 +202,7 @@ class RequestScheduler(ABC):
         return ActionChunk(
             observation_step=request.observation_step,
             arrival_time=dispatch_time + inference_latency + action_latency,
-            action_start_step=request.action_start_step,
+            action_index_start=request.action_index_start,
             execution_horizon=request.execution_horizon,
             arrived=False,
         )
@@ -256,6 +256,6 @@ class RequestScheduler(ABC):
         if last is None:
             return True
         return (
-            request.action_start_step > last.action_start_step
+            request.action_index_start > last.action_index_start
             and request.observation_step > last.observation_step
         )

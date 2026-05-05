@@ -24,7 +24,7 @@ def _make_responses(action_chunks: list[ActionChunk]) -> list[TimedResponse]:
                 robot_id="test",
                 request_id=i,
                 observation_step=chunk.observation_step,
-                action_start_step=chunk.action_start_step,
+                action_index_start=chunk.action_index_start,
                 request_timestamp=0.0,
                 actions=np.zeros((chunk.execution_horizon, 7)),
                 execution_horizon=chunk.execution_horizon,
@@ -40,7 +40,7 @@ def _with_arrival_time(action_chunk: ActionChunk, arrival_time: float) -> Action
     return ActionChunk(
         observation_step=action_chunk.observation_step,
         arrival_time=arrival_time,
-        action_start_step=action_chunk.action_start_step,
+        action_index_start=action_chunk.action_index_start,
         execution_horizon=action_chunk.execution_horizon,
         arrived=False,
     )

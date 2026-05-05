@@ -25,7 +25,7 @@ class SlotRequest:
     request_id: int
     arrival_timestamp: float  # when WS received the request (server-side)
     observation_step: int
-    action_start_step: int
+    action_index_start: int
     request_timestamp: float
     deadline: float
     execution_horizon: int
@@ -42,7 +42,7 @@ class CompletionNotification:
     """Sent from GPU to scheduler after inference so the scheduler can update its state."""
 
     robot_id: str
-    action_start_step: int
+    action_index_start: int
     request_id: int
     batch_size: int
     inference_duration: float

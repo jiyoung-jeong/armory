@@ -14,7 +14,7 @@ ROBOT_ID = "test"
 
 def _make_request(
     observation_step: int,
-    action_start_step: int,
+    action_index_start: int,
     request_timestamp: float,
     execution_horizon: int,
 ) -> SlotRequest:
@@ -24,7 +24,7 @@ def _make_request(
         request_id=observation_step,
         arrival_timestamp=request_timestamp,
         observation_step=observation_step,
-        action_start_step=action_start_step,
+        action_index_start=action_index_start,
         request_timestamp=request_timestamp,
         deadline=0.0,
         execution_horizon=execution_horizon,
@@ -61,13 +61,13 @@ def test_chunk_tracking(scenario: Scenario) -> None:
     assert len(robot.chunks) == len(scenario.chunks)
     for actual, expected in zip(robot.chunks, scenario.chunks):
         assert actual.observation_step == expected.observation_step
-        assert actual.action_start_step == expected.action_start_step
+        assert actual.action_index_start == expected.action_index_start
         assert actual.execution_horizon == expected.execution_horizon
         assert actual.arrival_time == pytest.approx(expected.arrival_time)
         assert actual.arrived is True
 
     assert robot.max_arrived_action_step == max(
-        c.action_start_step + c.execution_horizon - 1 for c in scenario.chunks
+        c.action_index_start + c.execution_horizon - 1 for c in scenario.chunks
     )
 
 

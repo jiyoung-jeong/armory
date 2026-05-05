@@ -97,7 +97,7 @@ def _run_gpu_worker(
         robot_id: str,
         request_id: int,
         observation_step: int,
-        action_start_step: int,
+        action_index_start: int,
         execution_horizon: int,
         d_param: float,
     ) -> RTCParams | None:
@@ -114,21 +114,21 @@ def _run_gpu_worker(
         if prev is None:
             logger.info(
                 "RTC params unavailable for first chunk: robot=%s request_id=%d "
-                "obs_step=%d action_start_step=%d d=%.2f",
+                "obs_step=%d action_index_start=%d d=%.2f",
                 robot_id,
                 request_id,
                 observation_step,
-                action_start_step,
+                action_index_start,
                 d_param,
             )
             return None
 
         action_horizon = int(prev.shape[0])
-        action_lag = observation_step - action_start_step
+        action_lag = observation_step - action_index_start
         rtc_window = s + float(d_param)
         log_message = (
             "RTC timing check: robot=%s request_id=%d obs_step=%d "
-            "action_start_step=%d obs_minus_action_start=%d last_rtc_obs_step=%s "
+            "action_index_start=%d obs_minus_action_start=%d last_rtc_obs_step=%s "
             "s=%d d=%.2f s_plus_d=%.2f action_horizon=%d execution_horizon=%d "
             "prev_action_shape=%s"
         )
@@ -136,7 +136,7 @@ def _run_gpu_worker(
             robot_id,
             request_id,
             observation_step,
-            action_start_step,
+            action_index_start,
             action_lag,
             str(last),
             s,
@@ -160,7 +160,7 @@ def _run_gpu_worker(
             request_id=slot_req.request_id,
             arrival_timestamp=slot_req.arrival_timestamp,
             observation_step=slot_req.observation_step,
-            action_start_step=slot_req.action_start_step,
+            action_index_start=slot_req.action_index_start,
             request_timestamp=slot_req.request_timestamp,
             deadline=slot_req.deadline,
             execution_horizon=slot_req.execution_horizon,
@@ -201,7 +201,7 @@ def _run_gpu_worker(
                 robot_id=sr.robot_id,
                 observation=sd.obs,
                 observation_step=sd.observation_step,
-                action_start_step=sd.action_start_step,
+                action_index_start=sd.action_index_start,
                 execution_horizon=sd.execution_horizon,
                 request_timestamp=sd.request_timestamp,
                 deadline=sd.deadline,
@@ -210,7 +210,7 @@ def _run_gpu_worker(
                     sr.robot_id,
                     sd.request_id,
                     sd.observation_step,
-                    sd.action_start_step,
+                    sd.action_index_start,
                     sd.execution_horizon,
                     sr.estimated_d_param,
                 )
@@ -231,7 +231,7 @@ def _run_gpu_worker(
                 robot_id=sr.robot_id,
                 request_id=sd.request_id,
                 observation_step=sd.observation_step,
-                action_start_step=sd.action_start_step,
+                action_index_start=sd.action_index_start,
                 request_timestamp=sd.request_timestamp,
                 execution_horizon=sd.execution_horizon,
                 actions=action_dict["actions"],
@@ -273,7 +273,7 @@ def _run_gpu_worker(
             [
                 CompletionNotification(
                     robot_id=sr.robot_id,
-                    action_start_step=sd.action_start_step,
+                    action_index_start=sd.action_index_start,
                     request_id=sd.request_id,
                     batch_size=actual_batch_size,
                     inference_duration=inference_duration,

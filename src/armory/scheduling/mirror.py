@@ -9,7 +9,7 @@ Two parallel sequences track a robot's progress:
   index — if any — was executed at that tick (``action_step``).
 - Action indexes are positions in the global, monotonically increasing
   sequence of actions produced by inference. Each ``ActionChunk`` covers
-  ``[action_start_step, action_start_step + execution_horizon)``.
+  ``[action_index_start, action_index_start + execution_horizon)``.
 
 The two sequences are decoupled: a control step may execute no action (when
 the next action index is not yet available on the robot), and a single chunk
@@ -42,7 +42,7 @@ class ControlStep:
 class ActionChunk:
     observation_step: int  # step when observation was captured
     arrival_time: float  # time when the chunk becomes available on the robot
-    action_start_step: int  # action index of the first action in the chunk
+    action_index_start: int  # action index of the first action in the chunk
     execution_horizon: int
     arrived: bool = False
 
@@ -51,7 +51,7 @@ class Robot:
     """Mirror of a single robot's control steps and action chunks.
 
     Invariant: once constructed, callers must seed the robot with an initial
-    control step (``observation_step=0``, ``action_start_step=0``) via
+    control step (``observation_step=0``, ``action_index_start=0``) via
     ``step()`` before invoking any other method. ``Mirror.receive_request``
     enforces this by calling ``step()`` immediately after construction.
     """
@@ -67,7 +67,7 @@ class Robot:
 
     def step(self, request: SlotRequest) -> None:
         if not self.steps:
-            assert request.action_start_step == 0
+            assert request.action_index_start == 0
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
@@ -75,14 +75,14 @@ class Robot:
                 next_action_step=0,
             )
         else:
-            executed_action_on_step = request.action_start_step == self.steps[-1].next_action_step
+            executed_action_on_step = request.action_index_start == self.steps[-1].next_action_step
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
-                action_step=request.action_start_step if executed_action_on_step else None,
-                next_action_step=request.action_start_step + 1
+                action_step=request.action_index_start if executed_action_on_step else None,
+                next_action_step=request.action_index_start + 1
                 if executed_action_on_step
-                else request.action_start_step,
+                else request.action_index_start,
             )
             assert control_step.time > self.steps[-1].time
             assert control_step.observation_step == self.steps[-1].observation_step + 1
@@ -115,12 +115,12 @@ class Robot:
         """Last action index available from any arrived chunk, or -1 if none."""
         for chunk in reversed(self.chunks):
             if chunk.arrived:
-                return chunk.action_start_step + chunk.execution_horizon - 1
+                return chunk.action_index_start + chunk.execution_horizon - 1
         return -1
 
     @property
     def max_overall_action_step(self) -> int:
-        return self.chunks[-1].action_start_step + self.chunks[-1].execution_horizon - 1
+        return self.chunks[-1].action_index_start + self.chunks[-1].execution_horizon - 1
 
     def get_latest_control_step_before(self, time: float) -> ControlStep | None:
         for step in reversed(self.steps):
@@ -137,9 +137,9 @@ class Robot:
     def action_is_available(self, action_step: int, time: float) -> bool:
         for chunk in self.chunks:
             if (
-                chunk.action_start_step
+                chunk.action_index_start
                 <= action_step
-                <= chunk.action_start_step + chunk.execution_horizon - 1
+                <= chunk.action_index_start + chunk.execution_horizon - 1
             ) and chunk.arrival_time <= time:
                 return True
         return False
@@ -219,18 +219,18 @@ class Mirror:
                     control_step.observation_step,
                     robot.chunks[-1].observation_step + 1,
                 )
-                action_start_step = max(
+                action_index_start = max(
                     control_step.next_action_step,
                     robot.max_overall_action_step + 1,
                 )
             else:
                 observation_step = control_step.observation_step
-                action_start_step = control_step.next_action_step
+                action_index_start = control_step.next_action_step
             chunks.append(
                 ActionChunk(
                     observation_step=observation_step,
                     arrival_time=time + inference_latency + latency_tracker.action_latency(rid),
-                    action_start_step=action_start_step,
+                    action_index_start=action_index_start,
                     execution_horizon=robot.execution_horizon,
                     arrived=True,
                 )
@@ -266,14 +266,14 @@ class Mirror:
         """Project ``base`` onto a planned future chunk.
 
         Returns a synthetic SlotRequest with corrected observation_step,
-        action_start_step, and timestamps so the GPU treats it as a fresh
+        action_index_start, and timestamps so the GPU treats it as a fresh
         request riding on whatever observation bytes are in ``base.slot_index``.
         """
         return replace(
             base,
             request_id=request_id,
             observation_step=chunk.observation_step,
-            action_start_step=chunk.action_start_step,
+            action_index_start=chunk.action_index_start,
             request_timestamp=dispatch_time,
             arrival_timestamp=dispatch_time,
             deadline=dispatch_time + chunk.execution_horizon / base.control_hz,

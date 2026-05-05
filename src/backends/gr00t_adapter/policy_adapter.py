@@ -148,7 +148,7 @@ class Gr00tPolicyAdapter:
             robot_id="__warmup__",
             observation=_make_example_obs(),
             observation_step=0,
-            action_start_step=0,
+            action_index_start=0,
             request_timestamp=time.time(),
             deadline=time.time() + 60.0,
             execution_horizon=0,

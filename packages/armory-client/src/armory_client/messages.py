@@ -39,7 +39,7 @@ class InferRequest:
     robot_id: str
     observation: dict
     observation_step: int
-    action_start_step: int
+    action_index_start: int
     request_timestamp: float
     deadline: float
     execution_horizon: int
@@ -68,7 +68,7 @@ class InferResponse:
     robot_id: str
     request_id: int  # for routing response to correct connection
     observation_step: int  # from request
-    action_start_step: int  # from request
+    action_index_start: int  # from request
     request_timestamp: float  # from request
     actions: Float[np.ndarray, "1 action_horizon action_dim"]  # TODO: check the type on this
     execution_horizon: int

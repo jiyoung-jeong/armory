@@ -46,19 +46,19 @@ class ActionChunkBrokerBase:
         return action_chunk
 
     def _update_action_queue(self, action_chunk: ActionChunk) -> None:
-        while self._action_queue and self._action_queue[-1].step >= action_chunk.action_start_step:
+        while self._action_queue and self._action_queue[-1].step >= action_chunk.action_index_start:
             self._action_queue.pop()
 
         # assumes that pausing is preferable to executing actions past the execution horizon
         self._action_queue.extend(
             Action(
-                step=action_chunk.action_start_step + i,
+                step=action_chunk.action_index_start + i,
                 action=action_chunk.get_action(i),
                 action_chunk_index=len(self._action_chunks) - 1,
                 index_in_chunk=i,
             )
             for i in range(action_chunk.execution_horizon)
-            if action_chunk.action_start_step + i >= self._next_action_step
+            if action_chunk.action_index_start + i >= self._next_action_step
         )
 
     def _create_null_action(self, observation_step: int) -> Action:
@@ -148,7 +148,7 @@ class ActionChunkBroker(ActionChunkBrokerBase):
 
                 # TODO: should be tested too
                 first_executed_index = max(
-                    0, self._next_action_step - action_chunk.action_start_step
+                    0, self._next_action_step - action_chunk.action_index_start
                 )
                 self._ws_client.send_ack(
                     action_chunk.request_id,

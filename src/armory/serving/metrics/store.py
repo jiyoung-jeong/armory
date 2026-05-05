@@ -190,7 +190,7 @@ class MetricsStore(JSONDataclass):
                 robot_id=robot_id,
                 request_id=request.request_id,
                 observation_step=request.observation_step,
-                action_start_step=request.action_start_step,
+                action_index_start=request.action_index_start,
                 execution_horizon=request.execution_horizon,
                 request_timestamp=request.request_timestamp,
                 server_arrival_time=request.arrival_timestamp,  # FIXME: make timestamp/arrival time naming convention consistent
@@ -217,7 +217,7 @@ class MetricsStore(JSONDataclass):
                     robot_id=robot_id,
                     request_id=ack.request_id,
                     observation_step=response.observation_step,
-                    action_start_step=response.action_start_step,
+                    action_index_start=response.action_index_start,
                     execution_horizon=response.execution_horizon,
                     request_timestamp=response.request_timestamp,
                     server_arrival_time=response.server_arrival_time,

@@ -153,7 +153,7 @@ class ActionChunk(ParquetDataclass):
     """
 
     observation_step: int
-    action_start_step: int
+    action_index_start: int
     execution_start_step: int  # which observation step the execution started on
     actions: np.ndarray
     execution_horizon: int
@@ -171,7 +171,7 @@ class ActionChunk(ParquetDataclass):
         # NOTE: copy attributes instead of composition to make it easier to serialize for parquet/csv
         return ActionChunk(
             observation_step=infer_response.observation_step,
-            action_start_step=infer_response.action_start_step,
+            action_index_start=infer_response.action_index_start,
             execution_start_step=execution_start_step,
             actions=infer_response.actions,
             execution_horizon=infer_response.execution_horizon,

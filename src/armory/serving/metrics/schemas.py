@@ -20,7 +20,7 @@ class RequestRecord:
     robot_id: RobotID
     request_id: int
     observation_step: int
-    action_start_step: int
+    action_index_start: int
     execution_horizon: int
     request_timestamp: float  # client: when request was created
     server_arrival_time: float  # server: when observation arrived
@@ -86,7 +86,7 @@ class Episode:
         self.requests = [RequestRecord(**r) if isinstance(r, dict) else r for r in self.requests]
         self.responses = [ResponseRecord(**r) if isinstance(r, dict) else r for r in self.responses]
         assert all(
-            next_request.action_start_step >= prev_request.action_start_step
+            next_request.action_index_start >= prev_request.action_index_start
             for prev_request, next_request in zip(
                 self.requests[:-1], self.requests[1:], strict=True
             )
