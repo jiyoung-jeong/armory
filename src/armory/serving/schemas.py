@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -13,8 +12,6 @@ from armory_client.messages import (
     TrainTimeRTCParams,
     VlashParams,
 )
-
-_request_id_counter = itertools.count(1)
 
 
 @dataclass(frozen=True)

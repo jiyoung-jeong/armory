@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import itertools
 import logging
 import multiprocessing as mp
 import os
@@ -49,7 +50,6 @@ from armory.serving.schemas import (
     SchedulerDecision,
     SlotRequest,
     WarmupSeed,
-    _request_id_counter,
 )
 from armory.serving.slots import RobotSlots, SlotData
 from armory_client import msgpack_numpy
@@ -77,6 +77,8 @@ socket_addresses = {
     "gpu_out_ep": f"ipc:///tmp/openpi_gpu_out_{_uid}",
     "result_ep": f"ipc:///tmp/openpi_result_{_uid}",
 }
+
+_request_id_counter = itertools.count(1)
 
 
 @dataclass
