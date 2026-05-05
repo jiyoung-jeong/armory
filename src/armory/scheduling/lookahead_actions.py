@@ -5,8 +5,20 @@ import time
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
-from armory.scheduling.mirror import Mirror, robot_id
+from armory.scheduling.mirror import Mirror, Robot, robot_id
 from armory.serving.schemas import SlotRequest
+
+
+def _action_time(robot: Robot) -> float:
+    """Wall-clock duration of all actions ever queued for a robot."""
+    if not robot.chunks:
+        return 0.0
+    return (robot.max_overall_action_step + 1) / robot.control_hz
+
+
+def _action_times(mirror: Mirror) -> dict[robot_id, float]:
+    return {rid: _action_time(robot) for rid, robot in mirror.robots.items()}
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -29,7 +41,7 @@ class Search:
         self.start_time = start_time
         self.end_time = start_time + horizon
         self.max_depth = max_depth
-        self.initial_deadlines = mirror.deadlines()
+        self.initial_action_times = _action_times(mirror)
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -62,8 +74,10 @@ class Search:
         gpu_time = time - self.start_time
         if gpu_time <= 0:
             return -float("inf")
-        new_deadlines = mirror.deadlines()
-        gained_time = sum(new_deadlines[rid] - self.initial_deadlines[rid] for rid in new_deadlines)
+        new_action_times = _action_times(mirror)
+        gained_time = sum(
+            new_action_times[rid] - self.initial_action_times[rid] for rid in new_action_times
+        )
         return gained_time / gpu_time
 
     def _generate_candidates(self, mirror: Mirror):
