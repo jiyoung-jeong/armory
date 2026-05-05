@@ -210,7 +210,19 @@ class MetricsStore(JSONDataclass):
     ) -> None:
         """Called when client sends ResponseAck."""
         with lock:
-            request_record = self.robots[robot_id].get_request(ack.request_id)
+            try:
+                request_record = self.robots[robot_id].get_request(ack.request_id)
+            except StopIteration:
+                request_record = RequestRecord(
+                    robot_id=robot_id,
+                    request_id=ack.request_id,
+                    observation_step=response.observation_step,
+                    action_start_step=response.action_start_step,
+                    execution_horizon=response.execution_horizon,
+                    request_timestamp=response.request_timestamp,
+                    server_arrival_time=response.server_arrival_time,
+                )
+                self.robots[robot_id].add_request(request_record)
             batch = next(b for b in reversed(self.batches) if ack.request_id in b.request_ids)
             self.robots[robot_id].add_response(
                 ResponseRecord(

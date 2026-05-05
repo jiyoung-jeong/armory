@@ -168,9 +168,11 @@ def _run_scheduler(
             else:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
 
+        scheduler.advance()
         if scheduler.in_flight == 0:
             scheduler.schedule()
             if scheduler_metrics_queue is not None:
                 samples = scheduler.flush_decisions()
                 if samples:
                     scheduler_metrics_queue.put_nowait(samples)
+            scheduler.advance()

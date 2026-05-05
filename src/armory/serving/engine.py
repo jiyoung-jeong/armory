@@ -5,6 +5,7 @@ import multiprocessing as mp
 import signal
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from multiprocessing.synchronize import Event
 
 import numpy as np
@@ -17,7 +18,7 @@ from armory.serving.schemas import (
     ResponseBatch,
     SlotRequest,
 )
-from armory.serving.slots import RobotSlots
+from armory.serving.slots import RobotSlots, SlotData
 from armory.utils import logging_config
 from armory_client.messages import InferRequest, InferResponse, InferType, RTCParams
 
@@ -151,25 +152,41 @@ def _run_gpu_worker(
             logger.debug(log_message, *log_args)
         return RTCParams(prev_action=prev, s_param=s, d_param=d_param)
 
+    def _effective_slot_data(slot_req: SlotRequest, slot_data: SlotData) -> SlotData:
+        if slot_req.request_id >= 0:
+            return slot_data
+        return replace(
+            slot_data,
+            request_id=slot_req.request_id,
+            arrival_timestamp=slot_req.arrival_timestamp,
+            observation_step=slot_req.observation_step,
+            action_start_step=slot_req.action_start_step,
+            request_timestamp=slot_req.request_timestamp,
+            deadline=slot_req.deadline,
+            execution_horizon=slot_req.execution_horizon,
+            infer_type=slot_req.infer_type,
+            params=slot_req.params,
+            noise=slot_req.noise,
+        )
+
     while True:
         batch: RequestBatch = batch_queue.get()  # blocking
         slot_reqs: list[SlotRequest] = batch.requests
 
         # Read obs and metadata together — guarantees they correspond to the same request,
         # even if the slot was overwritten after the SlotRequest was enqueued.
-        slot_datas = [slots.read(sr.slot_index) for sr in slot_reqs]
+        slot_datas = [_effective_slot_data(sr, slots.read(sr.slot_index)) for sr in slot_reqs]
 
-        # Drop any real slot whose request_id has already been served.  This happens when the
-        # scheduler dispatches multiple SlotRequests for the same robot before the GPU
-        # finishes the first one: both read the same (overwritten) slot and would produce
-        # two InferResponses with identical request_ids.  request_ids are monotonically
-        # increasing, so a strict > check also handles episode resets correctly. Padding
-        # slots are still sent through inference to preserve the requested GPU batch size,
-        # but they never produce responses or scheduler state updates.
+        # Drop any real slot whose request_id has already been served. Synthetic
+        # negative request_ids come from the scheduler's anticipated lookahead
+        # path and intentionally reuse the latest observation bytes with future
+        # metadata, so they bypass the duplicate-slot guard.
         fresh = [
             (sr, sd)
             for sr, sd in zip(slot_reqs, slot_datas, strict=True)
-            if sr.is_padding or sd.request_id > _last_served_request_id.get(sr.robot_id, 0)
+            if sr.is_padding
+            or sr.request_id < 0
+            or sd.request_id > _last_served_request_id.get(sr.robot_id, 0)
         ]
         if not fresh or not any(not sr.is_padding for sr, _ in fresh):
             # Notify the scheduler so it can decrement _in_flight, even though
@@ -240,7 +257,7 @@ def _run_gpu_worker(
 
         # Record served request_ids before sending so the duplicate check stays consistent.
         for sr, sd in zip(slot_reqs, slot_datas, strict=True):
-            if not sr.is_padding:
+            if not sr.is_padding and sd.request_id > _last_served_request_id.get(sr.robot_id, 0):
                 _last_served_request_id[sr.robot_id] = sd.request_id
 
         # Send responses directly to WS — not via scheduler

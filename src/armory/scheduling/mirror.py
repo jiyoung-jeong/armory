@@ -215,16 +215,31 @@ class Mirror:
             control_steps.append(self.robots[rid].get_latest_control_step_before(obs_time))
 
         inference_latency = latency_tracker.infer_latency(len(robot_ids))
-        return [
-            ActionChunk(
-                observation_step=control_step.observation_step,
-                arrival_time=time + inference_latency + latency_tracker.action_latency(rid),
-                action_start_step=control_step.next_action_step,
-                execution_horizon=self.robots[rid].execution_horizon,
-                arrived=True,
+        chunks = []
+        for control_step, rid in zip(control_steps, robot_ids):
+            robot = self.robots[rid]
+            if robot.chunks:
+                observation_step = max(
+                    control_step.observation_step,
+                    robot.chunks[-1].observation_step + 1,
+                )
+                action_start_step = max(
+                    control_step.next_action_step,
+                    robot.max_overall_action_step + 1,
+                )
+            else:
+                observation_step = control_step.observation_step
+                action_start_step = control_step.next_action_step
+            chunks.append(
+                ActionChunk(
+                    observation_step=observation_step,
+                    arrival_time=time + inference_latency + latency_tracker.action_latency(rid),
+                    action_start_step=action_start_step,
+                    execution_horizon=robot.execution_horizon,
+                    arrived=True,
+                )
             )
-            for i, (control_step, rid) in enumerate(zip(control_steps, robot_ids))
-        ]
+        return chunks
 
     def fast_forward(
         self,
@@ -244,3 +259,26 @@ class Mirror:
 
     def deadlines(self) -> dict[robot_id, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}
+
+    def anticipate_request(
+        self,
+        base: SlotRequest,
+        chunk: ActionChunk,
+        dispatch_time: float,
+        request_id: int,
+    ) -> SlotRequest:
+        """Project ``base`` onto a planned future chunk.
+
+        Returns a synthetic SlotRequest with corrected observation_step,
+        action_start_step, and timestamps so the GPU treats it as a fresh
+        request riding on whatever observation bytes are in ``base.slot_index``.
+        """
+        return replace(
+            base,
+            request_id=request_id,
+            observation_step=chunk.observation_step,
+            action_start_step=chunk.action_start_step,
+            request_timestamp=dispatch_time,
+            arrival_timestamp=dispatch_time,
+            deadline=dispatch_time + chunk.execution_horizon / base.control_hz,
+        )
