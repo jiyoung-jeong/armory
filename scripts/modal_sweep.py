@@ -3,9 +3,11 @@
 Example:
     modal run scripts/modal_sweep.py \
         --schedulers fixed-max-batch,greedy-deadline,round-robin \
-        --experiment-configs configs/experiments/mock/2_robots.json,configs/experiments/mock/4_robots.json,configs/experiments/mock/6_robots.json \
+        --experiment-configs configs/experiments/mock/short.json \
+        --num-robots 1,2,3,4,5,6,7,8,9,10 \
         --server-config configs/server/mock.json \
-        --output-dir experiments/sweeps/mock
+        --seeds 7,42 \
+        --output-dir experiments/sweeps/big_mock
 """
 
 from __future__ import annotations
@@ -392,3 +394,8 @@ def main(
     _write_rows(latest_csv, rows)
     print(f"Wrote {latest_csv}")
     print(f"Wrote {sweep_csv}")
+
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from plot_sweep import plot_results  # noqa: PLC0415
+
+    plot_results(latest_csv, out / "plots")
