@@ -1091,6 +1091,83 @@ def generate_batch_size_plot(output_path: pathlib.Path) -> None:
     logger.info(f"Saved {plots_dir / 'batch_size_distribution.png'}")
 
 
+def compute_server_timing_health(
+    output_path: pathlib.Path,
+    *,
+    step_interval_p95_threshold_ms: float = 100.0,
+    inbound_p95_threshold_ms: float = 50.0,
+    inference_p99_threshold_ms: float = 500.0,
+    outbound_p95_threshold_ms: float = 50.0,
+) -> dict | None:
+    """Return timing percentile stats and flag suspicious values.
+
+    Returns None when server_metrics_history.json is absent.
+    """
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        return None
+    data = json.loads(history_path.read_text())
+
+    step_intervals: list[float] = []
+    inbound: list[float] = []
+    outbound: list[float] = []
+
+    for robot in data.get("robots", {}).values():
+        for ep in robot.get("episodes", []):
+            ts = _episode_step_timestamps(ep)
+            if len(ts) >= 2:
+                step_intervals.extend((np.diff(np.asarray(ts, dtype=float)) * 1000.0).tolist())
+            for req in ep.get("requests", []):
+                ra = req.get("server_arrival_time")
+                send_ts = req.get("request_timestamp")
+                if ra and send_ts:
+                    inbound.append((float(ra) - float(send_ts)) * 1000.0)
+            for resp in ep.get("responses", []):
+                rcv = resp.get("receive_time", 0.0) or 0.0
+                snd = resp.get("server_send_time", 0.0) or 0.0
+                if rcv > 0 and snd > 0:
+                    outbound.append((float(rcv) - float(snd)) * 1000.0)
+
+    infer: list[float] = []
+    for b in data.get("batches", []):
+        _, _, _, start, end, _ = _server_batch_fields(b)
+        if start and end and end >= start:
+            infer.append((float(end) - float(start)) * 1000.0)
+
+    def _pct(arr: list[float], p: float) -> float:
+        return float(np.percentile(arr, p)) if arr else 0.0
+
+    si_p95 = _pct(step_intervals, 95)
+    ib_p95 = _pct(inbound, 95)
+    inf_p99 = _pct(infer, 99)
+    ob_p95 = _pct(outbound, 95)
+
+    flags: list[str] = []
+    if si_p95 > step_interval_p95_threshold_ms:
+        flags.append(f"step_interval_p95={si_p95:.1f}ms>{step_interval_p95_threshold_ms:.0f}ms")
+    if ib_p95 > inbound_p95_threshold_ms:
+        flags.append(f"inbound_p95={ib_p95:.1f}ms>{inbound_p95_threshold_ms:.0f}ms")
+    if inf_p99 > inference_p99_threshold_ms:
+        flags.append(f"inference_p99={inf_p99:.1f}ms>{inference_p99_threshold_ms:.0f}ms")
+    if ob_p95 > outbound_p95_threshold_ms:
+        flags.append(f"outbound_p95={ob_p95:.1f}ms>{outbound_p95_threshold_ms:.0f}ms")
+
+    return {
+        "timing_suspicious": bool(flags),
+        "timing_flags": "; ".join(flags),
+        "step_interval_p50_ms": _pct(step_intervals, 50),
+        "step_interval_p95_ms": si_p95,
+        "step_interval_p99_ms": _pct(step_intervals, 99),
+        "inbound_p50_ms": _pct(inbound, 50),
+        "inbound_p95_ms": ib_p95,
+        "inference_p50_ms": _pct(infer, 50),
+        "inference_p95_ms": _pct(infer, 95),
+        "inference_p99_ms": inf_p99,
+        "outbound_p50_ms": _pct(outbound, 50),
+        "outbound_p95_ms": ob_p95,
+    }
+
+
 def generate_server_timings_plot(output_path: pathlib.Path) -> None:
     """Plot distributions of step interval, client->server, inference, server->client."""
     history_path = output_path / "server_metrics_history.json"

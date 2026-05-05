@@ -258,6 +258,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                     task_id=episode.task_id,
                     task=episode.task,
                     robot_idx=robot_idx,
+                    save_video=args.env != "mock",
                 ),
                 TaskMetricsPublisher(
                     ws_client=ws_client,
