@@ -72,6 +72,7 @@ class Saver(_subscriber.Subscriber):
         task_id: int,
         task: benchmark.Task,
         robot_idx: int,
+        save_video: bool = True,
     ) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         self._out_dir = out_dir
@@ -81,6 +82,7 @@ class Saver(_subscriber.Subscriber):
         self._robot_idx = robot_idx
         self._environment = environment
         self._action_chunk_broker = action_chunk_broker
+        self._save_video_enabled = save_video
         self._timestamps: list[Timestamp] = []
         self._control_hz = environment.control_hz
         self._observations_buffer: dict[int, Observation] = {}
@@ -148,7 +150,8 @@ class Saver(_subscriber.Subscriber):
         self._save_metadata(out_folder, data)
         self._save_timestamps(out_folder, data)
         self._save_action_chunks(out_folder, data)
-        self._save_video(out_folder, data)
+        if self._save_video_enabled:
+            self._save_video(out_folder, data)
         self._save_debug_data(out_folder, data)
         self._save_actions_left(out_folder, data)
         self._save_cost_history(out_folder, data)
