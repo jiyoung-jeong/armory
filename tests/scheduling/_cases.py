@@ -133,4 +133,43 @@ PAUSE_DURING_INFERENCE = Scenario(
     ],
 )
 
-ALL_SCENARIOS = [CHUNK_OVERLAP, PAUSE_BEFORE_INFERENCE, PAUSE_DURING_INFERENCE]
+LONG_RUN = Scenario(
+    name="long_run",
+    chunks=[
+        ActionChunk(
+            observation_step=0,
+            arrival_time=arrives_before(2),
+            action_start_step=0,
+            execution_horizon=5,
+            arrived=False,
+        ),
+        ActionChunk(
+            observation_step=5,
+            arrival_time=arrives_before(7),
+            action_start_step=5,
+            execution_horizon=5,
+            arrived=False,
+        ),
+        ActionChunk(
+            observation_step=10,
+            arrival_time=arrives_before(12),
+            action_start_step=10,
+            execution_horizon=5,
+            arrived=False,
+        ),
+        ActionChunk(
+            observation_step=15,
+            arrival_time=arrives_before(17),
+            action_start_step=15,
+            execution_horizon=5,
+            arrived=False,
+        ),
+    ],
+    obs_action_next=[
+        (0, None, 0),
+        (1, None, 0),
+        *[(n, n - 2, n - 1) for n in range(2, 22)],
+    ],
+)
+
+ALL_SCENARIOS = [CHUNK_OVERLAP, PAUSE_BEFORE_INFERENCE, PAUSE_DURING_INFERENCE, LONG_RUN]
