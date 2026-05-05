@@ -1,7 +1,20 @@
 """
-TODO: docs
+Mirror of robot state on the scheduler side.
 
-action indexes vs. control steps
+Two parallel sequences track a robot's progress:
+
+- Control steps are the robot's discrete clock ticks at ``control_hz``. Each
+  ``ControlStep`` records the wall time of the tick, the observation captured
+  at it (``observation_step``, monotonically increasing), and which action
+  index — if any — was executed at that tick (``action_step``).
+- Action indexes are positions in the global, monotonically increasing
+  sequence of actions produced by inference. Each ``ActionChunk`` covers
+  ``[action_start_step, action_start_step + execution_horizon)``.
+
+The two sequences are decoupled: a control step may execute no action (when
+the next action index is not yet available on the robot), and a single chunk
+spans many control steps. ``next_action_step`` on a control step is the
+action index the robot will try to execute on its next tick.
 """
 
 from __future__ import annotations
@@ -39,14 +52,21 @@ class ActionChunk:
 
 
 class Robot:
-    # TODO: a robot will always have at least one control step, need to make this clear
+    """Mirror of a single robot's control steps and action chunks.
+
+    Invariant: once constructed, callers must seed the robot with an initial
+    control step (``observation_step=0``, ``action_start_step=0``) via
+    ``step()`` before invoking any other method. ``Mirror.receive_request``
+    enforces this by calling ``step()`` immediately after construction.
+    """
+
     def __init__(self, control_hz: float, execution_horizon: int):
         self.control_hz = control_hz
         self.execution_horizon = execution_horizon
 
-        # Both lists will be sorted increasing by time by assertion
+        # Both lists are sorted increasing by time by assertion.
         self.steps: list[ControlStep] = []
-        # includes chunks that are in-transit
+        # Includes chunks that are in-transit.
         self.chunks: list[ActionChunk] = []
 
     def step(self, request: SlotRequest) -> None:
@@ -219,7 +239,7 @@ class Mirror:
         for rid, chunk in zip(robot_ids, chunks):
             self.robots[rid].send_response(chunk)
 
-        for robot in self.robts.values():
+        for robot in self.robots.values():
             robot.step_forward(time)
 
     def deadlines(self) -> dict[robot_id, float]:
