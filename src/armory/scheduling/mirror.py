@@ -21,16 +21,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from typing import TypeAlias
 
 from armory.scheduling.latency import LatencyTracker
-from armory.serving.schemas import AckNotification, SlotRequest
+from armory.serving.schemas import AckNotification, RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-
-robot_id: TypeAlias = str
 
 
 @dataclass
@@ -182,41 +178,41 @@ class Robot:
 
 class Mirror:
     def __init__(self):
-        self.robots: dict[robot_id, Robot] = {}
+        self.robots: dict[RobotID, Robot] = {}
 
-    def reset_robot(self, robot_id: str) -> None:
-        self.robots.pop(robot_id, None)
+    def reset_robot(self, RobotID: str) -> None:
+        self.robots.pop(RobotID, None)
 
     def receive_request(self, request: SlotRequest, control_hz: float) -> None:
-        if request.robot_id not in self.robots:
+        if request.RobotID not in self.robots:
             # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
-            self.robots[request.robot_id] = Robot(control_hz, request.execution_horizon)
-        self.robots[request.robot_id].step(request)
+            self.robots[request.RobotID] = Robot(control_hz, request.execution_horizon)
+        self.robots[request.RobotID].step(request)
 
-    def schedule_pending_chunk(self, robot_id: str, chunk: ActionChunk) -> None:
-        self.robots[robot_id].send_response(chunk)
+    def schedule_pending_chunk(self, RobotID: str, chunk: ActionChunk) -> None:
+        self.robots[RobotID].send_response(chunk)
 
     def receive_response(self, ack: AckNotification) -> None:
-        robot = self.robots.get(ack.robot_id)
+        robot = self.robots.get(ack.RobotID)
         if robot is None:
-            logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
+            logger.debug("Ignoring ack for unknown robot: %s", ack.RobotID)
             return
         robot.receive_response(ack)
 
     def get_chunks(
-        self, robot_ids: list[robot_id], latency_tracker: LatencyTracker, time: float
+        self, RobotIDs: list[RobotID], latency_tracker: LatencyTracker, time: float
     ) -> list[ActionChunk]:
         """
-        Returns a list of ActionChunks that would be queued if we started an inference for the robot_ids at the given time.
+        Returns a list of ActionChunks that would be queued if we started an inference for the RobotIDs at the given time.
         """
         control_steps = []
-        for rid in robot_ids:
+        for rid in RobotIDs:
             obs_time = time - latency_tracker.observation_latency(rid)
             control_steps.append(self.robots[rid].get_latest_control_step_before(obs_time))
 
-        inference_latency = latency_tracker.infer_latency(len(robot_ids))
+        inference_latency = latency_tracker.infer_latency(len(RobotIDs))
         chunks = []
-        for control_step, rid in zip(control_steps, robot_ids):
+        for control_step, rid in zip(control_steps, RobotIDs):
             robot = self.robots[rid]
             if robot.chunks:
                 observation_step = max(
@@ -244,20 +240,20 @@ class Mirror:
     def fast_forward(
         self,
         time: float,
-        robot_ids: list[robot_id],
+        RobotIDs: list[RobotID],
         chunks: list[ActionChunk],
     ) -> None:
         """Simulates time forward to the given time, sending responses and advancing robot steps."""
         # NOTE: we send responses here so they are available while stepping
         # it doesn't matter thaot they are "sent" before the actual sending time
         # because arrival_time handles the timing around this
-        for rid, chunk in zip(robot_ids, chunks):
+        for rid, chunk in zip(RobotIDs, chunks):
             self.robots[rid].send_response(chunk)
 
         for robot in self.robots.values():
             robot.step_forward(time)
 
-    def deadlines(self) -> dict[robot_id, float]:
+    def deadlines(self) -> dict[RobotID, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}
 
     def anticipate_request(

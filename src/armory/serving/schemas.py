@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import NamedTuple, TypeAlias
 
 import numpy as np
 
@@ -12,6 +12,8 @@ from armory_client.messages import (
     TrainTimeRTCParams,
     VlashParams,
 )
+
+RobotID: TypeAlias = str
 
 
 @dataclass(frozen=True)
