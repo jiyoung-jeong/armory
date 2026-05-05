@@ -33,6 +33,10 @@ METRIC_LABELS = {
     "robot_starvation_rate_std": "Robot starvation std. dev.",
     "robot_starvation_rate_cvar90": "Tail robot starvation rate",
     "success_rate": "Success rate",
+    "step_interval_p95_ms": "Step interval p95 (ms)",
+    "inference_p99_ms": "Inference latency p99 (ms)",
+    "inbound_p95_ms": "Client→server transport p95 (ms)",
+    "outbound_p95_ms": "Server→client transport p95 (ms)",
 }
 
 
@@ -73,17 +77,19 @@ def _plot_metric(
     agg.columns = [line_col, x_col, "value", "n"]
     agg = agg.sort_values([line_col, x_col])
 
-    ci = agg.apply(
-        lambda r: pd.Series(_wilson_ci(r["value"], int(r["n"])), index=["lo", "hi"]), axis=1
-    )
-    agg = pd.concat([agg, ci], axis=1)
+    is_proportion = agg["value"].between(0.0, 1.0).all()
+    if is_proportion:
+        ci = agg.apply(
+            lambda r: pd.Series(_wilson_ci(r["value"], int(r["n"])), index=["lo", "hi"]), axis=1
+        )
+        agg = pd.concat([agg, ci], axis=1)
 
     fig, ax = plt.subplots(figsize=(8, 4.8))
     for line_value, group in agg.groupby(line_col):
         xs = group[x_col].to_numpy()
         ys = group["value"].to_numpy()
         (line,) = ax.plot(xs, ys, marker="o", linewidth=2.0, label=str(line_value))
-        if (group["n"] > 1).any():
+        if is_proportion and (group["n"] > 1).any():
             ax.fill_between(
                 xs,
                 group["lo"].to_numpy(),

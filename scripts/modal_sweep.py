@@ -226,7 +226,7 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
     sorted_rates = sorted(robot_rates)
     tail_count = max(1, int(len(sorted_rates) * 0.1)) if sorted_rates else 0
 
-    return {
+    summary = {
         "run_id": case.run_id,
         "scheduler": case.scheduler,
         "experiment_config": case.experiment_config,
@@ -247,6 +247,17 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
         "max_steps": runtime.get("max_steps", ""),
         "num_trials_per_task": runtime.get("num_trials_per_task", ""),
     }
+
+    try:
+        from sims.libero.metrics import compute_server_timing_health  # noqa: PLC0415
+
+        health = compute_server_timing_health(output_dir)
+        if health is not None:
+            summary.update(health)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return summary
 
 
 @app.function(image=image, timeout=60 * 60, cpu=4, memory=16384)
@@ -396,7 +407,19 @@ def main(
     print(f"Wrote {latest_csv}")
     print(f"Wrote {sweep_csv}")
 
-    sys.path.insert(0, str(pathlib.Path(__file__).parent))
-    from plot_sweep import plot_results  # noqa: PLC0415
+    suspicious = [r for r in rows if r.get("timing_suspicious")]
+    if suspicious:
+        print(f"WARNING: {len(suspicious)} run(s) flagged for suspicious timings:")
+        for r in suspicious:
+            print(f"  {r['run_id']}: {r.get('timing_flags', '')}")
 
-    plot_results(latest_csv, out / "plots")
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from plot_sweep import DEFAULT_METRICS, plot_results  # noqa: PLC0415
+
+    timing_metrics = [
+        "step_interval_p95_ms",
+        "inference_p99_ms",
+        "inbound_p95_ms",
+        "outbound_p95_ms",
+    ]
+    plot_results(latest_csv, out / "plots", metrics=list(DEFAULT_METRICS) + timing_metrics)
