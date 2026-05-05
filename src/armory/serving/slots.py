@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from armory.serving.schemas import RobotID
+
 MAX_OBS_BYTES = 10 * 1024 * 1024  # 10MB per slot, enough for a few 224x224 images
 
 
@@ -61,15 +63,15 @@ class RobotSlots:
         # robot_id→slot_index mapping lives only in WS main process — scheduler never accesses slot assignments
         self._robot_to_slot: dict[str, int] = {}
 
-    def register(self, robot_id: str) -> int:
+    def register(self, robot_id: RobotID) -> int:
         idx = self._free.pop()
         self._robot_to_slot[robot_id] = idx
         return idx
 
-    def slot_for(self, robot_id: str) -> int:
+    def slot_for(self, robot_id: RobotID) -> int:
         return self._robot_to_slot[robot_id]
 
-    def has_robot(self, robot_id: str) -> bool:
+    def has_robot(self, robot_id: RobotID) -> bool:
         return robot_id in self._robot_to_slot
 
     def write(self, slot_idx: int, data: SlotData) -> None:
@@ -78,6 +80,6 @@ class RobotSlots:
     def read(self, slot_idx: int) -> SlotData:
         return self._slots[slot_idx].read()
 
-    def free(self, robot_id: str) -> None:
+    def free(self, robot_id: RobotID) -> None:
         idx = self._robot_to_slot.pop(robot_id)
         self._free.append(idx)

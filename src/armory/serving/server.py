@@ -47,6 +47,7 @@ from armory.serving.scheduler import _run_scheduler
 from armory.serving.schemas import (
     AckNotification,
     ResponseBatch,
+    RobotID,
     SchedulerDecision,
     SlotRequest,
     WarmupSeed,
@@ -147,7 +148,7 @@ async def _ws_handshake(
 async def _ws_warmup(
     websocket: WebSocket,
     state: ServerState,
-    robot_id: str,
+    robot_id: RobotID,
     action_payload_size: int,
 ) -> None:
     """Phase 2: NUM_WARMUP ping/pong round trips to seed LatencyTracker."""

@@ -6,7 +6,7 @@ import time
 from functools import cache
 
 from armory.scheduling.base import RequestScheduler
-from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import RobotID, SlotRequest
 
 
 class LookaheadScheduler(RequestScheduler):
@@ -130,7 +130,7 @@ class LookaheadScheduler(RequestScheduler):
 
         return [[request_by_robot[active_robot_ids[index]] for index in best_candidate]]
 
-    def reset_robot(self, robot_id: str) -> None:
+    def reset_robot(self, robot_id: RobotID) -> None:
         super().reset_robot(robot_id)
         self._predicted_valid_until.pop(robot_id, None)
 
@@ -170,7 +170,7 @@ class LookaheadScheduler(RequestScheduler):
             return 0
         return sum(max(0, end_tick - max(start_tick, expiry_tick)) for expiry_tick in valid_until)
 
-    def _remaining_ticks(self, robot_id: str, now: float) -> int:
+    def _remaining_ticks(self, robot_id: RobotID, now: float) -> int:
         valid_until = max(
             self._deadlines.get(robot_id, 0.0),
             self._predicted_valid_until.get(robot_id, 0.0),

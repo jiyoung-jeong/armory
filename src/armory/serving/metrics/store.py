@@ -15,10 +15,9 @@ from armory.serving.metrics.schemas import (
     RequestRecord,
     ResponseRecord,
     Robot,
-    RobotID,
     window_filter,
 )
-from armory.serving.schemas import ResponseBatch, SchedulerDecision, SlotRequest
+from armory.serving.schemas import ResponseBatch, RobotID, SchedulerDecision, SlotRequest
 from armory_client.messages import EpisodeEnd, EpisodeStart, EpisodeStep, InferResponse, ResponseAck
 from armory_client.schemas import JSONDataclass
 
@@ -183,7 +182,7 @@ class MetricsStore(JSONDataclass):
 
     # request/response lifecycle
 
-    def record_request(self, robot_id: str, request: SlotRequest) -> None:
+    def record_request(self, robot_id: RobotID, request: SlotRequest) -> None:
         """Called when client sends InferRequest."""
         with lock:
             record = RequestRecord(
@@ -204,7 +203,7 @@ class MetricsStore(JSONDataclass):
 
     def record_response(
         self,
-        robot_id: str,
+        robot_id: RobotID,
         response: InferResponse,
         ack: ResponseAck,
     ) -> None:
@@ -241,7 +240,7 @@ class MetricsStore(JSONDataclass):
 
     def record_episode_start(
         self,
-        robot_id: str,
+        robot_id: RobotID,
         episode_start: EpisodeStart,
     ) -> None:
         """Called when client streams an in-progress task step count."""
@@ -250,7 +249,7 @@ class MetricsStore(JSONDataclass):
                 self.robots[robot_id] = Robot(robot_id=robot_id, episodes=[])
             self.robots[robot_id].start_episode(episode_start)
 
-    def record_episode_step(self, robot_id: str, episode_step: EpisodeStep) -> None:
+    def record_episode_step(self, robot_id: RobotID, episode_step: EpisodeStep) -> None:
         with lock:
             if robot_id in self.robots and self.robots[robot_id].episodes:
                 timestamp = (
@@ -263,7 +262,7 @@ class MetricsStore(JSONDataclass):
 
     def record_episode_end(
         self,
-        robot_id: str,
+        robot_id: RobotID,
         episode_end: EpisodeEnd,
     ) -> None:
         """Called when client streams an in-progress task step count."""

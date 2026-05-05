@@ -6,7 +6,7 @@ import time
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
-from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import RobotID, SlotRequest
 
 
 def calculate_usable_time(
@@ -149,7 +149,7 @@ class RoundRobinScheduler(RequestScheduler):
         self._rr_index = idx
         return [batch] if batch else []
 
-    def reset_robot(self, robot_id: str) -> None:
+    def reset_robot(self, robot_id: RobotID) -> None:
         super().reset_robot(robot_id)
         # FIXME: temporary hack to remove robot on reset
         if robot_id in self._rr_robot_order:

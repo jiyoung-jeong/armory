@@ -21,7 +21,7 @@ class SlotRequest:
     """Flows end-to-end: built by WS → sent to Scheduler → put in batch_queue → received by GPU."""
 
     slot_index: int
-    robot_id: str
+    robot_id: RobotID
     request_id: int
     arrival_timestamp: float  # when WS received the request (server-side)
     observation_step: int
@@ -41,7 +41,7 @@ class SlotRequest:
 class CompletionNotification:
     """Sent from GPU to scheduler after inference so the scheduler can update its state."""
 
-    robot_id: str
+    robot_id: RobotID
     action_index_start: int
     request_id: int
     batch_size: int
@@ -55,7 +55,7 @@ class CompletionNotification:
 class AckNotification:
     """Sent from WS to scheduler when a client acks receipt of an InferResponse."""
 
-    robot_id: str
+    robot_id: RobotID
     request_id: int
     observation_step: int
     receive_time: float
@@ -71,7 +71,7 @@ class BatchProfile:
 
 @dataclass
 class WarmupSeed:
-    robot_id: str
+    robot_id: RobotID
     obs_samples: list[tuple[float, float]]  # (arrival_ts, request_ts) per ping
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 

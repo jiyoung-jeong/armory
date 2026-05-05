@@ -2,7 +2,7 @@ import multiprocessing as mp
 import time
 
 from armory.scheduling.base import RequestScheduler
-from armory.serving.schemas import SlotRequest
+from armory.serving.schemas import RobotID, SlotRequest
 
 
 class DynamicActionScheduler(RequestScheduler):
@@ -74,7 +74,7 @@ class DynamicActionScheduler(RequestScheduler):
         self._charge_service(best_batch)
         return [list(best_batch)]
 
-    def reset_robot(self, robot_id: str) -> None:
+    def reset_robot(self, robot_id: RobotID) -> None:
         self._advance_debts(time.time())
         super().reset_robot(robot_id)
         self._service_debt.pop(robot_id, None)

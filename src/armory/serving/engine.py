@@ -16,6 +16,7 @@ from armory.serving.schemas import (
     CompletionNotification,
     RequestBatch,
     ResponseBatch,
+    RobotID,
     SlotRequest,
 )
 from armory.serving.slots import RobotSlots, SlotData
@@ -94,7 +95,7 @@ def _run_gpu_worker(
     ] = {}  # robot_id -> last sd.request_id sent as a response
 
     def _make_rtc_params(
-        robot_id: str,
+        robot_id: RobotID,
         request_id: int,
         observation_step: int,
         action_index_start: int,

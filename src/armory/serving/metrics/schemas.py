@@ -3,13 +3,13 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import NamedTuple, TypeAlias, TypeVar
+from typing import NamedTuple, TypeVar
 
 import numpy as np
 
+from armory.serving.schemas import RobotID
 from armory_client.messages import EpisodeEnd, EpisodeStart
 
-RobotID: TypeAlias = str
 T = TypeVar("T")
 
 
@@ -164,7 +164,7 @@ class Episode:
 class Robot:
     """Per-robot mutable state tracked during inference."""
 
-    robot_id: str
+    robot_id: RobotID
     episodes: list[Episode]
     # Requests/responses received before any EpisodeStart (robots that don't send episode data).
     orphan_requests: list[RequestRecord] = field(default_factory=list)

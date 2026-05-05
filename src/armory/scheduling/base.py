@@ -13,6 +13,7 @@ from armory.serving.schemas import (
     AckNotification,
     CompletionNotification,
     RequestBatch,
+    RobotID,
     SchedulerDecision,
     SlotRequest,
 )
@@ -221,13 +222,13 @@ class RequestScheduler(ABC):
     def get_next_batches(self) -> list[list[SlotRequest]]:
         pass
 
-    def reset_robot(self, robot_id: str) -> None:
+    def reset_robot(self, robot_id: RobotID) -> None:
         self._deadlines.pop(robot_id, None)
         self._latest_requests.pop(robot_id, None)
         self._latest_scheduled_requests.pop(robot_id, None)
         self.mirror.reset_robot(robot_id)
 
-    def clear(self, robot_id: str) -> None:
+    def clear(self, robot_id: RobotID) -> None:
         self.reset_robot(robot_id)
         self.latency_tracker.clear(robot_id)
 
