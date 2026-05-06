@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 
 PROFILE_ITERATIONS = 5
 
+# TODO: clean up padding pattern
+
 
 class GpuWorker:
     """Subprocess worker: loads model, loops recv batch -> infer -> send results.
@@ -103,7 +105,6 @@ class GpuWorker:
         self._last_served_action_index: dict[RobotID, int] = {}
         self._last_infer_step: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
-        self._action_shape: tuple[int, int] | None = None
 
         while True:
             self._process_server_messages(req_sock)
@@ -118,8 +119,6 @@ class GpuWorker:
                 notify_sock.send_pyobj([])
                 continue
 
-            # TODO: padding requests should be handled minimally
-            # TODO: how to estimate d_params well
             infer_requests = [
                 InternalRequest.from_slot_data(sd, self._make_params(sd)) for sd in slot_datas
             ]
@@ -150,12 +149,14 @@ class GpuWorker:
 
             self._update_state(slot_reqs, slot_datas, actions)
 
-            # TODO: handle padding, also don't duplicate so much code
             # Send responses directly to WS — not via scheduler
-            # TODO: maybe these two things can be unified under a single pub sub interface
             response_sock.send_pyobj(
                 ResponseBatch(
-                    responses=responses,
+                    responses=[
+                        response
+                        for slot_data, response in zip(slot_datas, responses, strict=True)
+                        if not slot_data.is_padding
+                    ],
                     batch_id=batch.batch_id,
                     batch_size=len(slot_datas),
                 )
@@ -250,10 +251,5 @@ class GpuWorker:
     ) -> None:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
             if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
-                prev_action = action_dict.get(
-                    "rtc_prev_actions", action_dict["actions"]
-                )  # shape (ah, ad)
-                if self._action_shape is None:
-                    self._action_shape = prev_action.shape
-                self._last_infer_step[sr.robot_id] = sd.observation_step
-                self._prev_actions[sr.robot_id] = prev_action
+                self._last_served_action_index[sr.robot_id] = sd.action_index_start
+                self._prev_actions[sr.robot_id] = action_dict["actions"]
