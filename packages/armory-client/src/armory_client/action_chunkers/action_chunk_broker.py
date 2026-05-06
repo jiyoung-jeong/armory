@@ -7,11 +7,7 @@ from armory_client.messages import InferResponse
 from armory_client.schemas import Action, ActionChunk, Observation
 
 
-# FIXME: Saver uses action_chunks, but the envy is not clear and it's easy to remove it from this class
 # NOTE: use concurrent.futures to infer in background if this takes too long
-# TODO: base policy class that lives on server should be different from policy that lives on client
-# TODO: review and implement learnings from DRTC (https://jackvial.com/posts/distributed-real-time-chunking.html)
-# FIXME: there is an off by one error for min-horizon, but it is fine for now since we are streaming requests
 class ActionChunkBrokerBase:
     def __init__(
         self,
@@ -79,7 +75,6 @@ class ActionChunkBrokerBase:
             index_in_chunk=None,
         )
 
-    ## PULL THIS OUT
     @property
     def action_chunks(self) -> list[ActionChunk]:
         return self._action_chunks
@@ -93,18 +88,8 @@ class ActionChunkBrokerBase:
         """Actions remaining in queue after each step (recorded inside the lock)."""
         return list(self._actions_left_history)
 
-    ##
-
 
 class ActionChunkBroker(ActionChunkBrokerBase):
-    """Wraps a policy to return action chunks one-at-a-time.
-
-    Assumes that the first dimension of all action fields is the chunk size.
-
-    A new inference call to the inner policy is only made when the current
-    list of chunks is exhausted.
-    """
-
     def __init__(
         self,
         ws_client: BidirectionalWebsocket,
