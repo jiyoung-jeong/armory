@@ -5,9 +5,9 @@ from dataclasses import replace
 import pytest
 
 from armory.scheduling.latency import LatencyTracker
-from armory.scheduling.mirror import Mirror, Robot
+from armory.scheduling.mirror import Batch, Mirror, Robot
 from armory.serving.schemas import AckNotification, ResponseBatch, SlotRequest
-from armory_client.messages import InferType
+from armory_client.messages import InferResponse, InferType
 from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Scenario
 
 ROBOT_ID = "test"
@@ -43,15 +43,7 @@ def _make_robot(scenario: Scenario) -> Robot:
     robot.step(_make_request(0, 0, 0.0, horizon))
     for chunk in scenario.chunks:
         robot.queue_chunk(chunk)
-        robot.confirm_chunk(
-            AckNotification(
-                robot_id=ROBOT_ID,
-                request_id=chunk.request_id,
-                observation_step=chunk.observation_step,
-                receive_time=chunk.arrival_time,
-                server_send_time=0.0,
-            )
-        )
+        robot.update_chunk_arrival_time(chunk.chunk_id, chunk.arrival_time, arrived=True)
     return robot
 
 
@@ -67,7 +59,7 @@ def test_chunk_tracking(scenario: Scenario) -> None:
         assert actual.arrival_time == pytest.approx(expected.arrival_time)
         assert actual.arrived is True
 
-    assert robot.max_arrived_action_step == max(
+    assert robot.max_overall_action_step == max(
         c.action_index_start + c.execution_horizon - 1 for c in scenario.chunks
     )
 
@@ -105,11 +97,8 @@ def _drip_chunks(mirror: Mirror, scenario: Scenario) -> None:
     """Feed chunks to the mirror via fast_forward, advancing time to just past
     each chunk's arrival."""
     for chunk in scenario.chunks:
-        mirror.fast_forward(
-            chunk.arrival_time + EPS,
-            [ROBOT_ID],
-            [chunk],
-        )
+        mirror.robots[ROBOT_ID].queue_chunk(chunk)
+        mirror.fast_forward(chunk.arrival_time + EPS)
 
 
 @pytest.mark.parametrize("scenario", ALL_SCENARIOS, ids=lambda s: s.name)
@@ -119,7 +108,7 @@ def test_mirror_fast_forward(scenario: Scenario) -> None:
 
     _drip_chunks(mirror, scenario)
     # Advance past the last chunk's coverage to the scenario's final step.
-    mirror.fast_forward(expected[-1].time, [], [])
+    mirror.fast_forward(expected[-1].time)
 
     robot = mirror.robots[ROBOT_ID]
     assert len(robot.steps) == len(expected)
@@ -154,7 +143,9 @@ def test_mirror_fast_forward_multiple_robots() -> None:
 
     for chunk in LONG_RUN.chunks:
         # Send the same chunk to both robots so they stay in lockstep.
-        mirror.fast_forward(chunk.arrival_time + EPS, rids, [chunk, chunk])
+        for rid in rids:
+            mirror.robots[rid].queue_chunk(chunk)
+        mirror.fast_forward(chunk.arrival_time + EPS)
 
     expected_deadline = LONG_RUN.control_steps()[-1].time
     deadlines = mirror.deadlines()
@@ -170,11 +161,8 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     for rid in rids:
         mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
     # Only "a" gets the chunk, but both should advance.
-    mirror.fast_forward(
-        LONG_RUN.chunks[0].arrival_time + EPS,
-        ["a"],
-        [LONG_RUN.chunks[0]],
-    )
+    mirror.robots["a"].queue_chunk(LONG_RUN.chunks[0])
+    mirror.fast_forward(LONG_RUN.chunks[0].arrival_time + EPS)
 
     assert mirror.robots["a"].steps[-1].observation_step == 2
     assert mirror.robots["b"].steps[-1].observation_step == 2
@@ -216,7 +204,8 @@ def test_mirror_checkpoint_roundtrip() -> None:
 
     # Mutate: queue every chunk and step forward.
     for chunk in LONG_RUN.chunks:
-        mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
+        mirror.robots[ROBOT_ID].queue_chunk(chunk)
+        mirror.fast_forward(chunk.arrival_time + EPS)
 
     assert len(mirror.robots[ROBOT_ID].steps) > len(pre_steps)
     assert len(mirror.robots[ROBOT_ID].chunks) > len(pre_chunks)
@@ -241,41 +230,58 @@ def test_mirror_checkpoint_drops_robots_added_after() -> None:
 
 
 def test_mirror_update_completion_refines_arrival() -> None:
-    """update_completion sets arrival_time to ``now + action_latency`` without flipping arrived."""
+    """update_batch_completion sets arrival_time to completion + action_latency without flipping arrived."""
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
     mirror = Mirror(tracker)
     horizon = LONG_RUN.chunks[0].execution_horizon
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
     chunk = LONG_RUN.chunks[0]
-    mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
+    mirror.robots[ROBOT_ID].queue_chunk(chunk)
+    mirror.fast_forward(chunk.arrival_time + EPS)
+
+    mirror.in_flight_batches.append(
+        Batch(batch_id=0, robot_ids=[ROBOT_ID], chunk_ids=[chunk.chunk_id])
+    )
+    import numpy as np
 
     notification = ResponseBatch(
-        robot_id=ROBOT_ID,
-        responses=[],
-        is_padding=[],
+        responses=[
+            InferResponse(
+                robot_id=ROBOT_ID,
+                request_id=0,
+                chunk_id=chunk.chunk_id,
+                observation_step=chunk.observation_step,
+                action_index_start=chunk.action_index_start,
+                request_timestamp=0.0,
+                actions=np.zeros((1, chunk.execution_horizon, 7)),
+                execution_horizon=chunk.execution_horizon,
+            )
+        ],
         batch_id=0,
         batch_size=1,
+        inference_start_time=9.9,
         inference_duration=0.1,
     )
-    mirror.update_completion(notification, now=10.0)
+    mirror.update_batch_completion(notification)
 
     refined = mirror.robots[ROBOT_ID].chunks[0]
     assert refined.arrival_time == pytest.approx(10.02)
     assert refined.arrived is False
-    assert refined.request_id == chunk.request_id
 
 
-def test_mirror_confirm_chunk_by_request_id() -> None:
-    """confirm_chunk matches by request_id, sets arrival_time=ack.receive_time."""
+def test_mirror_confirm_chunk_by_chunk_id() -> None:
+    """confirm_chunk matches by chunk_id, sets arrival_time=ack.receive_time and arrived=True."""
     horizon = LONG_RUN.chunks[0].execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
-    chunk = LONG_RUN.chunks[1]  # request_id=1
-    mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
+    chunk = LONG_RUN.chunks[1]  # chunk_id=1
+    mirror.robots[ROBOT_ID].queue_chunk(chunk)
+    mirror.fast_forward(chunk.arrival_time + EPS)
 
     ack = AckNotification(
         robot_id=ROBOT_ID,
-        request_id=chunk.request_id,
+        request_id=0,
+        chunk_id=chunk.chunk_id,
         observation_step=chunk.observation_step,
         receive_time=42.0,
         server_send_time=0.0,
@@ -288,22 +294,26 @@ def test_mirror_confirm_chunk_by_request_id() -> None:
 
 
 def test_mirror_get_chunks_basic() -> None:
-    """get_chunks builds chunks with the requested ids and the latency-projected arrival time."""
+    """queue_batch builds chunks with the latency-projected arrival time."""
+    from unittest.mock import patch
+
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
     mirror = Mirror(tracker)
     horizon = 5
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
     # Step the snapshot forward so a control step exists before the obs cutoff.
-    mirror.fast_forward(2.0, [], [])
+    mirror.fast_forward(2.0)
 
-    chunks = mirror.get_chunks([ROBOT_ID], [99], dispatch_time=2.0)
+    with patch("armory.scheduling.mirror.time") as mock_time:
+        mock_time.time.return_value = 2.0
+        chunks = mirror.queue_batch([ROBOT_ID], 0)
+
     assert len(chunks) == 1
     [chunk] = chunks
-    assert chunk.request_id == 99
     # arrival_time = dispatch + infer + action = 2.0 + 0.1 + 0.02
     assert chunk.arrival_time == pytest.approx(2.12)
     assert chunk.arrived is False
     assert chunk.execution_horizon == horizon
-    # observation_step is the step closest to (dispatch_time - obs_latency) = 1.95;
-    # control_hz=1, steps tick at integer times, so the latest step before 1.95 is step 1.
+    # observation_step: latest step before (dispatch_time - obs_latency) = 1.95;
+    # steps tick at integer times, so the latest step before 1.95 is step 1.
     assert chunk.observation_step == 1
