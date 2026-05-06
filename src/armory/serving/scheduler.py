@@ -89,10 +89,12 @@ class SchedulerWorker:
 
         ctx = zmq.Context()
 
-        req_sock = ctx.socket(zmq.PULL)
+        req_sock = ctx.socket(zmq.SUB)
+        req_sock.setsockopt(zmq.SUBSCRIBE, b"")
         req_sock.bind(self.sched_in_ep)  # WS main connects
 
-        result_sock = ctx.socket(zmq.PULL)
+        result_sock = ctx.socket(zmq.SUB)
+        result_sock.setsockopt(zmq.SUBSCRIBE, b"")
         result_sock.bind(self.result_ep)  # GPU connects
 
         extra_kwargs: dict = dict(self.scheduler_kwargs or {})

@@ -9,6 +9,7 @@ from armory.serving.schemas import (
     AckNotification,
     RequestBatch,
     ResponseBatch,
+    RobotID,
     SchedulerDecision,
     SlotRequest,
 )
@@ -27,6 +28,7 @@ class RequestScheduler(ABC):
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)
+        self._latest_requests: dict[RobotID, SlotRequest] = {}  # TODO: clean up later
 
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
@@ -36,6 +38,7 @@ class RequestScheduler(ABC):
             request.robot_id, request.arrival_timestamp, request.request_timestamp
         )
         self.mirror.receive_request(request, request.control_hz)
+        self._latest_requests[request.robot_id] = request
 
     def on_batch_completed(self, batch: ResponseBatch) -> None:
         self.latency_tracker.update_infer(batch.batch_size, batch.inference_duration)
@@ -74,5 +77,6 @@ class RequestScheduler(ABC):
         pass
 
     def reset_robot(self, robot_id: str) -> None:
+        self._latest_requests.pop(robot_id, None)
         self.mirror.reset_robot(robot_id)
         self.latency_tracker.clear(robot_id)

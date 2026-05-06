@@ -289,12 +289,12 @@ class Mirror:
             self.latency_tracker.infer_latency(b.size) for b in self.in_flight_batches
         )
 
-    def schedulable_requests(self, requests: list[SlotRequest]) -> list[SlotRequest]:
+    def schedulable_requests(self, requests: dict[RobotID, SlotRequest]) -> list[SlotRequest]:
         schedulable_requests: list[SlotRequest] = []
 
         dispatch_time = self.next_time_server_available()
-        for request in requests:
-            _, action_index_start = self._next_chunk_context(request.robot_id, dispatch_time)
+        for robot_id, request in requests.items():
+            _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
             if request.action_index_start > action_index_start:
                 schedulable_requests.append(request)
         return schedulable_requests
@@ -311,6 +311,7 @@ class Mirror:
     def checkpoint(self) -> Checkpoint:
         return Checkpoint(
             lengths={rid: (len(r.steps), len(r.chunks)) for rid, r in self.robots.items()},
+            queued_batches=len(self.in_flight_batches),
         )
 
     def restore(self, ckpt: Checkpoint) -> None:
@@ -319,6 +320,8 @@ class Mirror:
             r = self.robots[rid]
             del r.steps[n_steps:]
             del r.chunks[n_chunks:]
+        while len(self.in_flight_batches) > ckpt.queued_batches:
+            self.in_flight_batches.pop()
 
     def deadlines(self) -> dict[RobotID, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}

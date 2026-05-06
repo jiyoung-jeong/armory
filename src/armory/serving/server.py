@@ -320,6 +320,7 @@ def create_app(
         scheduler_sock.connect(socket_addresses["server_out_ep"])
 
         response_sock = zmq_ctx.socket(zmq.SUB)
+        response_sock.setsockopt(zmq.SUBSCRIBE, b"")
         response_sock.connect(socket_addresses["gpu_out_ep"])
 
         response_queues: dict[str, asyncio.Queue] = {}

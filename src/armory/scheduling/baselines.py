@@ -13,7 +13,7 @@ class MaxBatchScheduler(RequestScheduler):
     def get_next_batches(self) -> list[list[SlotRequest]]:
         if (
             self.mirror.in_flight_batches_count > 0
-            or (candidates := self.mirror.schedulable_requests()) == []
+            or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
         ):
             return []
 
@@ -27,7 +27,7 @@ class FixedMaxBatchScheduler(RequestScheduler):
     def get_next_batches(self) -> list[list[SlotRequest]]:
         if (
             self.mirror.in_flight_batches_count > 0
-            or (candidates := self.mirror.schedulable_requests()) == []
+            or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
         ):
             return []
 
@@ -51,7 +51,7 @@ class GreedyDeadlineScheduler(RequestScheduler):
     def get_next_batches(self) -> list[list[SlotRequest]]:
         if (
             self.mirror.in_flight_batches_count > 0
-            or (candidates := self.mirror.schedulable_requests()) == []
+            or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
         ):
             return []
 
@@ -109,7 +109,9 @@ class RoundRobinScheduler(RequestScheduler):
         if self.mirror.in_flight_batches_count > 0:
             return []
 
-        candidate_by_robot = {req.robot_id: req for req in self.mirror.schedulable_requests()}
+        candidate_by_robot = {
+            req.robot_id: req for req in self.mirror.schedulable_requests(self._latest_requests)
+        }
         n_robots = len(self._rr_robot_order)
         if not candidate_by_robot or n_robots == 0:
             return []
@@ -144,7 +146,7 @@ class RandomBatchScheduler(RequestScheduler):
         if self.mirror.in_flight_batches_count > 0:
             return []
 
-        candidates = list(self.mirror.schedulable_requests())
+        candidates = list(self.mirror.schedulable_requests(self._latest_requests))
         if not candidates:
             return []
 

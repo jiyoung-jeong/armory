@@ -81,6 +81,7 @@ class GpuWorker:
 
         # Server messages (SlotRequest, ResetRequest, AckNotification, WarmupSeed)
         req_sock = ctx.socket(zmq.SUB)
+        req_sock.setsockopt(zmq.SUBSCRIBE, b"")
         req_sock.connect(self.server_out_ep)
 
         # Direct path to WS _router_task (WS process binds)

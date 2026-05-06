@@ -1,13 +1,16 @@
+"""Lookahead scheduler that searches batches during GPU slack time."""
+
 import copy
 import itertools
 import logging
 import multiprocessing as mp
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
-from armory.scheduling.mirror import ActionChunk, Checkpoint, Mirror, Robot
+from armory.scheduling.mirror import ActionChunk, Mirror, Robot
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
@@ -26,7 +29,6 @@ def _action_times(mirror: Mirror) -> dict[RobotID, float]:
 
 
 def _mirror_summary(mirror: Mirror, now: float) -> str:
-    """One-line summary of per-robot buffer health: deadline gap and chunk count."""
     if not mirror.robots:
         return "no robots"
     parts = []
@@ -47,43 +49,17 @@ class ScheduledBatch:
     chunks: tuple[ActionChunk, ...]
 
 
-class _Frame:
-    """A DFS frame: snapshot state at ``time`` after committing ``schedule``.
-
-    Holds a Checkpoint, not a Mirror copy. ``IncrementalSearch.snapshot``
-    reflects the top-of-stack frame's state; restore is called on backtrack
-    or on max-depth siblings.
-    """
-
-    __slots__ = ("checkpoint", "time", "schedule", "candidate_iter")
-
-    def __init__(
-        self,
-        checkpoint: Checkpoint,
-        time: float,
-        schedule: list[ScheduledBatch],
-        candidate_iter: Iterator[tuple[RobotID, ...]] | None,
-    ) -> None:
-        self.checkpoint = checkpoint
-        self.time = time
-        self.schedule = schedule
-        self.candidate_iter = candidate_iter
-
-
 class IncrementalSearch:
-    """Stack-based DFS that yields control after a bounded budget of nodes.
+    """Generator-based DFS over batches in ``[start_time, start_time + horizon]``.
 
-    Searches schedules that keep the GPU busy until ``start_time + horizon``
-    and tracks the best objective seen so far. Drive it by calling ``step``
-    repeatedly until ``is_done`` returns True; ``best`` is safe to read at any
-    point.
+    The search yields after every node visited, so the caller can stop it
+    when slack runs out. ``best`` is safe to read at any point.
     """
 
     def __init__(
         self,
         mirror: Mirror,
         latency_tracker: LatencyTracker,
-        anticipated_id_counter: itertools.count,
         start_time: float,
         horizon: float,
         max_depth: int = 3,
@@ -92,78 +68,67 @@ class IncrementalSearch:
         self.start_time = start_time
         self.end_time = start_time + horizon
         self.max_depth = max_depth
-        self._anticipated_id_counter = anticipated_id_counter
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
+        self.snapshot = copy.deepcopy(mirror)
+        self.snapshot.fast_forward(start_time)
+        self.initial_action_times = _action_times(self.snapshot)
+        self._search_batch_id = itertools.count(1)
+
         self.best_objective = -float("inf")
         self.best_schedule: list[ScheduledBatch] = []
-        self.nodes_visited = 1
-        self.branches_pruned_time = 0
+        self.nodes_visited = 0
 
-        # Single snapshot mutated in place; checkpoints in frames revert it.
-        self.snapshot = copy.deepcopy(mirror)
-        # Advance to search-start so get_chunks finds an observation cutoff
-        # for the first dispatch.
-        self.snapshot.fast_forward(start_time, [], [])
-        self.initial_action_times = _action_times(self.snapshot)
-
-        root = _Frame(self.snapshot.checkpoint(), start_time, [], None)
-        if max_depth > 0:
-            root.candidate_iter = self._candidate_iter()
-        self._stack: list[_Frame] = [root]
+        self._iter: Iterator[None] | None = self._dfs([], start_time, max_depth)
 
     def is_done(self) -> bool:
-        return not self._stack
+        return self._iter is None
 
     def step(self, budget_nodes: int = 32) -> None:
+        if self._iter is None:
+            return
         for _ in range(budget_nodes):
-            if not self._stack:
+            try:
+                next(self._iter)
+            except StopIteration:
+                self._iter = None
                 return
-            self._step_one()
 
     def best(self) -> list[ScheduledBatch]:
         return list(self.best_schedule)
 
-    def _step_one(self) -> None:
-        frame = self._stack[-1]
-        if frame.candidate_iter is None:
-            self._stack.pop()
-            if self._stack:
-                self.snapshot.restore(self._stack[-1].checkpoint)
+    def _candidates(self) -> Iterator[tuple[RobotID, ...]]:
+        # FIXME: search space is just prefix-of-EDF batches
+        deadlines = self.snapshot.deadlines()
+        sorted_ids = sorted(self.snapshot.robots.keys(), key=lambda rid: deadlines[rid])
+        return iter(
+            tuple(sorted_ids[:i]) for i in range(1, min(self.max_batch_size, len(sorted_ids)) + 1)
+        )
+
+    def _dfs(self, schedule: list[ScheduledBatch], now: float, depth: int) -> Iterator[None]:
+        if depth == 0:
             return
+        for batch in self._candidates():
+            next_time = now + self.latency_tracker.infer_latency(len(batch))
+            if next_time > self.end_time:
+                continue
 
-        try:
-            batch = next(frame.candidate_iter)
-        except StopIteration:
-            self._stack.pop()
-            if self._stack:
-                self.snapshot.restore(self._stack[-1].checkpoint)
-            return
+            ckpt = self.snapshot.checkpoint()
+            chunks = tuple(self.snapshot.queue_batch(list(batch), next(self._search_batch_id)))
+            self.snapshot.fast_forward(next_time)
 
-        next_time = frame.time + self.latency_tracker.infer_latency(len(batch))
-        if next_time > self.end_time:
-            self.branches_pruned_time += 1
-            return  # snapshot still in frame state, no restore needed
+            new_schedule = schedule + [ScheduledBatch(batch, chunks)]
+            self.nodes_visited += 1
+            self._evaluate(new_schedule, next_time)
+            yield
 
-        request_ids = [next(self._anticipated_id_counter) for _ in batch]
-        chunks = tuple(self.snapshot.get_chunks(list(batch), request_ids, frame.time))
-        self.snapshot.fast_forward(next_time, list(batch), list(chunks))
+            yield from self._dfs(new_schedule, next_time, depth - 1)
 
-        new_schedule = frame.schedule + [ScheduledBatch(batch, chunks)]
-        self.nodes_visited += 1
-        self._evaluate(new_schedule, next_time)
+            self.snapshot.restore(ckpt)
 
-        if len(new_schedule) < self.max_depth:
-            self._stack.append(
-                _Frame(self.snapshot.checkpoint(), next_time, new_schedule, self._candidate_iter())
-            )
-        else:
-            # Don't push; restore so the next sibling starts from frame state.
-            self.snapshot.restore(frame.checkpoint)
-
-    def _evaluate(self, schedule: list[ScheduledBatch], frame_time: float) -> None:
-        gpu_time = frame_time - self.start_time
+    def _evaluate(self, schedule: list[ScheduledBatch], now: float) -> None:
+        gpu_time = now - self.start_time
         if gpu_time <= 0:
             return
         new_times = _action_times(self.snapshot)
@@ -176,25 +141,17 @@ class IncrementalSearch:
                 "new best: depth=%d objective=%.4f schedule=%s",
                 len(schedule),
                 objective,
-                [batch.robot_ids for batch in schedule],
+                [b.robot_ids for b in schedule],
             )
-
-    def _candidate_iter(self) -> Iterator[tuple[RobotID, ...]]:
-        # FIXME: reducing search space for now
-        deadlines = self.snapshot.deadlines()
-        sorted_robot_ids = sorted(self.snapshot.robots.keys(), key=lambda rid: deadlines[rid])
-        return iter(
-            tuple(sorted_robot_ids[:i])
-            for i in range(1, min(self.max_batch_size, len(sorted_robot_ids)) + 1)
-        )
 
 
 class LookaheadActionsScheduler(RequestScheduler):
-    """Lookahead scheduler that searches incrementally between dispatch points.
+    """Plan one batch per tick, using GPU slack to search.
 
-    On each ``advance`` tick we step the in-progress search; on commit
-    (``in_flight == 0``) we publish the best schedule found so far and start
-    fresh on the next tick.
+    Flow per call:
+    - If slack before next dispatch slot is tiny, dispatch greedily by EDF.
+    - Otherwise, run a fresh search until either it exhausts or slack runs
+      out. Return the first batch of the best schedule.
     """
 
     def __init__(
@@ -205,44 +162,52 @@ class LookaheadActionsScheduler(RequestScheduler):
         horizon: float = 0.5,
         max_depth: int = 3,
         step_budget_nodes: int = 32,
+        scheduling_buffer: float = 0.01,
     ) -> None:
         super().__init__(batch_queue, max_batch_size)
         self.horizon = horizon
         self.max_depth = max_depth
         self.step_budget_nodes = step_budget_nodes
-        self._search: IncrementalSearch | None = None
-        self._anticipated_id_counter = itertools.count(start=-1, step=-1)
-        self._batches_dispatched: int = 0
-        self._planned_chunk_hits: int = 0
-        self._planned_chunk_misses: int = 0
+        self.scheduling_buffer = scheduling_buffer
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        SCHEDULING_BUFFER = 0.01
+        candidates = self.mirror.schedulable_requests(self._latest_requests)
+        if not candidates:
+            return []
+
+        next_avail = self.mirror.next_time_server_available()
+        slack = next_avail - time.time()
+
         logger.debug(
-            "search started: robots=%d in_flight=%d batches_dispatched=%d | %s",
+            "search start: robots=%d slack=%+.3fs | %s",
             len(self.mirror.robots),
-            self._in_flight,
-            self._batches_dispatched,
-            _mirror_summary(self.mirror, self.mirror.next_time_server_available),
+            slack,
+            _mirror_summary(self.mirror, next_avail),
         )
-        self._search = IncrementalSearch(
+
+        if slack < self.scheduling_buffer:
+            return [self._greedy(candidates)]
+
+        search = IncrementalSearch(
             self.mirror,
             self.latency_tracker,
-            self._anticipated_id_counter,
-            self.mirror.next_time_server_available,
+            next_avail,
             self.horizon,
             self.max_depth,
         )
-        if self.mirror.time_until_server_available < SCHEDULING_BUFFER:
-            # TODO: just do greedy
-            pass
+        while not search.is_done() and (next_avail - time.time()) > self.scheduling_buffer:
+            search.step(self.step_budget_nodes)
 
-        while (
-            self.mirror.time_until_server_available > SCHEDULING_BUFFER
-            and not self._search.is_done()
-        ):
-            logger.debug("Advancing search")  # TODO:
-            self.advance()
-            logger.debug("Search advanced, updated best to")  # TODO:
+        best = search.best()
+        if not best:
+            return [self._greedy(candidates)]
 
-        return self._search.best()
+        candidate_by_id = {req.robot_id: req for req in candidates}
+        first_batch = [candidate_by_id[rid] for rid in best[0].robot_ids if rid in candidate_by_id]
+        return [first_batch] if first_batch else []
+
+    def _greedy(self, candidates: list[SlotRequest]) -> list[SlotRequest]:
+        deadlines = self.mirror.deadlines()
+        return sorted(candidates, key=lambda r: deadlines.get(r.robot_id, r.deadline))[
+            : self._max_batch_size
+        ]
