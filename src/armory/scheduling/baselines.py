@@ -6,14 +6,15 @@ import time
 from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import RobotID, SlotRequest
 
-# TODO: fix schedulable requests so it uses mirror instead
-
 
 class MaxBatchScheduler(RequestScheduler):
     """Greedy scheduler that always fills to max_batch_size, prioritizing requests with earliest deadlines."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty() or (candidates := self.schedulable_requests) == []:
+        if (
+            self.mirror.in_flight_batches_count > 0
+            or (candidates := self.mirror.schedulable_requests()) == []
+        ):
             return []
 
         candidates = sorted(candidates, key=lambda r: self._deadlines.get(r.robot_id, r.deadline))
@@ -24,7 +25,10 @@ class FixedMaxBatchScheduler(RequestScheduler):
     """Always dispatch max_batch_size rows, padding with artificial duplicate requests if needed."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty() or (candidates := self.schedulable_requests) == []:
+        if (
+            self.mirror.in_flight_batches_count > 0
+            or (candidates := self.mirror.schedulable_requests()) == []
+        ):
             return []
 
         candidates = sorted(candidates, key=lambda r: self._deadlines.get(r.robot_id, r.deadline))
@@ -45,7 +49,10 @@ class GreedyDeadlineScheduler(RequestScheduler):
     """Earliest-deadline-first: sort all pending requests by deadline."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty() or (candidates := self.schedulable_requests) == []:
+        if (
+            self.mirror.in_flight_batches_count > 0
+            or (candidates := self.mirror.schedulable_requests()) == []
+        ):
             return []
 
         candidates_and_infer_deadlines = sorted(
@@ -99,10 +106,10 @@ class RoundRobinScheduler(RequestScheduler):
             self._rr_robot_order.append(request.robot_id)
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty():
+        if self.mirror.in_flight_batches_count > 0:
             return []
 
-        candidate_by_robot = {req.robot_id: req for req in self.schedulable_requests}
+        candidate_by_robot = {req.robot_id: req for req in self.mirror.schedulable_requests()}
         n_robots = len(self._rr_robot_order)
         if not candidate_by_robot or n_robots == 0:
             return []
@@ -134,10 +141,10 @@ class RandomBatchScheduler(RequestScheduler):
     """Randomly select up to max_batch_size from pending requests."""
 
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty():
+        if self.mirror.in_flight_batches_count > 0:
             return []
 
-        candidates = list(self.schedulable_requests)
+        candidates = list(self.mirror.schedulable_requests())
         if not candidates:
             return []
 

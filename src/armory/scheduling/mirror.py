@@ -209,6 +209,10 @@ class Mirror:
         self.in_flight_batches: deque[Batch] = deque()  # TODO: need to handle updates on this well
         self.chunk_id_counter = itertools.count(1)
 
+    @property
+    def in_flight_batches_count(self) -> int:
+        return len(self.in_flight_batches)
+
     def reset_robot(self, robot_id: RobotID) -> None:
         self.robots.pop(robot_id, None)
 
@@ -217,6 +221,13 @@ class Mirror:
             # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
             self.robots[request.robot_id] = Robot(control_hz, request.execution_horizon)
         self.robots[request.robot_id].step(request)
+
+    def _next_chunk_context(self, rid: RobotID, dispatch_time: float) -> tuple[ControlStep, int]:
+        robot = self.robots[rid]
+        obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(rid)
+        cs = robot.get_latest_control_step_before(obs_cutoff)
+        assert cs is not None, f"robot {rid} has no control step before {obs_cutoff}"
+        return cs, robot.next_chunk_start(cs)
 
     def queue_batch(
         self,
@@ -227,14 +238,12 @@ class Mirror:
         Caller is expected to follow up with ``fast_forward(post_dispatch_time, batch, chunks)``.
         """
         assert self.latency_tracker is not None
-        dispatch_time = self.next_time_server_available
+        dispatch_time = self.next_time_server_available()
         infer_lat = self.latency_tracker.infer_latency(len(batch))
         chunks: list[ActionChunk] = []
         for rid in batch:
             robot = self.robots[rid]
-            obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(rid)
-            cs = robot.get_latest_control_step_before(obs_cutoff)
-            assert cs is not None, f"robot {rid} has no control step before {obs_cutoff}"
+            cs, action_index_start = self._next_chunk_context(rid, dispatch_time)
             chunks.append(
                 ActionChunk(
                     chunk_id=next(self.chunk_id_counter),
@@ -242,7 +251,7 @@ class Mirror:
                     arrival_time=dispatch_time
                     + infer_lat
                     + self.latency_tracker.action_latency(rid),
-                    action_index_start=robot.next_chunk_start(cs),
+                    action_index_start=action_index_start,
                     execution_horizon=robot.execution_horizon,
                 )
             )
@@ -270,17 +279,21 @@ class Mirror:
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
             return
-        # TODO: really need to dig into this to make sure this is measure correctly
         robot.confirm_chunk(ack.chunk_id, ack.receive_time)
 
-    @property
     def next_time_server_available(self) -> float:
         # TODO:
         return 0.0
 
     def schedulable_requests(self, requests: list[SlotRequest]) -> list[SlotRequest]:
-        # TODO: go through robots and check to see that if we scheduled if we could expect a new chunk with different action step
-        pass
+        schedulable_requests: list[SlotRequest] = []
+
+        dispatch_time = self.next_time_server_available()
+        for request in requests:
+            _, action_index_start = self._next_chunk_context(request.robot_id, dispatch_time)
+            if request.action_index_start > action_index_start:
+                schedulable_requests.append(request)
+        return schedulable_requests
 
     # below are methods only used by search
     def fast_forward(
