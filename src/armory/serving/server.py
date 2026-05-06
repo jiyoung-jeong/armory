@@ -40,10 +40,10 @@ from fastapi.concurrency import asynccontextmanager
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
 
-from armory.serving.engine import _run_gpu_worker
+from armory.serving.engine import GpuWorker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
-from armory.serving.scheduler import _run_scheduler
+from armory.serving.scheduler import SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
     ResponseBatch,
@@ -239,8 +239,7 @@ def _start_backend(
     sched_ready = mp.Event()
 
     gpu_proc = mp.Process(
-        target=_run_gpu_worker,
-        args=(
+        target=GpuWorker(
             policy_factory,
             metadata.max_batch_size,
             slots,
@@ -250,13 +249,12 @@ def _start_backend(
             socket_addresses["result_ep"],
             gpu_ready,
             log_queue,
-        ),
+        ).run,
         daemon=True,
     )
 
     scheduler_proc = mp.Process(
-        target=_run_scheduler,
-        args=(
+        target=SchedulerWorker(
             socket_addresses["server_out_ep"],
             socket_addresses["result_ep"],
             batch_queue,
@@ -266,7 +264,7 @@ def _start_backend(
             scheduler_kwargs,
             sched_ready,
             log_queue,
-        ),
+        ).run,
         daemon=True,
     )
 
