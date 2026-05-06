@@ -11,10 +11,10 @@ class DynamicActionScheduler(RequestScheduler):
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
         *,
-        deficit_weight: float = 0.0,
+        alpha: float = 0.0,
     ):
         super().__init__(batch_queue, max_batch_size)
-        self._deficit_weight = max(0.0, deficit_weight)
+        self._alpha = max(0.0, alpha)
         self._service_debt: dict[str, float] = {}
         self._demand_rate: dict[str, float] = {}
         self._last_advance = time.time()
@@ -87,10 +87,16 @@ class DynamicActionScheduler(RequestScheduler):
         fits = int(infer_latency <= earliest - now)
         # get the base score for the batch
         base = len(batch) if fits else len(batch) / infer_latency
-        # get the weighted debt for the batch
-        weighted_debt = sum(
-            self._demand_rate.get(r.robot_id, 0.0) * self._service_debt.get(r.robot_id, 0.0)
+        # alpha-fair priority: priority_i = (d_i * (1 + debt_i))^alpha
+        # alpha=0 -> priority=1 (action-throughput greedy: max batch size)
+        # alpha=1 -> demand-weighted debt (proportional fair)
+        # alpha large -> dominated by argmax(d_i*(1+debt_i)) (max-min)
+        weighted_priority = sum(
+            (
+                self._demand_rate.get(r.robot_id, 0.0)
+                * (1.0 + self._service_debt.get(r.robot_id, 0.0))
+            )
+            ** self._alpha
             for r in batch
         )
-        # return the score for the batch
-        return (fits, self._deficit_weight * weighted_debt / infer_latency, base, -earliest)
+        return (fits, weighted_priority / infer_latency, base, -earliest)

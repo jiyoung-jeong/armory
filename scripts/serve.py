@@ -66,7 +66,7 @@ class Args:
 
     scheduling_algorithm: str = "greedy-deadline"
 
-    deficit_weight: float = 4.0
+    alpha: float = 1.0
 
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
@@ -78,7 +78,7 @@ class Args:
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
     if args.scheduling_algorithm == "dynamic-action":
         return {
-            "deficit_weight": args.deficit_weight,
+            "alpha": args.alpha,
         }
     if args.scheduling_algorithm == "lookahead":
         return {
