@@ -182,8 +182,12 @@ class Robot:
         """Action index the next queued chunk should start at, given control step ``cs``."""
         return cs.action_step if cs.action_step is not None else cs.next_action_step
 
-    def pop_chunk(self, chunk_id: int) -> None:
-        assert self.chunks.pop().chunk_id == chunk_id
+    def remove_chunk(self, chunk_id: int) -> None:
+        for i, chunk in enumerate(self.chunks):
+            if chunk.chunk_id == chunk_id:
+                del self.chunks[i]
+                return
+        raise KeyError(f"chunk_id {chunk_id} not found")
 
 
 @dataclass
@@ -273,7 +277,7 @@ class Mirror:
                 logger.debug("Ignoring completion for unknown robot: %s", robot_id)
                 continue
             if chunk_id not in served_chunk_ids:
-                robot.pop_chunk(chunk_id)
+                robot.remove_chunk(chunk_id)
             else:
                 robot.update_chunk_arrival_time(
                     chunk_id, actual_completion + self.latency_tracker.action_latency(robot_id)
