@@ -1,10 +1,14 @@
 import dataclasses
+import logging
 import multiprocessing as mp
 import random
 import time
 
 from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import RobotID, SlotRequest
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class MaxBatchScheduler(RequestScheduler):
@@ -17,7 +21,8 @@ class MaxBatchScheduler(RequestScheduler):
         ):
             return []
 
-        candidates = sorted(candidates, key=lambda r: self._deadlines.get(r.robot_id, r.deadline))
+        deadlines = self.mirror.deadlines()
+        candidates = sorted(candidates, key=lambda r: deadlines[r.robot_id])
         return [candidates[: self._max_batch_size]]
 
 
@@ -31,7 +36,8 @@ class FixedMaxBatchScheduler(RequestScheduler):
         ):
             return []
 
-        candidates = sorted(candidates, key=lambda r: self._deadlines.get(r.robot_id, r.deadline))
+        deadlines = self.mirror.deadlines()
+        candidates = sorted(candidates, key=lambda r: deadlines[r.robot_id])
         batch = candidates[: self._max_batch_size]
         if len(batch) == self._max_batch_size:
             return [batch]
@@ -53,13 +59,17 @@ class GreedyDeadlineScheduler(RequestScheduler):
             self.mirror.in_flight_batches_count > 0
             or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
         ):
+            # logger.debug("No candidates to schedule")
+            # logger.debug("In-flight batches: %d", self.mirror.in_flight_batches_count)
+            # logger.debug("Latest requests: %s", self._latest_requests)
             return []
 
+        deadlines = self.mirror.deadlines()
         candidates_and_infer_deadlines = sorted(
             [
                 (
                     slot_request,
-                    self._deadlines.get(slot_request.robot_id, slot_request.deadline)
+                    deadlines[slot_request.robot_id]
                     - self.latency_tracker.action_latency(slot_request.robot_id),
                 )
                 for slot_request in candidates
@@ -68,6 +78,7 @@ class GreedyDeadlineScheduler(RequestScheduler):
         )
         _, earliest_infer_deadline = candidates_and_infer_deadlines[0]
         batch_size = self.get_largest_batch_size(earliest_infer_deadline)
+        logger.debug("Scheduling batch of size %d", batch_size)
         return [[x[0] for x in candidates_and_infer_deadlines[:batch_size]]]
 
     def get_largest_batch_size(self, infer_deadline: float) -> int:

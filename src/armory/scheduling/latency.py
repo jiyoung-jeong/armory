@@ -59,6 +59,9 @@ class LatencyTracker(ABC):
         self._observation_latency.pop(robot_id, None)
         self._action_latency.pop(robot_id, None)
 
+    def __repr__(self) -> str:
+        return f"LatencyTracker(observation_latency={self._observation_latency}, infer_latency={self._infer_latency}, action_latency={self._action_latency})"
+
 
 class EMALatencyTracker(LatencyTracker):
     def __init__(self, alpha: float = 0.1) -> None:

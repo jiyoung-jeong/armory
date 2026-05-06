@@ -33,6 +33,7 @@ from armory_client.messages import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 PROFILE_ITERATIONS = 5
 
@@ -86,7 +87,7 @@ class GpuWorker:
 
         # Direct path to WS _router_task (WS process binds)
         result_sock = ctx.socket(zmq.PUB)
-        result_sock.connect(self.gpu_out_ep)
+        result_sock.bind(self.gpu_out_ep)
 
         self._profile_and_send(policy, result_sock)
 
@@ -100,6 +101,7 @@ class GpuWorker:
         self._prev_actions: dict[RobotID, np.ndarray] = {}
 
         while True:
+            logger.debug("Processing server messages")
             self._process_server_messages(req_sock)
 
             batch: RequestBatch = self.batch_queue.get()  # blocking
@@ -108,24 +110,25 @@ class GpuWorker:
             # FIXME: can be much more concise
             slot_datas = []
             chunk_ids = []
+            slot_requests = []
             for sr, chunk_id in zip(slot_reqs, batch.chunk_ids, strict=True):
                 sd = self.slots.read(sr.slot_index)
-                if self._should_serve(sd):
+                if self._should_serve(sr, sd):
                     slot_datas.append(sd)
                     chunk_ids.append(chunk_id)
+                    slot_requests.append(sr)
 
             if len(slot_datas) == 0:
                 result_sock.send_pyobj(
-                    [
-                        ResponseBatch(
-                            responses=[],
-                            is_padding=[],
-                            batch_id=batch.batch_id,
-                            batch_size=len(slot_datas),
-                            inference_duration=0.0,
-                        )
-                    ]
+                    ResponseBatch(
+                        responses=[],
+                        batch_id=batch.batch_id,
+                        batch_size=len(slot_datas),
+                        inference_start_time=time.time(),
+                        inference_duration=0.0,
+                    )
                 )
+                logger.debug("Sent empty response batch")
                 continue
 
             infer_requests = [
@@ -164,15 +167,16 @@ class GpuWorker:
                 ResponseBatch(
                     responses=[
                         response
-                        for slot_data, response in zip(slot_datas, responses, strict=True)
-                        if not slot_data.is_padding
+                        for slot_request, response in zip(slot_requests, responses, strict=True)
+                        if not slot_request.is_padding
                     ],
                     batch_id=batch.batch_id,
-                    batch_size=len(slot_datas),
+                    batch_size=len(slot_requests),
                     inference_start_time=t0,
                     inference_duration=inference_duration,
                 )
             )
+            logger.debug("Sent response batch: %s", responses)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -242,9 +246,9 @@ class GpuWorker:
             )
         return None
 
-    def _should_serve(self, sd: SlotData) -> bool:
-        return sd.is_padding or sd.action_index_start > self._last_served_action_index.get(
-            sd.robot_id, 0
+    def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
+        return sr.is_padding or sd.action_index_start > self._last_served_action_index.get(
+            sd.robot_id, -1
         )
 
     def _update_state(

@@ -80,7 +80,7 @@ class ActionChunk:
 
 class RequestBatch(NamedTuple):
     requests: list[SlotRequest]
-    chunks: list[ActionChunk]
+    chunk_ids: list[int]
     batch_id: int
 
 

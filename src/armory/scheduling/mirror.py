@@ -182,6 +182,9 @@ class Robot:
         """Action index the next queued chunk should start at, given control step ``cs``."""
         return cs.action_step if cs.action_step is not None else cs.next_action_step
 
+    def pop_chunk(self, chunk_id: int) -> None:
+        assert self.chunks.pop().chunk_id == chunk_id
+
 
 @dataclass
 class Batch:
@@ -240,17 +243,15 @@ class Mirror:
         for rid in batch:
             robot = self.robots[rid]
             cs, action_index_start = self._next_chunk_context(rid, dispatch_time)
-            chunks.append(
-                ActionChunk(
-                    chunk_id=next(self.chunk_id_counter),
-                    observation_step=cs.observation_step,
-                    arrival_time=dispatch_time
-                    + infer_lat
-                    + self.latency_tracker.action_latency(rid),
-                    action_index_start=action_index_start,
-                    execution_horizon=robot.execution_horizon,
-                )
+            chunk = ActionChunk(
+                chunk_id=next(self.chunk_id_counter),
+                observation_step=cs.observation_step,
+                arrival_time=dispatch_time + infer_lat + self.latency_tracker.action_latency(rid),
+                action_index_start=action_index_start,
+                execution_horizon=robot.execution_horizon,
             )
+            chunks.append(chunk)
+            robot.queue_chunk(chunk)
         self.in_flight_batches.append(
             Batch(batch_id=batch_id, robot_ids=batch, chunk_ids=[c.chunk_id for c in chunks])
         )
@@ -265,21 +266,25 @@ class Mirror:
         actual_completion = batch.inference_start_time + batch.inference_duration
         self.last_batch_completed_time = actual_completion
 
+        served_chunk_ids = set([response.chunk_id for response in batch.responses])
         for robot_id, chunk_id in zip(in_flight.robot_ids, in_flight.chunk_ids):
             robot = self.robots.get(robot_id)
             if robot is None:
                 logger.debug("Ignoring completion for unknown robot: %s", robot_id)
                 continue
-            robot.update_chunk_arrival_time(
-                chunk_id, actual_completion + self.latency_tracker.action_latency(robot_id)
-            )
+            if chunk_id not in served_chunk_ids:
+                robot.pop_chunk(chunk_id)
+            else:
+                robot.update_chunk_arrival_time(
+                    chunk_id, actual_completion + self.latency_tracker.action_latency(robot_id)
+                )
 
     def confirm_chunk(self, ack: AckNotification) -> None:
         robot = self.robots.get(ack.robot_id)
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
             return
-        robot.confirm_chunk(ack.chunk_id, ack.receive_time)
+        robot.update_chunk_arrival_time(ack.chunk_id, ack.receive_time)
 
     def next_time_server_available(self) -> float:
         if not self.in_flight_batches:
@@ -294,9 +299,19 @@ class Mirror:
 
         dispatch_time = self.next_time_server_available()
         for robot_id, request in requests.items():
+            robot = self.robots[robot_id]
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
-            if request.action_index_start > action_index_start:
+            if len(robot.chunks) == 0 or action_index_start > robot.chunks[-1].action_index_start:
                 schedulable_requests.append(request)
+            # else:
+            #     logger.debug("Request %s is not schedulable", request.robot_id)
+            #     logger.debug("Action index start: %d", action_index_start)
+            #     logger.debug("Request action index start: %d", request.action_index_start)
+            #     logger.debug("Dispatch time: %f", dispatch_time)
+            #     logger.debug("Request: %s", request)
+            #     logger.debug("Robot: %s", robot_id)
+            #     logger.debug("Robot steps: %s", self.robots[robot_id].steps)
+            #     logger.debug("Robot chunks: %s", self.robots[robot_id].chunks)
         return schedulable_requests
 
     # below are methods only used by search

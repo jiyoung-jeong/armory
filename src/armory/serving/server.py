@@ -70,6 +70,7 @@ from armory_client.schemas import ServerMetadata
 MAX_ROBOTS = 100
 NUM_WARMUP = 100
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 _uid = uuid.uuid4().hex[:8]
 socket_addresses = {
@@ -104,12 +105,14 @@ async def _router_task(
             if isinstance(msg, BatchProfile):
                 continue
             assert isinstance(msg, ResponseBatch)
+            logger.debug("Received response batch: %s", msg)
 
             metrics_store.record_batch(msg)
             for response in msg.responses:
                 queue = response_queues.get(response.robot_id)
                 if queue is not None:
                     await queue.put(response)
+                    logger.debug("Put response in queue: %s", response)
                 else:
                     logger.info(
                         "No active connection for robot %s, dropping response",
@@ -317,7 +320,7 @@ def create_app(
         zmq_ctx = zmq.asyncio.Context()
 
         scheduler_sock = zmq_ctx.socket(zmq.PUB)
-        scheduler_sock.connect(socket_addresses["server_out_ep"])
+        scheduler_sock.bind(socket_addresses["server_out_ep"])
 
         response_sock = zmq_ctx.socket(zmq.SUB)
         response_sock.setsockopt(zmq.SUBSCRIBE, b"")
@@ -471,6 +474,7 @@ def create_app(
                 stamped = dataclasses.replace(response, server_send_time=time.time())
                 pending_responses[response.request_id] = stamped
                 await websocket.send_bytes(msgpack_numpy.packb(asdict(stamped)))
+                logger.debug("Sent response: %s", stamped)
 
         recv_task = asyncio.create_task(recv())
         send_task = asyncio.create_task(send())

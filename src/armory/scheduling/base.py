@@ -59,14 +59,15 @@ class RequestScheduler(ABC):
         decisions: list[SchedulerDecision] = []
 
         for batch in batches:
-            chunks = self.mirror.queue_batch(batch)
+            batch_id = next(self.next_batch_id)
+            chunks = self.mirror.queue_batch([slot.robot_id for slot in batch], batch_id)
             self._batch_queue.put_nowait(
                 RequestBatch(
                     requests=batch,
                     chunk_ids=[
                         chunk.chunk_id for chunk in chunks
                     ],  # FIXME: can make clean up dataclasses later
-                    batch_id=next(self.next_batch_id),
+                    batch_id=batch_id,
                 )
             )
 
@@ -79,4 +80,4 @@ class RequestScheduler(ABC):
     def reset_robot(self, robot_id: str) -> None:
         self._latest_requests.pop(robot_id, None)
         self.mirror.reset_robot(robot_id)
-        self.latency_tracker.clear(robot_id)
+        # self.latency_tracker.clear(robot_id)

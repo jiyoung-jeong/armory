@@ -91,11 +91,11 @@ class SchedulerWorker:
 
         req_sock = ctx.socket(zmq.SUB)
         req_sock.setsockopt(zmq.SUBSCRIBE, b"")
-        req_sock.bind(self.sched_in_ep)  # WS main connects
+        req_sock.connect(self.sched_in_ep)  # WS main connects
 
         result_sock = ctx.socket(zmq.SUB)
         result_sock.setsockopt(zmq.SUBSCRIBE, b"")
-        result_sock.bind(self.result_ep)  # GPU connects
+        result_sock.connect(self.result_ep)  # GPU connects
 
         extra_kwargs: dict = dict(self.scheduler_kwargs or {})
         scheduler = cls(self.batch_queue, max_batch_size=self.max_batch_size, **extra_kwargs)
@@ -112,7 +112,7 @@ class SchedulerWorker:
         logger.info("Scheduler ready")
 
         while True:
-            poller.poll(timeout=1)
+            poller.poll()
             self._process_engine_messages(scheduler, result_sock)
             self._process_server_messages(scheduler, req_sock)
             decisions = scheduler.schedule()
@@ -140,7 +140,7 @@ class SchedulerWorker:
         # process new requests and decide whether to schedule.
         while result_sock.poll(0):
             msg = result_sock.recv_pyobj(zmq.NOBLOCK)
-            assert isinstance(msg, ResponseBatch)
+            assert isinstance(msg, ResponseBatch), f"Unexpected message: {type(msg).__name__}"
             scheduler.on_batch_completed(msg)
 
     def _process_server_messages(self, scheduler: RequestScheduler, req_sock: zmq.Socket) -> None:
