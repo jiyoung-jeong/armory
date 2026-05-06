@@ -55,7 +55,8 @@ class RequestScheduler(ABC):
     def schedule(self) -> list[SchedulerDecision]:
         """Return a list of batches of requests to be sent to the GPU."""
         # TODO: better traces
-        batches, decisions = self.get_next_batches()
+        batches = self.get_next_batches()
+        decisions: list[SchedulerDecision] = []
 
         for batch in batches:
             now = time.time()

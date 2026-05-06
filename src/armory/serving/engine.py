@@ -10,7 +10,7 @@ from multiprocessing.synchronize import Event
 import numpy as np
 import zmq
 
-from armory.scheduling.latency import LatencyTracker
+from armory.scheduling.latency import EMALatencyTracker
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -101,7 +101,7 @@ class GpuWorker:
         logger.info("GPU worker ready")
 
         # Per-robot inference state — initialised here (post-fork, not in __init__)
-        self._latency_tracker = LatencyTracker()
+        self._latency_tracker = EMALatencyTracker()
         self._last_served_action_index: dict[RobotID, int] = {}
         self._last_infer_step: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
@@ -193,7 +193,7 @@ class GpuWorker:
         while req_sock.poll(0):
             msg = req_sock.recv_pyobj(zmq.NOBLOCK)
             if isinstance(msg, ResetRequest):
-                self._latency_tracker.reset_robot(msg.robot_id)
+                self._latency_tracker.clear(msg.robot_id)
                 logger.debug("Received reset request: %s", msg)
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
