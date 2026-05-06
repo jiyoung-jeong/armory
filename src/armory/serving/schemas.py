@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from typing import NamedTuple, TypeAlias
 
 import numpy as np
+from jaxtyping import Float
 
+from armory.serving.slots import SlotData
 from armory_client.messages import (
     InferResponse,
     InferType,
@@ -49,6 +51,21 @@ class CompletionNotification:
     observation_step: int
     execution_horizon: int
     server_arrival_time: float
+
+    @classmethod
+    def from_slot_data(
+        cls, slot_data: SlotData, batch_size: int, inference_duration: float
+    ) -> CompletionNotification:
+        return cls(
+            robot_id=slot_data.robot_id,
+            action_index_start=slot_data.action_index_start,
+            request_id=slot_data.request_id,
+            batch_size=batch_size,
+            inference_duration=inference_duration,
+            observation_step=slot_data.observation_step,
+            execution_horizon=slot_data.execution_horizon,
+            server_arrival_time=slot_data.arrival_timestamp,
+        )
 
 
 @dataclass(frozen=True)
@@ -105,3 +122,43 @@ class SchedulerDecision:
         if isinstance(data, cls):
             return data
         return cls(**data)
+
+
+# TODO: copied over InferRequest, fix later
+@dataclass(frozen=True)
+class InternalRequest:
+    robot_id: str
+    observation: dict
+    observation_step: int
+    action_index_start: int
+    request_timestamp: float
+    deadline: float
+    execution_horizon: int
+    infer_type: InferType
+    params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
+    noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
+    type: str = "infer"  # FIXME: should be literal
+
+    def __post_init__(self) -> None:
+        if isinstance(self.infer_type, str):
+            object.__setattr__(self, "infer_type", InferType(self.infer_type))
+
+        if isinstance(self.params, dict):
+            if self.infer_type == InferType.INFERENCE_TIME_RTC:
+                object.__setattr__(self, "params", RTCParams(**self.params))
+
+    @classmethod
+    def from_slot_data(
+        cls, slot_data: SlotData, params: RTCParams | VlashParams | TrainTimeRTCParams | None
+    ) -> InternalRequest:
+        return cls(
+            robot_id=slot_data.robot_id,
+            observation=slot_data.obs,
+            observation_step=slot_data.observation_step,
+            action_index_start=slot_data.action_index_start,
+            request_timestamp=slot_data.request_timestamp,
+            deadline=slot_data.deadline,
+            execution_horizon=slot_data.execution_horizon,
+            infer_type=slot_data.infer_type,
+            params=params,
+        )

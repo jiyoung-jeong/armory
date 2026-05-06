@@ -21,6 +21,7 @@ class SlotData:
     slot was overwritten by a newer request after the SlotRequest was enqueued.
     """
 
+    robot_id: RobotID
     obs: dict
     request_id: int
     arrival_timestamp: float

@@ -30,6 +30,17 @@ from armory_client.messages import ResetRequest
 
 logger = logging.getLogger(__name__)
 
+SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
+    "max-batch": MaxBatchScheduler,
+    "fixed-max-batch": FixedMaxBatchScheduler,
+    "greedy-deadline": GreedyDeadlineScheduler,
+    "dynamic-action": DynamicActionScheduler,
+    "lookahead": LookaheadScheduler,
+    "lookahead-actions": LookaheadActionsScheduler,
+    "round-robin": RoundRobinScheduler,
+    "random": RandomBatchScheduler,
+}
+
 
 def _recv_batch_profile(result_sock: zmq.Socket) -> dict[int, float]:
     """Block until the GPU worker sends its BatchProfile over result_sock."""
@@ -42,16 +53,47 @@ def _recv_batch_profile(result_sock: zmq.Socket) -> dict[int, float]:
             logger.warning("Unexpected message before batch profile: %s", type(msg).__name__)
 
 
-SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
-    "max-batch": MaxBatchScheduler,
-    "fixed-max-batch": FixedMaxBatchScheduler,
-    "greedy-deadline": GreedyDeadlineScheduler,
-    "dynamic-action": DynamicActionScheduler,
-    "lookahead": LookaheadScheduler,
-    "lookahead-actions": LookaheadActionsScheduler,
-    "round-robin": RoundRobinScheduler,
-    "random": RandomBatchScheduler,
-}
+def process_engine_messages(scheduler: RequestScheduler, result_sock: zmq.Socket) -> None:
+    # Drain completions first so _in_flight is up-to-date before we
+    # process new requests and decide whether to schedule.
+    while result_sock.poll(0):
+        msg = result_sock.recv_pyobj(zmq.NOBLOCK)
+        if isinstance(msg, list):
+            for item in msg:
+                if isinstance(item, CompletionNotification):
+                    scheduler.update_completion(item)
+            # Any list from the GPU (including an empty [] sent when the
+            # batch was skipped) signals that the batch slot is free.
+            scheduler.notify_batch_complete()
+
+
+def process_server_messages(scheduler: RequestScheduler, req_sock: zmq.Socket) -> None:
+    while req_sock.poll(0):
+        msg = req_sock.recv_pyobj(zmq.NOBLOCK)
+        if isinstance(msg, ResetRequest):
+            scheduler.reset_robot(msg.robot_id)
+            logger.debug("Received reset request: %s", msg)
+        elif isinstance(msg, SlotRequest):
+            scheduler.update(msg)
+            logger.debug("Received slot request: %s", msg)
+        elif isinstance(msg, AckNotification):
+            scheduler.update_ack(msg)
+            logger.debug("Received ack notification: %s", msg)
+        elif isinstance(msg, WarmupSeed):
+            for arrival_ts, request_ts in msg.obs_samples:
+                scheduler.latency_tracker.update_obs(msg.robot_id, arrival_ts, request_ts)
+            for client_receive_time, server_send_time in msg.delivery_samples:
+                scheduler.latency_tracker.update_action_delivery(
+                    msg.robot_id, client_receive_time, server_send_time
+                )
+            logger.info(
+                "Seeded latency for robot %s from warmup, observation_latency: %f, action_latency: %f",
+                msg.robot_id,
+                scheduler.latency_tracker.observation_latency(msg.robot_id),
+                scheduler.latency_tracker.action_latency(msg.robot_id),
+            )
+        else:
+            logger.warning("Unknown message type: %s", type(msg).__name__)
 
 
 # FIXME: underscore method is a weird naming convention
@@ -110,50 +152,8 @@ def _run_scheduler(
     while True:
         poller.poll(timeout=1)
 
-        # Drain completions first so _in_flight is up-to-date before we
-        # process new requests and decide whether to schedule.
-        while result_sock.poll(0):
-            msg = result_sock.recv_pyobj(zmq.NOBLOCK)
-            if isinstance(msg, list):
-                for item in msg:
-                    if isinstance(item, CompletionNotification):
-                        scheduler.update_completion(item)
-                # Any list from the GPU (including an empty [] sent when the
-                # batch was skipped) signals that the batch slot is free.
-                scheduler.notify_batch_complete()
+        process_engine_messages(scheduler, result_sock)
+        process_server_messages(scheduler, req_sock)
 
-        while req_sock.poll(0):
-            msg = req_sock.recv_pyobj(zmq.NOBLOCK)
-            if isinstance(msg, ResetRequest):
-                scheduler.reset_robot(msg.robot_id)
-                logger.debug("Received reset request: %s", msg)
-            elif isinstance(msg, SlotRequest):
-                scheduler.update(msg)
-                logger.debug("Received slot request: %s", msg)
-            elif isinstance(msg, AckNotification):
-                scheduler.update_ack(msg)
-                logger.debug("Received ack notification: %s", msg)
-            elif isinstance(msg, WarmupSeed):
-                for arrival_ts, request_ts in msg.obs_samples:
-                    scheduler.latency_tracker.update_obs(msg.robot_id, arrival_ts, request_ts)
-                for client_receive_time, server_send_time in msg.delivery_samples:
-                    scheduler.latency_tracker.update_action_delivery(
-                        msg.robot_id, client_receive_time, server_send_time
-                    )
-                logger.info(
-                    "Seeded latency for robot %s from warmup, observation_latency: %f, action_latency: %f",
-                    msg.robot_id,
-                    scheduler.latency_tracker.observation_latency(msg.robot_id),
-                    scheduler.latency_tracker.action_latency(msg.robot_id),
-                )
-            else:
-                logger.warning("Unknown message type: %s", type(msg).__name__)
-
-        scheduler.advance()
-        if scheduler.in_flight == 0:
-            scheduler.schedule()
-            if scheduler_metrics_queue is not None:
-                samples = scheduler.flush_decisions()
-                if samples:
-                    scheduler_metrics_queue.put_nowait(samples)
-            scheduler.advance()
+        decisions = scheduler.schedule()
+        scheduler_metrics_queue.put_nowait(decisions)

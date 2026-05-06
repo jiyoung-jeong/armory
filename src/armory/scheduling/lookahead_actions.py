@@ -26,6 +26,22 @@ def _action_times(mirror: Mirror) -> dict[robot_id, float]:
     return {rid: _action_time(robot) for rid, robot in mirror.robots.items()}
 
 
+def _mirror_summary(mirror: Mirror, now: float) -> str:
+    """One-line summary of per-robot buffer health: deadline gap and chunk count."""
+    if not mirror.robots:
+        return "no robots"
+    parts = []
+    deadlines = mirror.deadlines()
+    for rid, robot in sorted(mirror.robots.items()):
+        deadline_in = deadlines[rid] - now
+        n_chunks = len(robot.chunks)
+        buffer_steps = robot.max_overall_action_step + 1 if robot.chunks else 0
+        parts.append(
+            f"{rid}: deadline_in={deadline_in:+.3f}s chunks={n_chunks} buffer_steps={buffer_steps}"
+        )
+    return " | ".join(parts)
+
+
 @dataclass(frozen=True)
 class ScheduledBatch:
     robot_ids: tuple[robot_id, ...]
@@ -179,16 +195,27 @@ class LookaheadActionsScheduler(RequestScheduler):
         self._search: IncrementalSearch | None = None
         self._anticipated_id_counter = itertools.count(start=-1, step=-1)
         self._planned_chunks_by_request_id: dict[int, ActionChunk] = {}
+        self._batches_dispatched: int = 0
+        self._planned_chunk_hits: int = 0
+        self._planned_chunk_misses: int = 0
 
     def advance(self) -> None:
         if not self.schedulable_requests:
             self._search = None
             return
         if self._search is None:
+            now = time.time()
+            logger.debug(
+                "search started: robots=%d in_flight=%d batches_dispatched=%d | %s",
+                len(self.mirror.robots),
+                self._in_flight,
+                self._batches_dispatched,
+                _mirror_summary(self.mirror, now),
+            )
             self._search = IncrementalSearch(
                 self.mirror,
                 self.latency_tracker,
-                time.time(),
+                now,
                 self.horizon,
                 self.max_depth,
             )
@@ -206,17 +233,25 @@ class LookaheadActionsScheduler(RequestScheduler):
             self._search.step(self.step_budget_nodes)
 
         schedule = self._search.best()
+        now = time.time()
         logger.debug(
-            "search committed: nodes=%d pruned_time=%d objective=%.4f len=%d",
+            "search committed: nodes=%d pruned_time=%d objective=%.4f"
+            " schedule_len=%d in_flight=%d batches_dispatched=%d"
+            " chunk_hits=%d chunk_misses=%d | %s",
             self._search.nodes_visited,
             self._search.branches_pruned_time,
             self._search.best_objective,
             len(schedule),
+            self._in_flight,
+            self._batches_dispatched,
+            self._planned_chunk_hits,
+            self._planned_chunk_misses,
+            _mirror_summary(self.mirror, now),
         )
         self._search = None
         if not schedule:
             return []
-        return self._build_batches(schedule, time.time())
+        return self._build_batches(schedule, now)
 
     def _build_batches(self, schedule: list[ScheduledBatch], now: float) -> list[list[SlotRequest]]:
         seen: set[robot_id] = set()
@@ -232,6 +267,9 @@ class LookaheadActionsScheduler(RequestScheduler):
                 if rid not in seen:
                     request = base
                     seen.add(rid)
+                    logger.debug(
+                        "batch slot: rid=%s real obs_step=%d", rid, request.observation_step
+                    )
                 else:
                     request = self.mirror.anticipate_request(
                         base,
@@ -239,10 +277,18 @@ class LookaheadActionsScheduler(RequestScheduler):
                         dispatch_time,
                         next(self._anticipated_id_counter),
                     )
+                    logger.debug(
+                        "batch slot: rid=%s anticipated obs_step=%d action_start=%d dispatch_in=%.3fs",
+                        rid,
+                        request.observation_step,
+                        request.action_index_start,
+                        dispatch_time - now,
+                    )
                 self._planned_chunks_by_request_id[request.request_id] = chunk
                 requests.append(request)
             if requests:
                 result.append(requests)
+                self._batches_dispatched += 1
                 cumulative_infer += self.latency_tracker.infer_latency(len(requests))
         return result
 
@@ -251,5 +297,12 @@ class LookaheadActionsScheduler(RequestScheduler):
     ) -> ActionChunk:
         planned = self._planned_chunks_by_request_id.pop(request.request_id, None)
         if planned is not None:
+            self._planned_chunk_hits += 1
             return planned
+        self._planned_chunk_misses += 1
+        logger.debug(
+            "planned chunk miss: rid=%s request_id=%d falling back to base",
+            request.robot_id,
+            request.request_id,
+        )
         return super()._action_chunk_for_request(request, batch_size, dispatch_time)

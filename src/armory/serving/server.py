@@ -74,7 +74,7 @@ logger = logging.getLogger(__name__)
 
 _uid = uuid.uuid4().hex[:8]
 socket_addresses = {
-    "sched_in_ep": f"ipc:///tmp/openpi_sched_in_{_uid}",
+    "server_out_ep": f"ipc:///tmp/openpi_server_out_{_uid}",
     "gpu_out_ep": f"ipc:///tmp/openpi_gpu_out_{_uid}",
     "result_ep": f"ipc:///tmp/openpi_result_{_uid}",
 }
@@ -245,6 +245,7 @@ def _start_backend(
             metadata.max_batch_size,
             slots,
             batch_queue,
+            socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
             socket_addresses["result_ep"],
             gpu_ready,
@@ -256,7 +257,7 @@ def _start_backend(
     scheduler_proc = mp.Process(
         target=_run_scheduler,
         args=(
-            socket_addresses["sched_in_ep"],
+            socket_addresses["server_out_ep"],
             socket_addresses["result_ep"],
             batch_queue,
             scheduler_metrics_queue,
@@ -316,10 +317,12 @@ def create_app(
 
         zmq_ctx = zmq.asyncio.Context()
 
-        scheduler_sock = zmq_ctx.socket(zmq.PUSH)
-        scheduler_sock.connect(socket_addresses["sched_in_ep"])
+        scheduler_sock = zmq_ctx.socket(zmq.PUB)
+        scheduler_sock.connect(socket_addresses["server_out_ep"])
 
-        # WS main binds gpu_out_ep so GPU can connect to us
+        server_sock = zmq_ctx.socket(zmq.PUSH)
+        server_sock.bind(socket_addresses["gpu_in_ep"])
+
         response_sock = zmq_ctx.socket(zmq.PULL)
         response_sock.bind(socket_addresses["gpu_out_ep"])
 
@@ -429,6 +432,7 @@ def create_app(
                     state.slots.write(
                         slot_index,
                         SlotData(
+                            robot_id=robot_id,
                             obs=req.observation,
                             request_id=request_id,
                             arrival_timestamp=arrival_timestamp,

@@ -27,7 +27,8 @@ from typing import Any
 
 import numpy as np
 
-from armory_client.messages import InferRequest, InferType
+from armory.serving.schemas import InternalRequest
+from armory_client.messages import InferType
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ _ACTION_KEYS = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
 LANGUAGE_KEY = "annotation.human.action.task_description"
 
 
-def _obs_to_groot(requests: list[InferRequest]) -> dict:
-    """Convert a list of armory InferRequests into a single batched GR00T observation."""
+def _obs_to_groot(requests: list[InternalRequest]) -> dict:
+    """Convert a list of armory InternalRequests into a single batched GR00T observation."""
     B = len(requests)
     images = [req.observation["image"] for req in requests]
     wrist_images = [req.observation["wrist_image"] for req in requests]
@@ -130,21 +131,21 @@ class Gr00tPolicyAdapter:
     Implements:
       warmup(max_batch_size)
       infer_batch(requests) -> list[dict]
-      make_infer_request() -> InferRequest
+      make_infer_request() -> InternalRequest
     """
 
     def __init__(self, policy):
         self._policy = policy
 
-    def infer_batch(self, requests: list[InferRequest]) -> list[dict[str, Any]]:
+    def infer_batch(self, requests: list[InternalRequest]) -> list[dict[str, Any]]:
         if not requests:
             return []
         obs = _obs_to_groot(requests)
         action_dict, _ = self._policy.get_action(obs)
         return _groot_action_to_armory(action_dict, len(requests))
 
-    def make_infer_request(self) -> InferRequest:
-        return InferRequest(
+    def make_infer_request(self) -> InternalRequest:
+        return InternalRequest(
             robot_id="__warmup__",
             observation=_make_example_obs(),
             observation_step=0,

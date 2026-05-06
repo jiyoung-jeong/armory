@@ -17,7 +17,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from armory_client.messages import InferRequest, InferType, RTCParams
+from armory.serving.schemas import InternalRequest
+from armory_client.messages import InferType, RTCParams
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class OpenPiPolicyAdapter:
         return _model.Observation.from_dict(batched)
 
     def _infer_batch_group(
-        self, requests: list[InferRequest], *, use_rtc: bool
+        self, requests: list[InternalRequest], *, use_rtc: bool
     ) -> list[dict[str, Any]]:
         """Run a homogeneous sub-batch (all RTC or all non-RTC) in a single GPU call."""
         batch_size = len(requests)
@@ -252,7 +253,7 @@ class OpenPiPolicyAdapter:
     # Armory engine interface
     # ------------------------------------------------------------------
 
-    def infer_batch(self, requests: list[InferRequest]) -> list[dict[str, Any]]:
+    def infer_batch(self, requests: list[InternalRequest]) -> list[dict[str, Any]]:
         """GPU-parallel batch inference, splitting RTC and non-RTC into sub-batches."""
         if not requests:
             return []
@@ -280,8 +281,8 @@ class OpenPiPolicyAdapter:
         assert all(r is not None for r in results)
         return list(results)  # type: ignore[return-value]
 
-    def make_infer_request(self) -> InferRequest:
-        return InferRequest(
+    def make_infer_request(self) -> InternalRequest:
+        return InternalRequest(
             robot_id="__warmup__",
             observation=self._make_example_fn(),
             observation_step=0,
@@ -298,7 +299,7 @@ class OpenPiPolicyAdapter:
         """Warm up both SYNC and RTC paths to trigger JAX JIT compilation."""
         example_obs = self._make_example_fn()
         warmup_requests = [
-            InferRequest(
+            InternalRequest(
                 robot_id="__warmup__",
                 observation=example_obs,
                 observation_step=0,
@@ -320,7 +321,7 @@ class OpenPiPolicyAdapter:
                 else np.zeros((8, 7), dtype=np.float32)
             )
             warmup_requests.append(
-                InferRequest(
+                InternalRequest(
                     robot_id="__warmup__",
                     observation=example_obs,
                     observation_step=0,

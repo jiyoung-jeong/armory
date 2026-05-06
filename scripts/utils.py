@@ -209,7 +209,7 @@ class _MockPolicy:
             robot_id="__warmup__",
             observation={},
             observation_step=0,
-            action_index_start=0,
+            action_start_step=0,
             request_timestamp=now,
             deadline=now + 60.0,
             execution_horizon=0,

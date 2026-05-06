@@ -70,9 +70,3 @@ class EMALatencyTracker(LatencyTracker):
             d[key] = value
         else:
             d[key] = (1.0 - self._alpha) * d[key] + self._alpha * value
-
-
-class JacobsonKarelsLatencyTracker(LatencyTracker):
-    def update_measurement(self, d: dict, key: object, value: float) -> None:
-        # FIXME: implement jacobson-karels tracker from https://github.com/jackvial/drtc/blob/0f6317703eae654d878956011e26fb50fa528162/src/lerobot/async_inference/utils/latency_estimation.py#L88 and compare accuracy
-        raise NotImplementedError("JacobsonKarelsLatencyTracker is not implemented")
