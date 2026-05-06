@@ -111,7 +111,6 @@ class Robot:
         self.steps.append(control_step)
 
     def queue_chunk(self, chunk: ActionChunk) -> None:
-        assert not self.chunks or self.chunks[-1].observation_step < chunk.observation_step
         self.chunks.append(chunk)
 
     def update_chunk_arrival_time(self, chunk_id: int, refined_arrival_time: float) -> None:
