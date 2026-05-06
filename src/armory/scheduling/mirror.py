@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass, replace
 
@@ -184,6 +185,7 @@ class Robot:
 
 @dataclass
 class Batch:
+    batch_id: int
     robot_ids: list[RobotID]
     chunk_ids: list[int]
 
@@ -206,7 +208,8 @@ class Mirror:
         # Optional so existing tests can construct a Mirror without a tracker;
         # methods that need it (get_chunks, update_completion) assert non-None.
         self.latency_tracker = latency_tracker
-        self.in_flight_batches: deque[Batch] = deque()  # TODO: need to handle updates on this well
+        self.in_flight_batches: deque[Batch] = deque()
+        self.last_batch_completed_time: float = 0.0
         self.chunk_id_counter = itertools.count(1)
 
     @property
@@ -229,14 +232,7 @@ class Mirror:
         assert cs is not None, f"robot {rid} has no control step before {obs_cutoff}"
         return cs, robot.next_chunk_start(cs)
 
-    def queue_batch(
-        self,
-        batch: list[RobotID],
-    ) -> list[ActionChunk]:
-        """Build (without queueing) anticipated chunks for a batch dispatched at ``dispatch_time``.
-
-        Caller is expected to follow up with ``fast_forward(post_dispatch_time, batch, chunks)``.
-        """
+    def queue_batch(self, batch: list[RobotID], batch_id: int) -> list[ActionChunk]:
         assert self.latency_tracker is not None
         dispatch_time = self.next_time_server_available()
         infer_lat = self.latency_tracker.infer_latency(len(batch))
@@ -255,24 +251,28 @@ class Mirror:
                     execution_horizon=robot.execution_horizon,
                 )
             )
+        self.in_flight_batches.append(
+            Batch(batch_id=batch_id, robot_ids=batch, chunk_ids=[c.chunk_id for c in chunks])
+        )
         return chunks
 
     def update_batch_completion(self, batch: ResponseBatch) -> None:
-        """Refine a chunk's arrival_time once GPU inference has completed."""
+        """Refine each chunk's arrival_time once GPU inference has completed."""
         assert self.latency_tracker is not None
-        for robot_id, chunk_id in zip(batch.robot_ids, batch.chunk_ids, strict=True):
+        in_flight = self.in_flight_batches.popleft()
+        assert in_flight.batch_id == batch.batch_id
+
+        actual_completion = batch.inference_start_time + batch.inference_duration
+        self.last_batch_completed_time = actual_completion
+
+        for robot_id, chunk_id in zip(in_flight.robot_ids, in_flight.chunk_ids):
             robot = self.robots.get(robot_id)
             if robot is None:
                 logger.debug("Ignoring completion for unknown robot: %s", robot_id)
-                return
-            new_arrival_time = (
-                batch.inference_start_time
-                + batch.inference_duration
-                + self.latency_tracker.action_latency(robot_id)
+                continue
+            robot.update_chunk_arrival_time(
+                chunk_id, actual_completion + self.latency_tracker.action_latency(robot_id)
             )
-            robot.update_chunk_arrival_time(chunk_id, new_arrival_time)
-
-        assert self.in_flight_batches.popleft().batch_id == batch.batch_id
 
     def confirm_chunk(self, ack: AckNotification) -> None:
         robot = self.robots.get(ack.robot_id)
@@ -282,8 +282,12 @@ class Mirror:
         robot.confirm_chunk(ack.chunk_id, ack.receive_time)
 
     def next_time_server_available(self) -> float:
-        # TODO:
-        return 0.0
+        if not self.in_flight_batches:
+            return time.time()
+        assert self.last_batch_completed_time is not None
+        return self.last_batch_completed_time + sum(
+            self.latency_tracker.infer_latency(b.size) for b in self.in_flight_batches
+        )
 
     def schedulable_requests(self, requests: list[SlotRequest]) -> list[SlotRequest]:
         schedulable_requests: list[SlotRequest] = []
