@@ -8,7 +8,7 @@ from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 
 class MaxBatchScheduler(RequestScheduler):
@@ -59,12 +59,13 @@ class GreedyDeadlineScheduler(RequestScheduler):
             self.mirror.in_flight_batches_count > 0
             or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
         ):
-            # logger.debug("No candidates to schedule")
-            # logger.debug("In-flight batches: %d", self.mirror.in_flight_batches_count)
-            # logger.debug("Latest requests: %s", self._latest_requests)
             return []
 
         deadlines = self.mirror.deadlines()
+        logger.debug(
+            "Deadlines: %s",
+            {rid: deadline - min(deadlines.values()) for rid, deadline in deadlines.items()},
+        )
         candidates_and_infer_deadlines = sorted(
             [
                 (
@@ -78,7 +79,10 @@ class GreedyDeadlineScheduler(RequestScheduler):
         )
         _, earliest_infer_deadline = candidates_and_infer_deadlines[0]
         batch_size = self.get_largest_batch_size(earliest_infer_deadline)
-        logger.debug("Scheduling batch of size %d", batch_size)
+        logger.debug(
+            "Scheduling batch: %s",
+            [x[0].robot_id for x in candidates_and_infer_deadlines[:batch_size]],
+        )
         return [[x[0] for x in candidates_and_infer_deadlines[:batch_size]]]
 
     def get_largest_batch_size(self, infer_deadline: float) -> int:

@@ -33,7 +33,6 @@ from armory_client.messages import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 PROFILE_ITERATIONS = 5
 
@@ -101,7 +100,6 @@ class GpuWorker:
         self._prev_actions: dict[RobotID, np.ndarray] = {}
 
         while True:
-            logger.debug("Processing server messages")
             self._process_server_messages(req_sock)
 
             batch: RequestBatch = self.batch_queue.get()  # blocking

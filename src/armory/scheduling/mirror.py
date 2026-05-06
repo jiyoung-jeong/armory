@@ -113,11 +113,12 @@ class Robot:
     def queue_chunk(self, chunk: ActionChunk) -> None:
         self.chunks.append(chunk)
 
-    def update_chunk_arrival_time(self, chunk_id: int, refined_arrival_time: float) -> None:
-        """Called twice: once after GPU completes inference, and once after WS receives ack."""
+    def update_chunk_arrival_time(
+        self, chunk_id: int, refined_arrival_time: float, *, arrived: bool = False
+    ) -> None:
         for i, chunk in enumerate(self.chunks):
             if chunk.chunk_id == chunk_id:
-                self.chunks[i] = replace(chunk, arrival_time=refined_arrival_time)
+                self.chunks[i] = replace(chunk, arrival_time=refined_arrival_time, arrived=arrived)
                 return
 
     @property
@@ -283,7 +284,7 @@ class Mirror:
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
             return
-        robot.update_chunk_arrival_time(ack.chunk_id, ack.receive_time)
+        robot.update_chunk_arrival_time(ack.chunk_id, ack.receive_time, arrived=True)
 
     def next_time_server_available(self) -> float:
         if not self.in_flight_batches:
@@ -330,6 +331,9 @@ class Mirror:
 
     def restore(self, ckpt: Checkpoint) -> None:
         for rid in list(self.robots.keys()):
+            if rid not in ckpt.lengths:
+                del self.robots[rid]
+                continue
             n_steps, n_chunks = ckpt.lengths[rid]
             r = self.robots[rid]
             del r.steps[n_steps:]

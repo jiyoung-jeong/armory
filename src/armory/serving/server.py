@@ -70,7 +70,6 @@ from armory_client.schemas import ServerMetadata
 MAX_ROBOTS = 100
 NUM_WARMUP = 100
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 _uid = uuid.uuid4().hex[:8]
 socket_addresses = {
