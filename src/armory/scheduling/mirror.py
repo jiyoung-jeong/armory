@@ -15,17 +15,31 @@ The two sequences are decoupled: a control step may execute no action (when
 the next action index is not yet available on the robot), and a single chunk
 spans many control steps. ``next_action_step`` on a control step is the
 action index the robot will try to execute on its next tick.
+
+Search and production both mutate Mirror through the same primitives:
+
+- ``get_chunks`` builds (without queueing) anticipated chunks for a batch
+  dispatched at ``dispatch_time``.
+- ``fast_forward(time, robot_ids, chunks)`` queues those chunks and advances
+  every robot's clock to ``time``.
+
+Because both ``Robot.steps`` and ``Robot.chunks`` are append-only during
+simulation, search uses ``checkpoint`` / ``restore`` to revert mutations
+instead of deep-copying the mirror per DFS frame.
 """
 
 from __future__ import annotations
 
-import copy as deepcopy
 import logging
-import time
 from dataclasses import dataclass, replace
 
 from armory.scheduling.latency import LatencyTracker
-from armory.serving.schemas import AckNotification, RobotID, SlotRequest
+from armory.serving.schemas import (
+    AckNotification,
+    CompletionNotification,
+    RobotID,
+    SlotRequest,
+)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -39,14 +53,21 @@ class ControlStep:
     next_action_step: int
 
 
-# TODO: will improve speed later, focus on correctness for now
 @dataclass(frozen=True)
 class ActionChunk:
+    request_id: int  # identity that flows through engine completion + robot ack
     observation_step: int  # step when observation was captured
-    arrival_time: float  # time when the chunk becomes available on the robot
+    arrival_time: float  # estimated/actual time the chunk lands on the robot
     action_index_start: int  # action index of the first action in the chunk
     execution_horizon: int
     arrived: bool = False
+
+
+@dataclass(frozen=True)
+class Checkpoint:
+    """Snapshot of a Mirror's append-only state. Restore truncates lists back."""
+
+    lengths: dict[RobotID, tuple[int, int]]  # (n_steps, n_chunks) per robot
 
 
 class Robot:
@@ -106,10 +127,15 @@ class Robot:
         self.chunks.append(chunk)
 
     def confirm_chunk(self, ack: AckNotification) -> None:
-        """Updates a chunk's actual arrival time."""
         for i, chunk in enumerate(self.chunks):
-            if chunk.observation_step == ack.observation_step:
+            if chunk.request_id == ack.request_id:
                 self.chunks[i] = replace(chunk, arrival_time=ack.receive_time, arrived=True)
+                return
+
+    def update_completion(self, request_id: int, refined_arrival_time: float) -> None:
+        for i, chunk in enumerate(self.chunks):
+            if chunk.request_id == request_id:
+                self.chunks[i] = replace(chunk, arrival_time=refined_arrival_time)
                 return
 
     @property
@@ -177,66 +203,103 @@ class Robot:
         while self.steps[-1].time < time:
             self.steps.append(self.advance_step(self.steps[-1]))
 
+    def next_chunk_start(self, cs: ControlStep) -> int:
+        """Action index the next queued chunk should start at, given control step ``cs``."""
+        return cs.action_step if cs.action_step is not None else cs.next_action_step
+
 
 class Mirror:
-    def __init__(self):
+    def __init__(self, latency_tracker: LatencyTracker | None = None):
         self.robots: dict[RobotID, Robot] = {}
-        self.next_time_server_is_available: float = 0
+        # Optional so existing tests can construct a Mirror without a tracker;
+        # methods that need it (get_chunks, update_completion) assert non-None.
+        self.latency_tracker = latency_tracker
 
-    def reset_robot(self, RobotID: str) -> None:
-        self.robots.pop(RobotID, None)
+    def reset_robot(self, robot_id: RobotID) -> None:
+        self.robots.pop(robot_id, None)
 
     def receive_request(self, request: SlotRequest, control_hz: float) -> None:
-        if request.RobotID not in self.robots:
+        if request.robot_id not in self.robots:
             # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
-            self.robots[request.RobotID] = Robot(control_hz, request.execution_horizon)
-        self.robots[request.RobotID].step(request)
+            self.robots[request.robot_id] = Robot(control_hz, request.execution_horizon)
+        self.robots[request.robot_id].step(request)
 
-    def queue_batch(self, batch: list[RobotID], latency_tracker: LatencyTracker) -> None:
-        """Estimate the chunks that will be queued if we start an inference for the given batch at the given time."""
-        # FIXME: really shouldn't use this copy pattern
-        future = deepcopy.copy(self).fast_forward(self.next_time_server_is_available)
+    def get_chunks(
+        self,
+        batch: list[RobotID],
+        request_ids: list[int],
+        dispatch_time: float,
+    ) -> list[ActionChunk]:
+        """Build (without queueing) anticipated chunks for a batch dispatched at ``dispatch_time``.
 
-        for request in batch:
-            # TODO: maybe we can hide this logic inside Robot, or maybe we have to keep it here since we pass latency_tracker
-            control_step = future.robots[request.RobotID].get_latest_control_step_before(
-                self.next_time_server_is_available
-                - latency_tracker.observation_latency(request.RobotID)
-            )
-
-            # TODO: might need an ID on this, can incrementally update predictions based on gpu completion, and then ack
-            self.robots[request.RobotID].queue_chunk(
+        Caller is expected to follow up with ``fast_forward(post_dispatch_time, batch, chunks)``.
+        """
+        assert self.latency_tracker is not None
+        infer_lat = self.latency_tracker.infer_latency(len(batch))
+        chunks: list[ActionChunk] = []
+        for rid, req_id in zip(batch, request_ids, strict=True):
+            robot = self.robots[rid]
+            obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(rid)
+            cs = robot.get_latest_control_step_before(obs_cutoff)
+            assert cs is not None, f"robot {rid} has no control step before {obs_cutoff}"
+            chunks.append(
                 ActionChunk(
-                    observation_step=control_step.observation_step,
-                    arrival_time=self.next_time_server_is_available
-                    + latency_tracker.infer_latency(len(batch))
-                    + latency_tracker.action_latency(request.RobotID),
-                    action_index_start=control_step.action_step
-                    or control_step.next_action_step,  # FIXME: this is too ugly
-                    execution_horizon=request.execution_horizon,
+                    request_id=req_id,
+                    observation_step=cs.observation_step,
+                    arrival_time=dispatch_time
+                    + infer_lat
+                    + self.latency_tracker.action_latency(rid),
+                    action_index_start=robot.next_chunk_start(cs),
+                    execution_horizon=robot.execution_horizon,
                     arrived=False,
                 )
             )
-
-        # TODO: read this line carefully
-        self.next_time_server_is_available = max(
-            self.next_time_server_is_available, time.time()
-        ) + latency_tracker.infer_latency(len(batch))
-
-    def confirm_chunk(self, ack: AckNotification) -> None:
-        robot = self.robots.get(ack.RobotID)
-        if robot is None:
-            logger.debug("Ignoring ack for unknown robot: %s", ack.RobotID)
-            return
-        robot.confirm_chunk(ack)
+        return chunks
 
     def fast_forward(
         self,
         time: float,
+        robot_ids: list[RobotID],
+        chunks: list[ActionChunk],
     ) -> None:
-        """Simulates time forward to the given time"""
+        """Queue chunks for ``robot_ids`` then advance every robot's clock to ``time``."""
+        for rid, chunk in zip(robot_ids, chunks, strict=True):
+            self.robots[rid].queue_chunk(chunk)
         for robot in self.robots.values():
             robot.step_forward(time)
+
+    def update_completion(self, notification: CompletionNotification, now: float) -> None:
+        """Refine a chunk's arrival_time once GPU inference has completed."""
+        assert self.latency_tracker is not None
+        robot = self.robots.get(notification.robot_id)
+        if robot is None:
+            logger.debug("Ignoring completion for unknown robot: %s", notification.robot_id)
+            return
+        refined = now + self.latency_tracker.action_latency(notification.robot_id)
+        robot.update_completion(notification.request_id, refined)
+
+    def confirm_chunk(self, ack: AckNotification) -> None:
+        robot = self.robots.get(ack.robot_id)
+        if robot is None:
+            logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
+            return
+        robot.confirm_chunk(ack)
+
+    def checkpoint(self) -> Checkpoint:
+        return Checkpoint(
+            lengths={rid: (len(r.steps), len(r.chunks)) for rid, r in self.robots.items()},
+        )
+
+    def restore(self, ckpt: Checkpoint) -> None:
+        for rid in list(self.robots.keys()):
+            if rid not in ckpt.lengths:
+                # Robot added after the checkpoint; drop it.
+                del self.robots[rid]
+                continue
+            n_steps, n_chunks = ckpt.lengths[rid]
+            r = self.robots[rid]
+            del r.steps[n_steps:]
+            del r.chunks[n_chunks:]
 
     def deadlines(self) -> dict[RobotID, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}

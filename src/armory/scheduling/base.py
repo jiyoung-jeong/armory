@@ -1,6 +1,7 @@
 import itertools
 import logging
 import multiprocessing as mp
+import time
 from abc import ABC, abstractmethod
 
 from armory.scheduling.latency import EMALatencyTracker
@@ -25,8 +26,8 @@ class RequestScheduler(ABC):
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
 
-        self.mirror = Mirror()
         self.latency_tracker = EMALatencyTracker()
+        self.mirror = Mirror(self.latency_tracker)
 
         self._latest_requests: dict[str, SlotRequest] = {}
         self.next_batch_id = itertools.count(1)
@@ -41,7 +42,7 @@ class RequestScheduler(ABC):
 
     def update_completion(self, notification: CompletionNotification) -> None:
         self.latency_tracker.update_infer(notification.batch_size, notification.inference_duration)
-        self.mirror.update_completion(notification)  # TODO: need to implement this
+        self.mirror.update_completion(notification, time.time())
 
     def update_ack(self, notification: AckNotification) -> None:
         self.latency_tracker.update_action_delivery(
@@ -57,11 +58,18 @@ class RequestScheduler(ABC):
         batches, decisions = self.get_next_batches()
 
         for batch in batches:
-            # TODO: anticipate times on batches
+            now = time.time()
+            robot_ids = [r.robot_id for r in batch]
+            request_ids = [r.request_id for r in batch]
+            chunks = self.mirror.get_chunks(robot_ids, request_ids, now)
+            self.mirror.fast_forward(
+                now + self.latency_tracker.infer_latency(len(batch)),
+                robot_ids,
+                chunks,
+            )
             self._batch_queue.put_nowait(
                 RequestBatch(requests=batch, batch_id=next(self.next_batch_id))
             )
-            self.mirror.queue_batch(batch, self.latency_tracker)
             self._in_flight += 1
 
         return decisions
@@ -72,6 +80,11 @@ class RequestScheduler(ABC):
     @property
     def in_flight(self) -> int:
         return self._in_flight
+
+    @property
+    def schedulable_requests(self) -> list[SlotRequest]:
+        """Requests eligible to be batched on the next dispatch."""
+        return list(self._latest_requests.values())
 
     @abstractmethod
     def get_next_batches(self) -> list[list[SlotRequest]]:

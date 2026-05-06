@@ -318,9 +318,6 @@ def create_app(
         scheduler_sock = zmq_ctx.socket(zmq.PUB)
         scheduler_sock.connect(socket_addresses["server_out_ep"])
 
-        server_sock = zmq_ctx.socket(zmq.PUSH)
-        server_sock.bind(socket_addresses["gpu_in_ep"])
-
         response_sock = zmq_ctx.socket(zmq.PULL)
         response_sock.bind(socket_addresses["gpu_out_ep"])
 

@@ -4,10 +4,11 @@ from dataclasses import replace
 
 import pytest
 
+from armory.scheduling.latency import LatencyTracker
 from armory.scheduling.mirror import Mirror, Robot
-from armory.serving.schemas import AckNotification, SlotRequest
+from armory.serving.schemas import AckNotification, CompletionNotification, SlotRequest
 from armory_client.messages import InferType
-from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, Scenario
+from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Scenario
 
 ROBOT_ID = "test"
 
@@ -45,7 +46,7 @@ def _make_robot(scenario: Scenario) -> Robot:
         robot.confirm_chunk(
             AckNotification(
                 robot_id=ROBOT_ID,
-                request_id=0,
+                request_id=chunk.request_id,
                 observation_step=chunk.observation_step,
                 receive_time=chunk.arrival_time,
                 server_send_time=0.0,
@@ -163,11 +164,11 @@ def test_mirror_fast_forward_multiple_robots() -> None:
 
 def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     """A robot not named in the chunk list still gets stepped forward."""
-    from tests.scheduling._cases import LONG_RUN
 
+    rids = ["a", "b"]
     mirror = Mirror()
     horizon = LONG_RUN.chunks[0].execution_horizon
-    for rid in ["a", "b"]:
+    for rid in rids:
         mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
     # Only "a" gets the chunk, but both should advance.
     mirror.fast_forward(
@@ -180,3 +181,132 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     assert mirror.robots["b"].steps[-1].observation_step == 2
     # "b" has no chunks, so its action_step should be None on every step.
     assert all(s.action_step is None for s in mirror.robots["b"].steps)
+
+
+class _StubLatencyTracker(LatencyTracker):
+    """Constant-latency tracker for testing get_chunks / update_completion."""
+
+    def __init__(self, *, observation: float, infer: float, action: float) -> None:
+        super().__init__()
+        self._observation = observation
+        self._action = action
+        self._infer = infer
+
+    def _update_measurement(self, d: dict, key: object, value: float) -> None:  # noqa: ARG002
+        pass
+
+    def observation_latency(self, robot_id: str) -> float:  # noqa: ARG002
+        return self._observation
+
+    def infer_latency(self, batch_size: int) -> float:  # noqa: ARG002
+        return self._infer
+
+    def action_latency(self, robot_id: str) -> float:  # noqa: ARG002
+        return self._action
+
+
+def test_mirror_checkpoint_roundtrip() -> None:
+    """Mutate via fast_forward, restore from checkpoint, state should match pre-mutation."""
+    horizon = LONG_RUN.chunks[0].execution_horizon
+    mirror = Mirror()
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+
+    ckpt = mirror.checkpoint()
+    pre_steps = list(mirror.robots[ROBOT_ID].steps)
+    pre_chunks = list(mirror.robots[ROBOT_ID].chunks)
+
+    # Mutate: queue every chunk and step forward.
+    for chunk in LONG_RUN.chunks:
+        mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
+
+    assert len(mirror.robots[ROBOT_ID].steps) > len(pre_steps)
+    assert len(mirror.robots[ROBOT_ID].chunks) > len(pre_chunks)
+
+    mirror.restore(ckpt)
+    assert mirror.robots[ROBOT_ID].steps == pre_steps
+    assert mirror.robots[ROBOT_ID].chunks == pre_chunks
+
+
+def test_mirror_checkpoint_drops_robots_added_after() -> None:
+    """A robot added after the checkpoint is dropped on restore."""
+    horizon = LONG_RUN.chunks[0].execution_horizon
+    mirror = Mirror()
+    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="a"), CONTROL_HZ)
+    ckpt = mirror.checkpoint()
+    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="b"), CONTROL_HZ)
+
+    assert "b" in mirror.robots
+    mirror.restore(ckpt)
+    assert "b" not in mirror.robots
+    assert "a" in mirror.robots
+
+
+def test_mirror_update_completion_refines_arrival() -> None:
+    """update_completion sets arrival_time to ``now + action_latency`` without flipping arrived."""
+    tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
+    mirror = Mirror(tracker)
+    horizon = LONG_RUN.chunks[0].execution_horizon
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    chunk = LONG_RUN.chunks[0]
+    mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
+
+    notification = CompletionNotification(
+        robot_id=ROBOT_ID,
+        action_index_start=chunk.action_index_start,
+        request_id=chunk.request_id,
+        batch_size=1,
+        inference_duration=0.1,
+        observation_step=chunk.observation_step,
+        execution_horizon=chunk.execution_horizon,
+        server_arrival_time=0.0,
+    )
+    mirror.update_completion(notification, now=10.0)
+
+    refined = mirror.robots[ROBOT_ID].chunks[0]
+    assert refined.arrival_time == pytest.approx(10.02)
+    assert refined.arrived is False
+    assert refined.request_id == chunk.request_id
+
+
+def test_mirror_confirm_chunk_by_request_id() -> None:
+    """confirm_chunk matches by request_id, sets arrived=True and arrival_time=ack.receive_time."""
+    horizon = LONG_RUN.chunks[0].execution_horizon
+    mirror = Mirror()
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    chunk = LONG_RUN.chunks[1]  # request_id=1
+    mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
+
+    ack = AckNotification(
+        robot_id=ROBOT_ID,
+        request_id=chunk.request_id,
+        observation_step=chunk.observation_step,
+        receive_time=42.0,
+        server_send_time=0.0,
+    )
+    mirror.confirm_chunk(ack)
+
+    confirmed = mirror.robots[ROBOT_ID].chunks[0]
+    assert confirmed.arrived is True
+    assert confirmed.arrival_time == pytest.approx(42.0)
+
+
+def test_mirror_get_chunks_basic() -> None:
+    """get_chunks builds chunks with the requested ids and the latency-projected arrival time."""
+    tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
+    mirror = Mirror(tracker)
+    horizon = 5
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    # Step the snapshot forward so a control step exists before the obs cutoff.
+    mirror.fast_forward(2.0, [], [])
+
+    chunks = mirror.get_chunks([ROBOT_ID], [99], dispatch_time=2.0)
+    assert len(chunks) == 1
+    [chunk] = chunks
+    assert chunk.request_id == 99
+    # arrival_time = dispatch + infer + action = 2.0 + 0.1 + 0.02
+    assert chunk.arrival_time == pytest.approx(2.12)
+    assert chunk.arrived is False
+    assert chunk.execution_horizon == horizon
+    # observation_step is the step closest to (dispatch_time - obs_latency) = 1.95;
+    # control_hz=1, steps tick at integer times, so the latest step before 1.95 is step 1.
+    assert chunk.observation_step == 1

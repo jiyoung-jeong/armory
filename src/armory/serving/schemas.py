@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, NamedTuple, TypeAlias
 
 import numpy as np
 from jaxtyping import Float
 
-from armory.serving.slots import SlotData
 from armory_client.messages import (
     InferResponse,
     InferType,
@@ -14,6 +13,9 @@ from armory_client.messages import (
     TrainTimeRTCParams,
     VlashParams,
 )
+
+if TYPE_CHECKING:
+    from armory.serving.slots import SlotData
 
 RobotID: TypeAlias = str
 

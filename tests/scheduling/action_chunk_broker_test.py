@@ -38,6 +38,7 @@ def _make_responses(action_chunks: list[ActionChunk]) -> list[TimedResponse]:
 
 def _with_arrival_time(action_chunk: ActionChunk, arrival_time: float) -> ActionChunk:
     return ActionChunk(
+        request_id=action_chunk.request_id,
         observation_step=action_chunk.observation_step,
         arrival_time=arrival_time,
         action_index_start=action_chunk.action_index_start,

@@ -36,6 +36,7 @@ CHUNK_OVERLAP = Scenario(
     name="chunk_overlap",
     chunks=[
         ActionChunk(
+            request_id=0,
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
@@ -43,6 +44,7 @@ CHUNK_OVERLAP = Scenario(
             arrived=False,
         ),
         ActionChunk(
+            request_id=1,
             observation_step=4,
             arrival_time=arrives_before(4),
             action_index_start=2,
@@ -67,6 +69,7 @@ PAUSE_BEFORE_INFERENCE = Scenario(
     name="pause_before_inference",
     chunks=[
         ActionChunk(
+            request_id=0,
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
@@ -74,6 +77,7 @@ PAUSE_BEFORE_INFERENCE = Scenario(
             arrived=False,
         ),
         ActionChunk(
+            request_id=1,
             observation_step=7,
             arrival_time=arrives_before(9),
             action_index_start=5,
@@ -103,6 +107,7 @@ PAUSE_DURING_INFERENCE = Scenario(
     name="pause_during_inference",
     chunks=[
         ActionChunk(
+            request_id=0,
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
@@ -110,6 +115,7 @@ PAUSE_DURING_INFERENCE = Scenario(
             arrived=False,
         ),
         ActionChunk(
+            request_id=1,
             observation_step=5,
             arrival_time=arrives_before(9),
             action_index_start=3,
@@ -137,6 +143,7 @@ LONG_RUN = Scenario(
     name="long_run",
     chunks=[
         ActionChunk(
+            request_id=0,
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
@@ -144,6 +151,7 @@ LONG_RUN = Scenario(
             arrived=False,
         ),
         ActionChunk(
+            request_id=1,
             observation_step=5,
             arrival_time=arrives_before(7),
             action_index_start=5,
@@ -151,6 +159,7 @@ LONG_RUN = Scenario(
             arrived=False,
         ),
         ActionChunk(
+            request_id=2,
             observation_step=10,
             arrival_time=arrives_before(12),
             action_index_start=10,
@@ -158,6 +167,7 @@ LONG_RUN = Scenario(
             arrived=False,
         ),
         ActionChunk(
+            request_id=3,
             observation_step=15,
             arrival_time=arrives_before(17),
             action_index_start=15,

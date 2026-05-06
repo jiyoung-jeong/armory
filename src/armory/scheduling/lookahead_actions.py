@@ -4,12 +4,12 @@ import logging
 import multiprocessing as mp
 import time
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
-from armory.scheduling.mirror import ActionChunk, Mirror, Robot, robot_id
-from armory.serving.schemas import SlotRequest
+from armory.scheduling.mirror import ActionChunk, Checkpoint, Mirror, Robot
+from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -22,7 +22,7 @@ def _action_time(robot: Robot) -> float:
     return (robot.max_overall_action_step + 1) / robot.control_hz
 
 
-def _action_times(mirror: Mirror) -> dict[robot_id, float]:
+def _action_times(mirror: Mirror) -> dict[RobotID, float]:
     return {rid: _action_time(robot) for rid, robot in mirror.robots.items()}
 
 
@@ -42,25 +42,42 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
     return " | ".join(parts)
 
 
+def _anticipate_request(base: SlotRequest, chunk: ActionChunk, dispatch_time: float) -> SlotRequest:
+    """Fabricate a SlotRequest representing a future (depth>1) dispatch for a robot."""
+    return replace(
+        base,
+        request_id=chunk.request_id,
+        observation_step=chunk.observation_step,
+        action_index_start=chunk.action_index_start,
+        request_timestamp=dispatch_time,
+        arrival_timestamp=dispatch_time,
+    )
+
+
 @dataclass(frozen=True)
 class ScheduledBatch:
-    robot_ids: tuple[robot_id, ...]
+    robot_ids: tuple[RobotID, ...]
     chunks: tuple[ActionChunk, ...]
 
 
 class _Frame:
-    """A DFS frame: state at ``time`` after committing ``schedule``."""
+    """A DFS frame: snapshot state at ``time`` after committing ``schedule``.
 
-    __slots__ = ("mirror", "time", "schedule", "candidate_iter")
+    Holds a Checkpoint, not a Mirror copy. ``IncrementalSearch.snapshot``
+    reflects the top-of-stack frame's state; restore is called on backtrack
+    or on max-depth siblings.
+    """
+
+    __slots__ = ("checkpoint", "time", "schedule", "candidate_iter")
 
     def __init__(
         self,
-        mirror: Mirror,
+        checkpoint: Checkpoint,
         time: float,
         schedule: list[ScheduledBatch],
-        candidate_iter: Iterator[tuple[robot_id, ...]] | None,
+        candidate_iter: Iterator[tuple[RobotID, ...]] | None,
     ) -> None:
-        self.mirror = mirror
+        self.checkpoint = checkpoint
         self.time = time
         self.schedule = schedule
         self.candidate_iter = candidate_iter
@@ -79,6 +96,7 @@ class IncrementalSearch:
         self,
         mirror: Mirror,
         latency_tracker: LatencyTracker,
+        anticipated_id_counter: itertools.count,
         start_time: float,
         horizon: float,
         max_depth: int = 3,
@@ -87,7 +105,7 @@ class IncrementalSearch:
         self.start_time = start_time
         self.end_time = start_time + horizon
         self.max_depth = max_depth
-        self.initial_action_times = _action_times(mirror)
+        self._anticipated_id_counter = anticipated_id_counter
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -96,10 +114,16 @@ class IncrementalSearch:
         self.nodes_visited = 1
         self.branches_pruned_time = 0
 
-        root_mirror = copy.deepcopy(mirror)
-        root = _Frame(root_mirror, start_time, [], None)
+        # Single snapshot mutated in place; checkpoints in frames revert it.
+        self.snapshot = copy.deepcopy(mirror)
+        # Advance to search-start so get_chunks finds an observation cutoff
+        # for the first dispatch.
+        self.snapshot.fast_forward(start_time, [], [])
+        self.initial_action_times = _action_times(self.snapshot)
+
+        root = _Frame(self.snapshot.checkpoint(), start_time, [], None)
         if max_depth > 0:
-            root.candidate_iter = self._candidate_iter(root_mirror)
+            root.candidate_iter = self._candidate_iter()
         self._stack: list[_Frame] = [root]
 
     def is_done(self) -> bool:
@@ -118,53 +142,60 @@ class IncrementalSearch:
         frame = self._stack[-1]
         if frame.candidate_iter is None:
             self._stack.pop()
+            if self._stack:
+                self.snapshot.restore(self._stack[-1].checkpoint)
             return
 
         try:
             batch = next(frame.candidate_iter)
         except StopIteration:
             self._stack.pop()
+            if self._stack:
+                self.snapshot.restore(self._stack[-1].checkpoint)
             return
 
         next_time = frame.time + self.latency_tracker.infer_latency(len(batch))
         if next_time > self.end_time:
             self.branches_pruned_time += 1
-            return
+            return  # snapshot still in frame state, no restore needed
 
-        next_state = copy.deepcopy(frame.mirror)
-        chunks = tuple(next_state.get_chunks(list(batch), self.latency_tracker, frame.time))
-        next_state.fast_forward(next_time, list(batch), list(chunks))
+        request_ids = [next(self._anticipated_id_counter) for _ in batch]
+        chunks = tuple(self.snapshot.get_chunks(list(batch), request_ids, frame.time))
+        self.snapshot.fast_forward(next_time, list(batch), list(chunks))
 
         new_schedule = frame.schedule + [ScheduledBatch(batch, chunks)]
-        new_frame = _Frame(next_state, next_time, new_schedule, None)
         self.nodes_visited += 1
-        self._evaluate(new_frame)
+        self._evaluate(new_schedule, next_time)
 
         if len(new_schedule) < self.max_depth:
-            new_frame.candidate_iter = self._candidate_iter(next_state)
-            self._stack.append(new_frame)
+            self._stack.append(
+                _Frame(self.snapshot.checkpoint(), next_time, new_schedule, self._candidate_iter())
+            )
+        else:
+            # Don't push; restore so the next sibling starts from frame state.
+            self.snapshot.restore(frame.checkpoint)
 
-    def _evaluate(self, frame: _Frame) -> None:
-        gpu_time = frame.time - self.start_time
+    def _evaluate(self, schedule: list[ScheduledBatch], frame_time: float) -> None:
+        gpu_time = frame_time - self.start_time
         if gpu_time <= 0:
             return
-        new_times = _action_times(frame.mirror)
-        gained = sum(new_times[rid] - self.initial_action_times[rid] for rid in new_times)
+        new_times = _action_times(self.snapshot)
+        gained = sum(new_times[rid] - self.initial_action_times.get(rid, 0.0) for rid in new_times)
         objective = gained / gpu_time
         if objective > self.best_objective:
             self.best_objective = objective
-            self.best_schedule = list(frame.schedule)
+            self.best_schedule = list(schedule)
             logger.debug(
                 "new best: depth=%d objective=%.4f schedule=%s",
-                len(frame.schedule),
+                len(schedule),
                 objective,
-                [batch.robot_ids for batch in frame.schedule],
+                [batch.robot_ids for batch in schedule],
             )
 
-    def _candidate_iter(self, mirror: Mirror) -> Iterator[tuple[robot_id, ...]]:
+    def _candidate_iter(self) -> Iterator[tuple[RobotID, ...]]:
         # FIXME: reducing search space for now
-        deadlines = mirror.deadlines()
-        sorted_robot_ids = sorted(mirror.robots.keys(), key=lambda rid: deadlines[rid])
+        deadlines = self.snapshot.deadlines()
+        sorted_robot_ids = sorted(self.snapshot.robots.keys(), key=lambda rid: deadlines[rid])
         return iter(
             tuple(sorted_robot_ids[:i])
             for i in range(1, min(self.max_batch_size, len(sorted_robot_ids)) + 1)
@@ -194,7 +225,6 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.step_budget_nodes = step_budget_nodes
         self._search: IncrementalSearch | None = None
         self._anticipated_id_counter = itertools.count(start=-1, step=-1)
-        self._planned_chunks_by_request_id: dict[int, ActionChunk] = {}
         self._batches_dispatched: int = 0
         self._planned_chunk_hits: int = 0
         self._planned_chunk_misses: int = 0
@@ -215,6 +245,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             self._search = IncrementalSearch(
                 self.mirror,
                 self.latency_tracker,
+                self._anticipated_id_counter,
                 now,
                 self.horizon,
                 self.max_depth,
@@ -254,7 +285,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         return self._build_batches(schedule, now)
 
     def _build_batches(self, schedule: list[ScheduledBatch], now: float) -> list[list[SlotRequest]]:
-        seen: set[robot_id] = set()
+        seen: set[RobotID] = set()
         result: list[list[SlotRequest]] = []
         cumulative_infer = 0.0
         for scheduled_batch in schedule:
@@ -271,12 +302,7 @@ class LookaheadActionsScheduler(RequestScheduler):
                         "batch slot: rid=%s real obs_step=%d", rid, request.observation_step
                     )
                 else:
-                    request = self.mirror.anticipate_request(
-                        base,
-                        chunk,
-                        dispatch_time,
-                        next(self._anticipated_id_counter),
-                    )
+                    request = _anticipate_request(base, chunk, dispatch_time)
                     logger.debug(
                         "batch slot: rid=%s anticipated obs_step=%d action_start=%d dispatch_in=%.3fs",
                         rid,
@@ -284,7 +310,6 @@ class LookaheadActionsScheduler(RequestScheduler):
                         request.action_index_start,
                         dispatch_time - now,
                     )
-                self._planned_chunks_by_request_id[request.request_id] = chunk
                 requests.append(request)
             if requests:
                 result.append(requests)
@@ -295,14 +320,25 @@ class LookaheadActionsScheduler(RequestScheduler):
     def _action_chunk_for_request(
         self, request: SlotRequest, batch_size: int, dispatch_time: float
     ) -> ActionChunk:
-        planned = self._planned_chunks_by_request_id.pop(request.request_id, None)
-        if planned is not None:
-            self._planned_chunk_hits += 1
-            return planned
+        robot = self.mirror.robots.get(request.robot_id)
+        if robot is not None:
+            for chunk in robot.chunks:
+                if chunk.request_id == request.request_id:
+                    self._planned_chunk_hits += 1
+                    return chunk
         self._planned_chunk_misses += 1
         logger.debug(
-            "planned chunk miss: rid=%s request_id=%d falling back to base",
+            "planned chunk miss: rid=%s request_id=%d falling back",
             request.robot_id,
             request.request_id,
         )
-        return super()._action_chunk_for_request(request, batch_size, dispatch_time)
+        return ActionChunk(
+            request_id=request.request_id,
+            observation_step=request.observation_step,
+            arrival_time=dispatch_time
+            + self.latency_tracker.infer_latency(batch_size)
+            + self.latency_tracker.action_latency(request.robot_id),
+            action_index_start=request.action_index_start,
+            execution_horizon=request.execution_horizon,
+            arrived=False,
+        )
