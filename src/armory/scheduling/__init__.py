@@ -117,24 +117,6 @@ class RequestScheduler(ABC):
                 total_latency_steps = (
                     observation_latency + inference_latency + action_latency
                 ) * request.control_hz
-                if request.infer_type == InferType.INFERENCE_TIME_RTC and not request.is_padding:
-                    logger.info(
-                        "RTC d estimate: robot=%s request_id=%d batch_size=%d "
-                        "obs_step=%d action_start_step=%d control_hz=%.2f "
-                        "obs_latency_ms=%.1f infer_latency_ms=%.1f "
-                        "action_latency_ms=%.1f d_steps=%.2f execution_horizon=%d",
-                        request.robot_id,
-                        request.request_id,
-                        batch_size,
-                        request.observation_step,
-                        request.action_start_step,
-                        request.control_hz,
-                        observation_latency * 1000,
-                        inference_latency * 1000,
-                        action_latency * 1000,
-                        total_latency_steps,
-                        request.execution_horizon,
-                    )
                 # FIXME: only pass inference + action latency, can determine observation latency when processing
                 annotated.append(
                     dataclasses.replace(request, estimated_d_param=total_latency_steps)

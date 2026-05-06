@@ -66,10 +66,7 @@ class Args:
 
     scheduling_algorithm: str = "greedy-deadline"
 
-    useful_action_weight: float = 0.0
-    useful_tardiness_weight: float = 0.0
-    useful_slack_weight: float = 0.0
-    useful_deficit_weight: float = 4.0
+    deficit_weight: float = 4.0
 
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
@@ -79,12 +76,9 @@ class Args:
 
 
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
-    if args.scheduling_algorithm in {"useful-action", "marginal-utility", "slack-aware-deficit"}:
+    if args.scheduling_algorithm == "dynamic-action":
         return {
-            "useful_action_weight": args.useful_action_weight,
-            "tardiness_weight": args.useful_tardiness_weight,
-            "slack_weight": args.useful_slack_weight,
-            "deficit_weight": args.useful_deficit_weight,
+            "deficit_weight": args.deficit_weight,
         }
     if args.scheduling_algorithm == "lookahead":
         return {

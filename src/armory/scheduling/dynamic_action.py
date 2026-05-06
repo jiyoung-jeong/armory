@@ -6,38 +6,15 @@ from armory.serving.schemas import SlotRequest
 
 
 class DynamicActionScheduler(RequestScheduler):
-    """Greedy-deadline baseline with weighted useful-action adjustments.
-
-    Candidate batches are prefixes of the earliest-deadline ordering, so the
-    scheduler inherits a greedy EDF structure instead of arbitrarily skipping an
-    urgent robot in favor of a later one. The configurable weights then score how
-    far to deviate in batch size from that baseline:
-
-    - useful_action_weight: reward chunks that are expected to contain more still-
-      executable action steps at delivery time;
-    - tardiness_weight: penalize chunks whose latency makes some returned actions
-      unusable on arrival;
-    - slack_weight: reward serving robots with low remaining infer slack;
-    - deficit_weight: reward serving robots that have accumulated service debt.
-
-    When all weights are zero, the score reduces to the underlying greedy-deadline
-    batch-size rule without any explicit special-case branch.
-    """
 
     def __init__(
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
         *,
-        useful_action_weight: float = 1.0,
-        tardiness_weight: float = 0.0,
-        slack_weight: float = 0.0,
         deficit_weight: float = 0.0,
     ):
         super().__init__(batch_queue, max_batch_size)
-        self._useful_action_weight = max(0.0, useful_action_weight)
-        self._tardiness_weight = max(0.0, tardiness_weight)
-        self._slack_weight = max(0.0, slack_weight)
         self._deficit_weight = max(0.0, deficit_weight)
 
         self._service_debt: dict[str, float] = {}
@@ -118,52 +95,24 @@ class DynamicActionScheduler(RequestScheduler):
             len(batch) if fits_earliest_deadline else len(batch) / max(infer_latency, 1e-6)
         )
 
-        weighted_useful_actions = 0.0
-        feasible_count = 0
-        weighted_tardiness = 0.0
-        weighted_slack_bonus = 0.0
         weighted_deficit_bonus = 0.0
         total_demand = 0.0
 
         for request in batch:
             robot_id = request.robot_id
             demand_rate = self._demand_rate.get(robot_id, self._compute_demand_rate(request))
-            predicted_latency_steps = (
-                self.latency_tracker.total_latency(robot_id, len(batch)) * request.control_hz
-            )
-            useful_actions = max(0.0, request.execution_horizon - predicted_latency_steps)
-            tardiness_steps = max(0.0, predicted_latency_steps - request.execution_horizon)
-
-            infer_deadline = self._infer_deadline(request)
-            slack_steps = (infer_deadline - now - infer_latency) * request.control_hz
-            chunk_steps = max(1.0, float(request.execution_horizon))
-            slack_bonus = max(0.0, 1.0 - (slack_steps / chunk_steps))
             deficit_bonus = self._service_debt.get(robot_id, 0.0)
 
-            weighted_useful_actions += demand_rate * useful_actions
-            weighted_tardiness += demand_rate * tardiness_steps
-            weighted_slack_bonus += demand_rate * slack_bonus
             weighted_deficit_bonus += demand_rate * deficit_bonus
             total_demand += demand_rate
-            if useful_actions > 0:
-                feasible_count += 1
 
-        utility_adjustment = (
-            self._useful_action_weight * weighted_useful_actions
-            - self._tardiness_weight * weighted_tardiness
-            + self._slack_weight * weighted_slack_bonus
-            + self._deficit_weight * weighted_deficit_bonus
-        ) / max(infer_latency, 1e-6)
+        utility_adjustment = (self._deficit_weight * weighted_deficit_bonus) / max(infer_latency, 1e-6)
         robot_ids = tuple(request.robot_id for request in batch)
 
         return (
             fits_earliest_deadline,
             utility_adjustment,
             base_greedy_value,
-            weighted_useful_actions,
-            feasible_count,
-            -weighted_tardiness,
-            weighted_slack_bonus,
             weighted_deficit_bonus,
             total_demand,
             -earliest_infer_deadline,

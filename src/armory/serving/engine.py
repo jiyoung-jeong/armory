@@ -122,33 +122,6 @@ def _run_gpu_worker(
             )
             return None
 
-        action_horizon = int(prev.shape[0])
-        action_lag = observation_step - action_start_step
-        rtc_window = s + float(d_param)
-        log_message = (
-            "RTC timing check: robot=%s request_id=%d obs_step=%d "
-            "action_start_step=%d obs_minus_action_start=%d last_rtc_obs_step=%s "
-            "s=%d d=%.2f s_plus_d=%.2f action_horizon=%d execution_horizon=%d "
-            "prev_action_shape=%s"
-        )
-        log_args = (
-            robot_id,
-            request_id,
-            observation_step,
-            action_start_step,
-            action_lag,
-            str(last),
-            s,
-            d_param,
-            rtc_window,
-            action_horizon,
-            execution_horizon,
-            tuple(prev.shape),
-        )
-        if action_lag > 1 or rtc_window > action_horizon or float(d_param) > action_horizon:
-            logger.warning(log_message, *log_args)
-        else:
-            logger.debug(log_message, *log_args)
         return RTCParams(prev_action=prev, s_param=s, d_param=d_param)
 
     while True:

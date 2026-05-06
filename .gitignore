@@ -187,3 +187,5 @@ plots/
 
 # AI
 .claude/
+
+experiments/
