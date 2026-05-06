@@ -41,8 +41,8 @@ def _make_robot(scenario: Scenario) -> Robot:
     robot = Robot(CONTROL_HZ, horizon)
     robot.step(_make_request(0, 0, 0.0, horizon))
     for chunk in scenario.chunks:
-        robot.send_response(chunk)
-        robot.receive_response(
+        robot.queue_chunk(chunk)
+        robot.confirm_chunk(
             AckNotification(
                 robot_id=ROBOT_ID,
                 request_id=0,

@@ -1,4 +1,3 @@
-import dataclasses
 import itertools
 import logging
 import multiprocessing as mp
@@ -13,7 +12,6 @@ from armory.serving.schemas import (
     SchedulerDecision,
     SlotRequest,
 )
-from armory_client.messages import InferType
 
 logger = logging.getLogger(__name__)
 
@@ -51,54 +49,22 @@ class RequestScheduler(ABC):
             notification.receive_time,
             notification.server_send_time,
         )
-        self.mirror.receive_response(notification)
+        self.mirror.confirm_chunk(notification)
 
     def schedule(self) -> list[SchedulerDecision]:
         """Return a list of batches of requests to be sent to the GPU."""
+        # TODO: better traces
         batches, decisions = self.get_next_batches()
 
         for batch in batches:
-            # TODO: figure out annotated
+            # TODO: anticipate times on batches
             self._batch_queue.put_nowait(
                 RequestBatch(requests=batch, batch_id=next(self.next_batch_id))
             )
-            self.mirror.queue_batch(batch)
+            self.mirror.queue_batch(batch, self.latency_tracker)
             self._in_flight += 1
 
-    # TODO: better traces
-    def get_decisions(self, batches: list[list[SlotRequest]]) -> list[SchedulerDecision]:
-        pass
-
-    def _annotate_batch(self, batch: list[SlotRequest], batch_size: int) -> list[SlotRequest]:
-        annotated = []
-        inference_latency = self.latency_tracker.infer_latency(batch_size)
-        for request in batch:
-            observation_latency = self.latency_tracker.observation_latency(request.robot_id)
-            action_latency = self.latency_tracker.action_latency(request.robot_id)
-            total_latency_steps = (
-                observation_latency + inference_latency + action_latency
-            ) * request.control_hz
-            if request.infer_type == InferType.INFERENCE_TIME_RTC and not request.is_padding:
-                logger.info(
-                    "RTC d estimate: robot=%s request_id=%d batch_size=%d "
-                    "obs_step=%d action_index_start=%d control_hz=%.2f "
-                    "obs_latency_ms=%.1f infer_latency_ms=%.1f "
-                    "action_latency_ms=%.1f d_steps=%.2f execution_horizon=%d",
-                    request.robot_id,
-                    request.request_id,
-                    batch_size,
-                    request.observation_step,
-                    request.action_index_start,
-                    request.control_hz,
-                    observation_latency * 1000,
-                    inference_latency * 1000,
-                    action_latency * 1000,
-                    total_latency_steps,
-                    request.execution_horizon,
-                )
-            # FIXME: only pass inference + action latency, can determine observation latency when processing
-            annotated.append(dataclasses.replace(request, estimated_d_param=total_latency_steps))
-        return annotated
+        return decisions
 
     def notify_batch_complete(self) -> None:
         self._in_flight = max(0, self._in_flight - 1)

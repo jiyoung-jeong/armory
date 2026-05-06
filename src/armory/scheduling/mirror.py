@@ -19,7 +19,9 @@ action index the robot will try to execute on its next tick.
 
 from __future__ import annotations
 
+import copy as deepcopy
 import logging
+import time
 from dataclasses import dataclass, replace
 
 from armory.scheduling.latency import LatencyTracker
@@ -99,11 +101,11 @@ class Robot:
 
         self.steps.append(control_step)
 
-    def send_response(self, chunk: ActionChunk) -> None:
+    def queue_chunk(self, chunk: ActionChunk) -> None:
         assert not self.chunks or self.chunks[-1].observation_step < chunk.observation_step
         self.chunks.append(chunk)
 
-    def receive_response(self, ack: AckNotification) -> None:
+    def confirm_chunk(self, ack: AckNotification) -> None:
         """Updates a chunk's actual arrival time."""
         for i, chunk in enumerate(self.chunks):
             if chunk.observation_step == ack.observation_step:
@@ -179,6 +181,7 @@ class Robot:
 class Mirror:
     def __init__(self):
         self.robots: dict[RobotID, Robot] = {}
+        self.next_time_server_is_available: float = 0
 
     def reset_robot(self, RobotID: str) -> None:
         self.robots.pop(RobotID, None)
@@ -189,92 +192,51 @@ class Mirror:
             self.robots[request.RobotID] = Robot(control_hz, request.execution_horizon)
         self.robots[request.RobotID].step(request)
 
-    def schedule_pending_chunk(self, RobotID: str, chunk: ActionChunk) -> None:
-        self.robots[RobotID].send_response(chunk)
+    def queue_batch(self, batch: list[RobotID], latency_tracker: LatencyTracker) -> None:
+        """Estimate the chunks that will be queued if we start an inference for the given batch at the given time."""
+        # FIXME: really shouldn't use this copy pattern
+        future = deepcopy.copy(self).fast_forward(self.next_time_server_is_available)
 
-    def receive_response(self, ack: AckNotification) -> None:
+        for request in batch:
+            # TODO: maybe we can hide this logic inside Robot, or maybe we have to keep it here since we pass latency_tracker
+            control_step = future.robots[request.RobotID].get_latest_control_step_before(
+                self.next_time_server_is_available
+                - latency_tracker.observation_latency(request.RobotID)
+            )
+
+            # TODO: might need an ID on this, can incrementally update predictions based on gpu completion, and then ack
+            self.robots[request.RobotID].queue_chunk(
+                ActionChunk(
+                    observation_step=control_step.observation_step,
+                    arrival_time=self.next_time_server_is_available
+                    + latency_tracker.infer_latency(len(batch))
+                    + latency_tracker.action_latency(request.RobotID),
+                    action_index_start=control_step.action_step
+                    or control_step.next_action_step,  # FIXME: this is too ugly
+                    execution_horizon=request.execution_horizon,
+                    arrived=False,
+                )
+            )
+
+        # TODO: read this line carefully
+        self.next_time_server_is_available = max(
+            self.next_time_server_is_available, time.time()
+        ) + latency_tracker.infer_latency(len(batch))
+
+    def confirm_chunk(self, ack: AckNotification) -> None:
         robot = self.robots.get(ack.RobotID)
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.RobotID)
             return
-        robot.receive_response(ack)
-
-    def get_chunks(
-        self, RobotIDs: list[RobotID], latency_tracker: LatencyTracker, time: float
-    ) -> list[ActionChunk]:
-        """
-        Returns a list of ActionChunks that would be queued if we started an inference for the RobotIDs at the given time.
-        """
-        control_steps = []
-        for rid in RobotIDs:
-            obs_time = time - latency_tracker.observation_latency(rid)
-            control_steps.append(self.robots[rid].get_latest_control_step_before(obs_time))
-
-        inference_latency = latency_tracker.infer_latency(len(RobotIDs))
-        chunks = []
-        for control_step, rid in zip(control_steps, RobotIDs):
-            robot = self.robots[rid]
-            if robot.chunks:
-                observation_step = max(
-                    control_step.observation_step,
-                    robot.chunks[-1].observation_step + 1,
-                )
-                action_index_start = max(
-                    control_step.next_action_step,
-                    robot.max_overall_action_step + 1,
-                )
-            else:
-                observation_step = control_step.observation_step
-                action_index_start = control_step.next_action_step
-            chunks.append(
-                ActionChunk(
-                    observation_step=observation_step,
-                    arrival_time=time + inference_latency + latency_tracker.action_latency(rid),
-                    action_index_start=action_index_start,
-                    execution_horizon=robot.execution_horizon,
-                    arrived=True,
-                )
-            )
-        return chunks
+        robot.confirm_chunk(ack)
 
     def fast_forward(
         self,
         time: float,
-        RobotIDs: list[RobotID],
-        chunks: list[ActionChunk],
     ) -> None:
-        """Simulates time forward to the given time, sending responses and advancing robot steps."""
-        # NOTE: we send responses here so they are available while stepping
-        # it doesn't matter thaot they are "sent" before the actual sending time
-        # because arrival_time handles the timing around this
-        for rid, chunk in zip(RobotIDs, chunks):
-            self.robots[rid].send_response(chunk)
-
+        """Simulates time forward to the given time"""
         for robot in self.robots.values():
             robot.step_forward(time)
 
     def deadlines(self) -> dict[RobotID, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}
-
-    def anticipate_request(
-        self,
-        base: SlotRequest,
-        chunk: ActionChunk,
-        dispatch_time: float,
-        request_id: int,
-    ) -> SlotRequest:
-        """Project ``base`` onto a planned future chunk.
-
-        Returns a synthetic SlotRequest with corrected observation_step,
-        action_index_start, and timestamps so the GPU treats it as a fresh
-        request riding on whatever observation bytes are in ``base.slot_index``.
-        """
-        return replace(
-            base,
-            request_id=request_id,
-            observation_step=chunk.observation_step,
-            action_index_start=chunk.action_index_start,
-            request_timestamp=dispatch_time,
-            arrival_timestamp=dispatch_time,
-            deadline=dispatch_time + chunk.execution_horizon / base.control_hz,
-        )
