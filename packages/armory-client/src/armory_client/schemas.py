@@ -152,6 +152,7 @@ class ActionChunk(ParquetDataclass):
     We store all actions, including past execution horizon, as they might come in handy for debugging later
     """
 
+    chunk_id: int
     observation_step: int
     action_index_start: int
     execution_start_step: int  # which observation step the execution started on
@@ -170,6 +171,7 @@ class ActionChunk(ParquetDataclass):
     ) -> "ActionChunk":
         # NOTE: copy attributes instead of composition to make it easier to serialize for parquet/csv
         return ActionChunk(
+            chunk_id=infer_response.chunk_id,
             observation_step=infer_response.observation_step,
             action_index_start=infer_response.action_index_start,
             execution_start_step=execution_start_step,

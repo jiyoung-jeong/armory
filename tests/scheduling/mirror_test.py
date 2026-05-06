@@ -6,7 +6,7 @@ import pytest
 
 from armory.scheduling.latency import LatencyTracker
 from armory.scheduling.mirror import Mirror, Robot
-from armory.serving.schemas import AckNotification, CompletionNotification, SlotRequest
+from armory.serving.schemas import AckNotification, ResponseBatch, SlotRequest
 from armory_client.messages import InferType
 from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Scenario
 
@@ -108,7 +108,7 @@ def _drip_chunks(mirror: Mirror, scenario: Scenario) -> None:
         mirror.fast_forward(
             chunk.arrival_time + EPS,
             [ROBOT_ID],
-            [replace(chunk, arrived=True)],
+            [chunk],
         )
 
 
@@ -153,9 +153,8 @@ def test_mirror_fast_forward_multiple_robots() -> None:
         mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
 
     for chunk in LONG_RUN.chunks:
-        arrived = replace(chunk, arrived=True)
         # Send the same chunk to both robots so they stay in lockstep.
-        mirror.fast_forward(chunk.arrival_time + EPS, rids, [arrived, arrived])
+        mirror.fast_forward(chunk.arrival_time + EPS, rids, [chunk, chunk])
 
     expected_deadline = LONG_RUN.control_steps()[-1].time
     deadlines = mirror.deadlines()
@@ -174,7 +173,7 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     mirror.fast_forward(
         LONG_RUN.chunks[0].arrival_time + EPS,
         ["a"],
-        [replace(LONG_RUN.chunks[0], arrived=True)],
+        [LONG_RUN.chunks[0]],
     )
 
     assert mirror.robots["a"].steps[-1].observation_step == 2
@@ -250,15 +249,13 @@ def test_mirror_update_completion_refines_arrival() -> None:
     chunk = LONG_RUN.chunks[0]
     mirror.fast_forward(chunk.arrival_time + EPS, [ROBOT_ID], [chunk])
 
-    notification = CompletionNotification(
+    notification = ResponseBatch(
         robot_id=ROBOT_ID,
-        action_index_start=chunk.action_index_start,
-        request_id=chunk.request_id,
+        responses=[],
+        is_padding=[],
+        batch_id=0,
         batch_size=1,
         inference_duration=0.1,
-        observation_step=chunk.observation_step,
-        execution_horizon=chunk.execution_horizon,
-        server_arrival_time=0.0,
     )
     mirror.update_completion(notification, now=10.0)
 
@@ -269,7 +266,7 @@ def test_mirror_update_completion_refines_arrival() -> None:
 
 
 def test_mirror_confirm_chunk_by_request_id() -> None:
-    """confirm_chunk matches by request_id, sets arrived=True and arrival_time=ack.receive_time."""
+    """confirm_chunk matches by request_id, sets arrival_time=ack.receive_time."""
     horizon = LONG_RUN.chunks[0].execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)

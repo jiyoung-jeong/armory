@@ -23,6 +23,7 @@ def _make_responses(action_chunks: list[ActionChunk]) -> list[TimedResponse]:
             InferResponse(
                 robot_id="test",
                 request_id=i,
+                chunk_id=chunk.chunk_id,
                 observation_step=chunk.observation_step,
                 action_index_start=chunk.action_index_start,
                 request_timestamp=0.0,
@@ -39,11 +40,11 @@ def _make_responses(action_chunks: list[ActionChunk]) -> list[TimedResponse]:
 def _with_arrival_time(action_chunk: ActionChunk, arrival_time: float) -> ActionChunk:
     return ActionChunk(
         request_id=action_chunk.request_id,
+        chunk_id=action_chunk.chunk_id,
         observation_step=action_chunk.observation_step,
         arrival_time=arrival_time,
         action_index_start=action_chunk.action_index_start,
         execution_horizon=action_chunk.execution_horizon,
-        arrived=False,
     )
 
 

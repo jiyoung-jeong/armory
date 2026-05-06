@@ -5,14 +5,12 @@
     GPU process         - loads weights; runs batches; sends responses directly to WS main
 
 ZMQ topology (all ipc://, unique per server instance):
-    WS main  ──[PUSH: SlotRequest / ResetRequest]──► Scheduler [binds sched_in_ep]
+    WS main  ──[PUB: SlotRequest / ResetRequest / AckNotification / WarmupPing]──► Scheduler [binds server_out_ep]
     WS main  ──slots.write()───────────────────────► mp.RawArray shared memory
-    GPU      ──[PUSH: list[InferResponse]]──────────► WS main   [binds gpu_out_ep]
-    GPU      ──[PUSH: list[CompletionNotification]]► Scheduler [binds result_ep]
+    GPU      ──[PUB: ResponseBatch]──────────────► WS main, Scheduler   [binds gpu_out_ep]
     Scheduler ──[mp.Queue: list[SlotRequest]]───────► GPU
     GPU      ──slots.read()──────────────────────────► mp.RawArray shared memory
 
-    GPU responses bypass the scheduler entirely scheduler solving cannot delay client delivery.
     A single _router_task in WS main reads from gpu_out_ep and dispatches to per-robot queues.
     Large numpy arrays (observations) cross zero process boundaries via ZMQ.
 """
@@ -46,6 +44,7 @@ from armory.serving.metrics.dash_app import create_dash_app
 from armory.serving.scheduler import SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
+    BatchProfile,
     ResponseBatch,
     RobotID,
     SchedulerDecision,
@@ -76,7 +75,6 @@ _uid = uuid.uuid4().hex[:8]
 socket_addresses = {
     "server_out_ep": f"ipc:///tmp/openpi_server_out_{_uid}",
     "gpu_out_ep": f"ipc:///tmp/openpi_gpu_out_{_uid}",
-    "result_ep": f"ipc:///tmp/openpi_result_{_uid}",
 }
 
 _request_id_counter = itertools.count(1)
@@ -102,9 +100,13 @@ async def _router_task(
     logger.info("Router task starting")
     while True:
         try:
-            batch: ResponseBatch = await response_sock.recv_pyobj()
-            metrics_store.record_batch(batch)
-            for response in batch.responses:
+            msg: ResponseBatch | BatchProfile = await response_sock.recv_pyobj()
+            if isinstance(msg, BatchProfile):
+                continue
+            assert isinstance(msg, ResponseBatch)
+
+            metrics_store.record_batch(msg)
+            for response in msg.responses:
                 queue = response_queues.get(response.robot_id)
                 if queue is not None:
                     await queue.put(response)
@@ -246,7 +248,6 @@ def _start_backend(
             batch_queue,
             socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
-            socket_addresses["result_ep"],
             gpu_ready,
             log_queue,
         ).run,
@@ -256,7 +257,7 @@ def _start_backend(
     scheduler_proc = mp.Process(
         target=SchedulerWorker(
             socket_addresses["server_out_ep"],
-            socket_addresses["result_ep"],
+            socket_addresses["gpu_out_ep"],
             batch_queue,
             scheduler_metrics_queue,
             metadata.max_batch_size,
@@ -318,8 +319,8 @@ def create_app(
         scheduler_sock = zmq_ctx.socket(zmq.PUB)
         scheduler_sock.connect(socket_addresses["server_out_ep"])
 
-        response_sock = zmq_ctx.socket(zmq.PULL)
-        response_sock.bind(socket_addresses["gpu_out_ep"])
+        response_sock = zmq_ctx.socket(zmq.SUB)
+        response_sock.connect(socket_addresses["gpu_out_ep"])
 
         response_queues: dict[str, asyncio.Queue] = {}
 
@@ -397,6 +398,7 @@ def create_app(
                                 AckNotification(
                                     robot_id=robot_id,
                                     request_id=ack.request_id,
+                                    chunk_id=ack.chunk_id,
                                     observation_step=response.observation_step,
                                     receive_time=ack.receive_time,
                                     server_send_time=response.server_send_time,

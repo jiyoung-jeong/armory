@@ -41,7 +41,6 @@ CHUNK_OVERLAP = Scenario(
             arrival_time=arrives_before(2),
             action_index_start=0,
             execution_horizon=5,
-            arrived=False,
         ),
         ActionChunk(
             request_id=1,
@@ -49,7 +48,6 @@ CHUNK_OVERLAP = Scenario(
             arrival_time=arrives_before(4),
             action_index_start=2,
             execution_horizon=5,
-            arrived=False,
         ),
     ],
     obs_action_next=[
@@ -74,7 +72,6 @@ PAUSE_BEFORE_INFERENCE = Scenario(
             arrival_time=arrives_before(2),
             action_index_start=0,
             execution_horizon=5,
-            arrived=False,
         ),
         ActionChunk(
             request_id=1,
@@ -82,7 +79,6 @@ PAUSE_BEFORE_INFERENCE = Scenario(
             arrival_time=arrives_before(9),
             action_index_start=5,
             execution_horizon=5,
-            arrived=False,
         ),
     ],
     obs_action_next=[
@@ -112,7 +108,6 @@ PAUSE_DURING_INFERENCE = Scenario(
             arrival_time=arrives_before(2),
             action_index_start=0,
             execution_horizon=5,
-            arrived=False,
         ),
         ActionChunk(
             request_id=1,
@@ -120,7 +115,6 @@ PAUSE_DURING_INFERENCE = Scenario(
             arrival_time=arrives_before(9),
             action_index_start=3,
             execution_horizon=5,
-            arrived=False,
         ),
     ],
     obs_action_next=[
@@ -148,7 +142,6 @@ LONG_RUN = Scenario(
             arrival_time=arrives_before(2),
             action_index_start=0,
             execution_horizon=5,
-            arrived=False,
         ),
         ActionChunk(
             request_id=1,
@@ -156,7 +149,6 @@ LONG_RUN = Scenario(
             arrival_time=arrives_before(7),
             action_index_start=5,
             execution_horizon=5,
-            arrived=False,
         ),
         ActionChunk(
             request_id=2,
@@ -164,7 +156,6 @@ LONG_RUN = Scenario(
             arrival_time=arrives_before(12),
             action_index_start=10,
             execution_horizon=5,
-            arrived=False,
         ),
         ActionChunk(
             request_id=3,
@@ -172,7 +163,6 @@ LONG_RUN = Scenario(
             arrival_time=arrives_before(17),
             action_index_start=15,
             execution_horizon=5,
-            arrived=False,
         ),
     ],
     obs_action_next=[

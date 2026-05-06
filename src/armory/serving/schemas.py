@@ -42,40 +42,12 @@ class SlotRequest:
 
 
 @dataclass(frozen=True)
-class CompletionNotification:
-    """Sent from GPU to scheduler after inference so the scheduler can update its state."""
-
-    robot_id: RobotID
-    action_index_start: int
-    request_id: int
-    batch_size: int
-    inference_duration: float
-    observation_step: int
-    execution_horizon: int
-    server_arrival_time: float
-
-    @classmethod
-    def from_slot_data(
-        cls, slot_data: SlotData, batch_size: int, inference_duration: float
-    ) -> CompletionNotification:
-        return cls(
-            robot_id=slot_data.robot_id,
-            action_index_start=slot_data.action_index_start,
-            request_id=slot_data.request_id,
-            batch_size=batch_size,
-            inference_duration=inference_duration,
-            observation_step=slot_data.observation_step,
-            execution_horizon=slot_data.execution_horizon,
-            server_arrival_time=slot_data.arrival_timestamp,
-        )
-
-
-@dataclass(frozen=True)
 class AckNotification:
     """Sent from WS to scheduler when a client acks receipt of an InferResponse."""
 
     robot_id: RobotID
     request_id: int
+    chunk_id: int
     observation_step: int
     receive_time: float
     server_send_time: float
@@ -95,15 +67,29 @@ class WarmupSeed:
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 
 
+# TODO: rename as ActionChunkMetadata
+@dataclass(frozen=True)
+class ActionChunk:
+    chunk_id: int
+    observation_step: int  # step when observation was captured
+    arrival_time: float  # estimated/actual time the chunk lands on the robot
+    action_index_start: int  # action index of the first action in the chunk
+    execution_horizon: int
+    arrived: bool = False
+
+
 class RequestBatch(NamedTuple):
     requests: list[SlotRequest]
+    chunks: list[ActionChunk]
     batch_id: int
 
 
 class ResponseBatch(NamedTuple):
     responses: list[InferResponse]
     batch_id: int
-    batch_size: int | None = None
+    batch_size: int
+    inference_start_time: float
+    inference_duration: float
 
 
 @dataclass

@@ -14,7 +14,6 @@ from armory.scheduling.latency import EMALatencyTracker
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
-    CompletionNotification,
     InternalRequest,
     RequestBatch,
     ResponseBatch,
@@ -37,9 +36,8 @@ logger = logging.getLogger(__name__)
 
 PROFILE_ITERATIONS = 5
 
+
 # TODO: clean up padding pattern
-
-
 class GpuWorker:
     """Subprocess worker: loads model, loops recv batch -> infer -> send results.
 
@@ -55,7 +53,6 @@ class GpuWorker:
         batch_queue: mp.Queue,
         server_out_ep: str,
         gpu_out_ep: str,
-        result_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
     ) -> None:
@@ -65,7 +62,6 @@ class GpuWorker:
         self.batch_queue = batch_queue
         self.server_out_ep = server_out_ep
         self.gpu_out_ep = gpu_out_ep
-        self.result_ep = result_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
 
@@ -88,14 +84,10 @@ class GpuWorker:
         req_sock.connect(self.server_out_ep)
 
         # Direct path to WS _router_task (WS process binds)
-        response_sock = ctx.socket(zmq.PUSH)
-        response_sock.connect(self.gpu_out_ep)
+        result_sock = ctx.socket(zmq.PUB)
+        result_sock.connect(self.gpu_out_ep)
 
-        # State-update path to scheduler (scheduler binds)
-        notify_sock = ctx.socket(zmq.PUSH)
-        notify_sock.connect(self.result_ep)
-
-        self._profile_and_send(policy, notify_sock)
+        self._profile_and_send(policy, result_sock)
 
         self.ready_event.set()
         logger.info("GPU worker ready")
@@ -112,11 +104,27 @@ class GpuWorker:
             batch: RequestBatch = self.batch_queue.get()  # blocking
             slot_reqs: list[SlotRequest] = batch.requests
 
-            slot_datas = [self.slots.read(sr.slot_index) for sr in slot_reqs]
-            slot_datas = [sd for sd in slot_datas if self._should_serve(sd)]
+            # FIXME: can be much more concise
+            slot_datas = []
+            chunk_ids = []
+            for sr, chunk_id in zip(slot_reqs, batch.chunk_ids, strict=True):
+                sd = self.slots.read(sr.slot_index)
+                if self._should_serve(sd):
+                    slot_datas.append(sd)
+                    chunk_ids.append(chunk_id)
 
             if len(slot_datas) == 0:
-                notify_sock.send_pyobj([])
+                result_sock.send_pyobj(
+                    [
+                        ResponseBatch(
+                            responses=[],
+                            is_padding=[],
+                            batch_id=batch.batch_id,
+                            batch_size=len(slot_datas),
+                            inference_duration=0.0,
+                        )
+                    ]
+                )
                 continue
 
             infer_requests = [
@@ -134,6 +142,7 @@ class GpuWorker:
                 InferResponse(
                     robot_id=sd.robot_id,
                     request_id=sd.request_id,
+                    chunk_id=chunk_id,
                     observation_step=sd.observation_step,
                     action_index_start=sd.action_index_start,
                     request_timestamp=sd.request_timestamp,
@@ -144,13 +153,13 @@ class GpuWorker:
                     inference_start_time=t0,
                     inference_end_time=t1,
                 )
-                for sd, action_dict in zip(slot_datas, actions, strict=True)
+                for sd, action_dict, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
             self._update_state(slot_reqs, slot_datas, actions)
 
             # Send responses directly to WS — not via scheduler
-            response_sock.send_pyobj(
+            result_sock.send_pyobj(
                 ResponseBatch(
                     responses=[
                         response
@@ -159,15 +168,9 @@ class GpuWorker:
                     ],
                     batch_id=batch.batch_id,
                     batch_size=len(slot_datas),
+                    inference_start_time=t0,
+                    inference_duration=inference_duration,
                 )
-            )
-
-            # Notify scheduler of completion so it can update latency estimates
-            notify_sock.send_pyobj(
-                [
-                    CompletionNotification.from_slot_data(sd, len(slot_datas), inference_duration)
-                    for sd in slot_datas
-                ],
             )
 
     # ------------------------------------------------------------------

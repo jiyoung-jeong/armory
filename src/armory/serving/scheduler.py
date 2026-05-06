@@ -21,7 +21,7 @@ from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
-    CompletionNotification,
+    ResponseBatch,
     SlotRequest,
     WarmupSeed,
 )
@@ -120,6 +120,7 @@ class SchedulerWorker:
     # Helpers
     # ------------------------------------------------------------------
 
+    # TODO: this two functions can probably be unified
     def _recv_batch_profile(self, result_sock: zmq.Socket) -> dict[int, float]:
         """Block until the GPU worker sends its BatchProfile over result_sock."""
         logger.info("Waiting for batch profile from GPU worker...")
@@ -137,13 +138,8 @@ class SchedulerWorker:
         # process new requests and decide whether to schedule.
         while result_sock.poll(0):
             msg = result_sock.recv_pyobj(zmq.NOBLOCK)
-            if isinstance(msg, list):
-                for item in msg:
-                    if isinstance(item, CompletionNotification):
-                        scheduler.update_completion(item)
-                # Any list from the GPU (including an empty [] sent when the
-                # batch was skipped) signals that the batch slot is free.
-                scheduler.notify_batch_complete()
+            assert isinstance(msg, ResponseBatch)
+            scheduler.on_batch_completed(msg)
 
     def _process_server_messages(self, scheduler: RequestScheduler, req_sock: zmq.Socket) -> None:
         while req_sock.poll(0):

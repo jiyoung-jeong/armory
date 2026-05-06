@@ -152,6 +152,7 @@ class ActionChunkBroker(ActionChunkBrokerBase):
                 )
                 self._ws_client.send_ack(
                     action_chunk.request_id,
+                    action_chunk.chunk_id,
                     action_chunk.response_timestamp,
                     action_chunk.execution_start_step,
                     first_executed_index,

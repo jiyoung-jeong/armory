@@ -2,9 +2,8 @@ import copy
 import itertools
 import logging
 import multiprocessing as mp
-import time
 from collections.abc import Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
@@ -40,18 +39,6 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
             f"{rid}: deadline_in={deadline_in:+.3f}s chunks={n_chunks} buffer_steps={buffer_steps}"
         )
     return " | ".join(parts)
-
-
-def _anticipate_request(base: SlotRequest, chunk: ActionChunk, dispatch_time: float) -> SlotRequest:
-    """Fabricate a SlotRequest representing a future (depth>1) dispatch for a robot."""
-    return replace(
-        base,
-        request_id=chunk.request_id,
-        observation_step=chunk.observation_step,
-        action_index_start=chunk.action_index_start,
-        request_timestamp=dispatch_time,
-        arrival_timestamp=dispatch_time,
-    )
 
 
 @dataclass(frozen=True)
@@ -229,116 +216,33 @@ class LookaheadActionsScheduler(RequestScheduler):
         self._planned_chunk_hits: int = 0
         self._planned_chunk_misses: int = 0
 
-    def advance(self) -> None:
-        if not self.schedulable_requests:
-            self._search = None
-            return
-        if self._search is None:
-            now = time.time()
-            logger.debug(
-                "search started: robots=%d in_flight=%d batches_dispatched=%d | %s",
-                len(self.mirror.robots),
-                self._in_flight,
-                self._batches_dispatched,
-                _mirror_summary(self.mirror, now),
-            )
-            self._search = IncrementalSearch(
-                self.mirror,
-                self.latency_tracker,
-                self._anticipated_id_counter,
-                now,
-                self.horizon,
-                self.max_depth,
-            )
-        if not self._search.is_done():
-            self._search.step(self.step_budget_nodes)
-
     def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty() or not self.schedulable_requests:
-            return []
-        if self._search is None:
-            self.advance()
-        if self._search is None:
-            return []
-        if not self._search.best() and not self._search.is_done():
-            self._search.step(self.step_budget_nodes)
-
-        schedule = self._search.best()
-        now = time.time()
+        SCHEDULING_BUFFER = 0.01
         logger.debug(
-            "search committed: nodes=%d pruned_time=%d objective=%.4f"
-            " schedule_len=%d in_flight=%d batches_dispatched=%d"
-            " chunk_hits=%d chunk_misses=%d | %s",
-            self._search.nodes_visited,
-            self._search.branches_pruned_time,
-            self._search.best_objective,
-            len(schedule),
+            "search started: robots=%d in_flight=%d batches_dispatched=%d | %s",
+            len(self.mirror.robots),
             self._in_flight,
             self._batches_dispatched,
-            self._planned_chunk_hits,
-            self._planned_chunk_misses,
-            _mirror_summary(self.mirror, now),
+            _mirror_summary(self.mirror, self.mirror.next_time_server_available),
         )
-        self._search = None
-        if not schedule:
-            return []
-        return self._build_batches(schedule, now)
+        self._search = IncrementalSearch(
+            self.mirror,
+            self.latency_tracker,
+            self._anticipated_id_counter,
+            self.mirror.next_time_server_available,
+            self.horizon,
+            self.max_depth,
+        )
+        if self.mirror.time_until_server_available < SCHEDULING_BUFFER:
+            # TODO: just do greedy
+            pass
 
-    def _build_batches(self, schedule: list[ScheduledBatch], now: float) -> list[list[SlotRequest]]:
-        seen: set[RobotID] = set()
-        result: list[list[SlotRequest]] = []
-        cumulative_infer = 0.0
-        for scheduled_batch in schedule:
-            dispatch_time = now + cumulative_infer
-            requests: list[SlotRequest] = []
-            for rid, chunk in zip(scheduled_batch.robot_ids, scheduled_batch.chunks, strict=True):
-                if rid not in self._latest_requests:
-                    continue
-                base = self._latest_requests[rid]
-                if rid not in seen:
-                    request = base
-                    seen.add(rid)
-                    logger.debug(
-                        "batch slot: rid=%s real obs_step=%d", rid, request.observation_step
-                    )
-                else:
-                    request = _anticipate_request(base, chunk, dispatch_time)
-                    logger.debug(
-                        "batch slot: rid=%s anticipated obs_step=%d action_start=%d dispatch_in=%.3fs",
-                        rid,
-                        request.observation_step,
-                        request.action_index_start,
-                        dispatch_time - now,
-                    )
-                requests.append(request)
-            if requests:
-                result.append(requests)
-                self._batches_dispatched += 1
-                cumulative_infer += self.latency_tracker.infer_latency(len(requests))
-        return result
+        while (
+            self.mirror.time_until_server_available > SCHEDULING_BUFFER
+            and not self._search.is_done()
+        ):
+            logger.debug("Advancing search")  # TODO:
+            self.advance()
+            logger.debug("Search advanced, updated best to")  # TODO:
 
-    def _action_chunk_for_request(
-        self, request: SlotRequest, batch_size: int, dispatch_time: float
-    ) -> ActionChunk:
-        robot = self.mirror.robots.get(request.robot_id)
-        if robot is not None:
-            for chunk in robot.chunks:
-                if chunk.request_id == request.request_id:
-                    self._planned_chunk_hits += 1
-                    return chunk
-        self._planned_chunk_misses += 1
-        logger.debug(
-            "planned chunk miss: rid=%s request_id=%d falling back",
-            request.robot_id,
-            request.request_id,
-        )
-        return ActionChunk(
-            request_id=request.request_id,
-            observation_step=request.observation_step,
-            arrival_time=dispatch_time
-            + self.latency_tracker.infer_latency(batch_size)
-            + self.latency_tracker.action_latency(request.robot_id),
-            action_index_start=request.action_index_start,
-            execution_horizon=request.execution_horizon,
-            arrived=False,
-        )
+        return self._search.best()

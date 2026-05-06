@@ -67,6 +67,7 @@ class ResetRequest:
 class InferResponse:
     robot_id: str
     request_id: int  # for routing response to correct connection
+    chunk_id: int  # for matching with ActionChunk.chunk_id
     observation_step: int  # from request
     action_index_start: int  # from request
     request_timestamp: float  # from request
@@ -83,6 +84,7 @@ class InferResponse:
 @dataclass(frozen=True)
 class ResponseAck:
     request_id: int  # matches InferResponse.request_id
+    chunk_id: int  # matches InferResponse.chunk_id
     receive_time: float  # time.time() on client at receipt
     execution_start_step: int  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
