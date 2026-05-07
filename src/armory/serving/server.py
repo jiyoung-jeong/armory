@@ -5,14 +5,12 @@
     GPU process         - loads weights; runs batches; sends responses directly to WS main
 
 ZMQ topology (all ipc://, unique per server instance):
-    WS main  ──[PUSH: SlotRequest / ResetRequest]──► Scheduler [binds sched_in_ep]
+    WS main  ──[PUB: SlotRequest / ResetRequest / AckNotification / WarmupPing]──► Scheduler [binds server_out_ep]
     WS main  ──slots.write()───────────────────────► mp.RawArray shared memory
-    GPU      ──[PUSH: list[InferResponse]]──────────► WS main   [binds gpu_out_ep]
-    GPU      ──[PUSH: list[CompletionNotification]]► Scheduler [binds result_ep]
+    GPU      ──[PUB: ResponseBatch]──────────────► WS main, Scheduler   [binds gpu_out_ep]
     Scheduler ──[mp.Queue: list[SlotRequest]]───────► GPU
     GPU      ──slots.read()──────────────────────────► mp.RawArray shared memory
 
-    GPU responses bypass the scheduler entirely scheduler solving cannot delay client delivery.
     A single _router_task in WS main reads from gpu_out_ep and dispatches to per-robot queues.
     Large numpy arrays (observations) cross zero process boundaries via ZMQ.
 """
@@ -21,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import itertools
 import logging
 import multiprocessing as mp
 import os
@@ -39,17 +38,18 @@ from fastapi.concurrency import asynccontextmanager
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
 
-from armory.serving.engine import _run_gpu_worker
+from armory.serving.engine import GpuWorker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
-from armory.serving.scheduler import _run_scheduler
+from armory.serving.scheduler import SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
+    BatchProfile,
     ResponseBatch,
+    RobotID,
     SchedulerDecision,
     SlotRequest,
     WarmupSeed,
-    _request_id_counter,
 )
 from armory.serving.slots import RobotSlots, SlotData
 from armory_client import msgpack_numpy
@@ -73,10 +73,11 @@ logger = logging.getLogger(__name__)
 
 _uid = uuid.uuid4().hex[:8]
 socket_addresses = {
-    "sched_in_ep": f"ipc:///tmp/openpi_sched_in_{_uid}",
+    "server_out_ep": f"ipc:///tmp/openpi_server_out_{_uid}",
     "gpu_out_ep": f"ipc:///tmp/openpi_gpu_out_{_uid}",
-    "result_ep": f"ipc:///tmp/openpi_result_{_uid}",
 }
+
+_request_id_counter = itertools.count(1)
 
 
 @dataclass
@@ -99,15 +100,22 @@ async def _router_task(
     logger.info("Router task starting")
     while True:
         try:
-            batch: ResponseBatch = await response_sock.recv_pyobj()
-            metrics_store.record_batch(batch)
-            for response in batch.responses:
+            msg: ResponseBatch | BatchProfile = await response_sock.recv_pyobj()
+            if isinstance(msg, BatchProfile):
+                continue
+            assert isinstance(msg, ResponseBatch)
+            logger.debug("Received response batch: %s", msg)
+
+            metrics_store.record_batch(msg)
+            for response in msg.responses:
                 queue = response_queues.get(response.robot_id)
                 if queue is not None:
                     await queue.put(response)
+                    logger.debug("Put response in queue: %s", response)
                 else:
                     logger.info(
-                        "No active connection for robot %s, dropping response", response.robot_id
+                        "No active connection for robot %s, dropping response",
+                        response.robot_id,
                     )
         except asyncio.CancelledError:
             raise
@@ -144,7 +152,7 @@ async def _ws_handshake(
 async def _ws_warmup(
     websocket: WebSocket,
     state: ServerState,
-    robot_id: str,
+    robot_id: RobotID,
     action_payload_size: int,
 ) -> None:
     """Phase 2: NUM_WARMUP ping/pong round trips to seed LatencyTracker."""
@@ -176,7 +184,9 @@ async def _ws_warmup(
     if obs_samples or delivery_samples:
         await state.scheduler_sock.send_pyobj(
             WarmupSeed(
-                robot_id=robot_id, obs_samples=obs_samples, delivery_samples=delivery_samples
+                robot_id=robot_id,
+                obs_samples=obs_samples,
+                delivery_samples=delivery_samples,
             )
         )
         logger.info(
@@ -233,25 +243,23 @@ def _start_backend(
     sched_ready = mp.Event()
 
     gpu_proc = mp.Process(
-        target=_run_gpu_worker,
-        args=(
+        target=GpuWorker(
             policy_factory,
             metadata.max_batch_size,
             slots,
             batch_queue,
+            socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
-            socket_addresses["result_ep"],
             gpu_ready,
             log_queue,
-        ),
+        ).run,
         daemon=True,
     )
 
     scheduler_proc = mp.Process(
-        target=_run_scheduler,
-        args=(
-            socket_addresses["sched_in_ep"],
-            socket_addresses["result_ep"],
+        target=SchedulerWorker(
+            socket_addresses["server_out_ep"],
+            socket_addresses["gpu_out_ep"],
             batch_queue,
             scheduler_metrics_queue,
             metadata.max_batch_size,
@@ -259,7 +267,7 @@ def _start_backend(
             scheduler_kwargs,
             sched_ready,
             log_queue,
-        ),
+        ).run,
         daemon=True,
     )
 
@@ -268,7 +276,14 @@ def _start_backend(
     logger.info("Starting scheduler subprocess…")
     scheduler_proc.start()
 
-    return scheduler_proc, gpu_proc, slots, sched_ready, gpu_ready, scheduler_metrics_queue
+    return (
+        scheduler_proc,
+        gpu_proc,
+        slots,
+        sched_ready,
+        gpu_ready,
+        scheduler_metrics_queue,
+    )
 
 
 def create_app(
@@ -281,13 +296,18 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        scheduler_proc, gpu_proc, slots, sched_ready, gpu_ready, scheduler_metrics_queue = (
-            _start_backend(
-                metadata,
-                policy_factory,
-                scheduler_kwargs,
-                log_queue,
-            )
+        (
+            scheduler_proc,
+            gpu_proc,
+            slots,
+            sched_ready,
+            gpu_ready,
+            scheduler_metrics_queue,
+        ) = _start_backend(
+            metadata,
+            policy_factory,
+            scheduler_kwargs,
+            log_queue,
         )
 
         loop = asyncio.get_event_loop()
@@ -298,12 +318,12 @@ def create_app(
 
         zmq_ctx = zmq.asyncio.Context()
 
-        scheduler_sock = zmq_ctx.socket(zmq.PUSH)
-        scheduler_sock.connect(socket_addresses["sched_in_ep"])
+        scheduler_sock = zmq_ctx.socket(zmq.PUB)
+        scheduler_sock.bind(socket_addresses["server_out_ep"])
 
-        # WS main binds gpu_out_ep so GPU can connect to us
-        response_sock = zmq_ctx.socket(zmq.PULL)
-        response_sock.bind(socket_addresses["gpu_out_ep"])
+        response_sock = zmq_ctx.socket(zmq.SUB)
+        response_sock.setsockopt(zmq.SUBSCRIBE, b"")
+        response_sock.connect(socket_addresses["gpu_out_ep"])
 
         response_queues: dict[str, asyncio.Queue] = {}
 
@@ -381,6 +401,8 @@ def create_app(
                                 AckNotification(
                                     robot_id=robot_id,
                                     request_id=ack.request_id,
+                                    chunk_id=ack.chunk_id,
+                                    observation_step=response.observation_step,
                                     receive_time=ack.receive_time,
                                     server_send_time=response.server_send_time,
                                 )
@@ -410,11 +432,12 @@ def create_app(
                     state.slots.write(
                         slot_index,
                         SlotData(
+                            robot_id=robot_id,
                             obs=req.observation,
                             request_id=request_id,
                             arrival_timestamp=arrival_timestamp,
                             observation_step=req.observation_step,
-                            action_start_step=req.action_start_step,
+                            action_index_start=req.action_index_start,
                             request_timestamp=req.request_timestamp,
                             deadline=req.deadline,
                             execution_horizon=req.execution_horizon,
@@ -430,7 +453,7 @@ def create_app(
                         request_id=request_id,
                         arrival_timestamp=arrival_timestamp,
                         observation_step=req.observation_step,
-                        action_start_step=req.action_start_step,
+                        action_index_start=req.action_index_start,
                         request_timestamp=req.request_timestamp,
                         deadline=req.deadline,
                         execution_horizon=req.execution_horizon,
@@ -450,6 +473,7 @@ def create_app(
                 stamped = dataclasses.replace(response, server_send_time=time.time())
                 pending_responses[response.request_id] = stamped
                 await websocket.send_bytes(msgpack_numpy.packb(asdict(stamped)))
+                logger.debug("Sent response: %s", stamped)
 
         recv_task = asyncio.create_task(recv())
         send_task = asyncio.create_task(send())
@@ -503,6 +527,9 @@ class PolicyServer:
 
     def serve_forever(self, host="0.0.0.0", port=8000):
         app = create_app(
-            self._metadata, self._policy_factory, self._scheduler_kwargs, self._log_queue
+            self._metadata,
+            self._policy_factory,
+            self._scheduler_kwargs,
+            self._log_queue,
         )
         uvicorn.run(app, host=host, port=port)

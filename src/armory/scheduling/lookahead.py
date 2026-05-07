@@ -4,9 +4,10 @@ import math
 import multiprocessing as mp
 import time
 from functools import cache
+from typing import Any
 
-from armory.scheduling import RequestScheduler
-from armory.serving.schemas import SlotRequest
+from armory.scheduling.base import RequestScheduler
+from armory.serving.schemas import RobotID, SlotRequest
 
 
 class LookaheadScheduler(RequestScheduler):
@@ -42,34 +43,18 @@ class LookaheadScheduler(RequestScheduler):
         self._server_available_at: float = 0.0
         self._predicted_valid_until: dict[str, float] = {}
 
-    def schedule(self) -> None:
-        """Dispatch the best batch and update predicted in-flight timing state."""
-        batches = self.get_next_batches()
-        now = time.time()
-        for batch in batches:
-            batch_size = len(batch)
-            start_time = max(now, self._server_available_at)
-            finish_time = start_time + self._latency_s[batch_size]
-            self._server_available_at = finish_time
-
-            for request in batch:
-                self._deadlines[request.robot_id] = request.deadline
-                self._latest_scheduled_requests[request.robot_id] = request
-                self._predicted_valid_until[request.robot_id] = finish_time + self._chunk_duration_s
-
-            self._batch_queue.put_nowait(batch)
-            now = finish_time
-
-    def get_next_batches(self) -> list[list[SlotRequest]]:
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
         now = time.time()
         self._prune_predictions(now)
 
         if not self._batch_queue.empty() or now < self._server_available_at:
-            return []
+            return [], {"reason": "server_busy"}
 
-        schedulable = self.schedulable_requests
+        schedulable = candidates
         if not schedulable:
-            return []
+            return [], {"reason": "no_candidates"}
 
         request_by_robot = {request.robot_id: request for request in schedulable}
         active_robot_ids = sorted(
@@ -85,7 +70,7 @@ class LookaheadScheduler(RequestScheduler):
             eligible_robot_ids=set(request_by_robot),
         )
         if not initial_candidates:
-            return []
+            return [], {"reason": "no_initial_candidates"}
 
         @cache
         def dfs(current_tick: int, valid_until: tuple[int, ...]) -> int:
@@ -126,11 +111,16 @@ class LookaheadScheduler(RequestScheduler):
                 best_candidate = candidate
 
         if best_candidate is None:
-            return []
+            return [], {"reason": "no_best_candidate"}
 
-        return [[request_by_robot[active_robot_ids[index]] for index in best_candidate]]
+        notes = {
+            "rule": "lookahead_starvation",
+            "best_cost": best_cost,
+            "horizon_ticks": self._horizon_ticks,
+        }
+        return [[request_by_robot[active_robot_ids[index]] for index in best_candidate]], notes
 
-    def reset_robot(self, robot_id: str) -> None:
+    def reset_robot(self, robot_id: RobotID) -> None:
         super().reset_robot(robot_id)
         self._predicted_valid_until.pop(robot_id, None)
 
@@ -170,7 +160,7 @@ class LookaheadScheduler(RequestScheduler):
             return 0
         return sum(max(0, end_tick - max(start_tick, expiry_tick)) for expiry_tick in valid_until)
 
-    def _remaining_ticks(self, robot_id: str, now: float) -> int:
+    def _remaining_ticks(self, robot_id: RobotID, now: float) -> int:
         valid_until = max(
             self._deadlines.get(robot_id, 0.0),
             self._predicted_valid_until.get(robot_id, 0.0),

@@ -79,7 +79,11 @@ class Args:
 
 
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
-    if args.scheduling_algorithm in {"useful-action", "marginal-utility", "slack-aware-deficit"}:
+    if args.scheduling_algorithm in {
+        "useful-action",
+        "marginal-utility",
+        "slack-aware-deficit",
+    }:
         return {
             "useful_action_weight": args.useful_action_weight,
             "tardiness_weight": args.useful_tardiness_weight,

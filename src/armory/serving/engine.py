@@ -10,258 +10,255 @@ from multiprocessing.synchronize import Event
 import numpy as np
 import zmq
 
+from armory.scheduling.latency import EMALatencyTracker
 from armory.serving.schemas import (
+    AckNotification,
     BatchProfile,
-    CompletionNotification,
+    InternalRequest,
     RequestBatch,
     ResponseBatch,
+    RobotID,
     SlotRequest,
+    WarmupSeed,
 )
-from armory.serving.slots import RobotSlots
+from armory.serving.slots import RobotSlots, SlotData
 from armory.utils import logging_config
-from armory_client.messages import InferRequest, InferResponse, InferType, RTCParams
+from armory_client.messages import (
+    InferResponse,
+    InferType,
+    ResetRequest,
+    RTCParams,
+    TrainTimeRTCParams,
+    VlashParams,
+)
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+PROFILE_ITERATIONS = 5
 
 
-def _profile_and_send(policy, max_batch_size: int, notify_sock: zmq.Socket) -> None:
-    """Profile inference latency for each batch size and send a BatchProfile to the scheduler."""
-    logger.info("Profiling batch latency for sizes 1..%d", max_batch_size)
-    profile: dict[int, float] = {}
+# TODO: clean up padding pattern
+class GpuWorker:
+    """Subprocess worker: loads model, loops recv batch -> infer -> send results.
 
-    request = policy.make_infer_request()
-    for batch_size in range(1, max_batch_size + 1):
-        latencies = []
-        for _ in range(5):
-            t0 = time.perf_counter()
-            policy.infer_batch([request] * batch_size)
-            t1 = time.perf_counter()
-            latency = t1 - t0
-            latencies.append(latency)
-        profile[batch_size] = sum(latencies) / len(latencies)
-        logger.info("  batch_size=%d: %.1f ms", batch_size, profile[batch_size] * 1000)
-    notify_sock.send_pyobj(BatchProfile(latencies=profile))
-    logger.info("Sent batch profile to scheduler")
-
-
-def _run_gpu_worker(
-    policy_factory: Callable,
-    max_batch_size: int,
-    slots: RobotSlots,
-    batch_queue: mp.Queue,
-    gpu_out_ep: str,
-    result_ep: str,
-    ready_event: Event,
-    log_queue: mp.Queue | None = None,
-) -> None:
-    """Loads model, then loops: recv batch → read obs from shared memory → infer → send results.
-
-    Sends InferResponse objects directly to WS (gpu_out_ep) and small CompletionNotifications
-    to the scheduler (result_ep) for state updates.
+    Sends InferResponse objects directly to WS (gpu_out_ep) and small
+    CompletionNotifications to the scheduler (result_ep) for state updates.
     """
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
-    if log_queue is not None:
-        logging_config.setup_worker_logging(log_queue, process_name="gpu-worker")
+    def __init__(
+        self,
+        policy_factory: Callable,
+        max_batch_size: int,
+        slots: RobotSlots,
+        batch_queue: mp.Queue,
+        server_out_ep: str,
+        gpu_out_ep: str,
+        ready_event: Event,
+        log_queue: mp.Queue | None = None,
+    ) -> None:
+        self.policy_factory = policy_factory
+        self.max_batch_size = max_batch_size
+        self.slots = slots
+        self.batch_queue = batch_queue
+        self.server_out_ep = server_out_ep
+        self.gpu_out_ep = gpu_out_ep
+        self.ready_event = ready_event
+        self.log_queue = log_queue
 
-    logger.info("GPU worker starting")
+    def run(self) -> None:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
-    policy = policy_factory()
-    policy.warmup(max_batch_size)
+        if self.log_queue is not None:
+            logging_config.setup_worker_logging(self.log_queue, process_name="gpu-worker")
 
-    ctx = zmq.Context()
+        logger.info("GPU worker starting")
 
-    # Direct path to WS _router_task (WS process binds)
-    response_sock = ctx.socket(zmq.PUSH)
-    response_sock.connect(gpu_out_ep)
+        policy = self.policy_factory()
+        policy.warmup(self.max_batch_size)
 
-    # State-update path to scheduler (scheduler binds)
-    notify_sock = ctx.socket(zmq.PUSH)
-    notify_sock.connect(result_ep)
+        ctx = zmq.Context()
 
-    _profile_and_send(policy, max_batch_size, notify_sock)
+        # Server messages (SlotRequest, ResetRequest, AckNotification, WarmupSeed)
+        req_sock = ctx.socket(zmq.SUB)
+        req_sock.setsockopt(zmq.SUBSCRIBE, b"")
+        req_sock.connect(self.server_out_ep)
 
-    ready_event.set()
-    logger.info("GPU worker ready")
+        # Direct path to WS _router_task (WS process binds)
+        result_sock = ctx.socket(zmq.PUB)
+        result_sock.bind(self.gpu_out_ep)
 
-    _last_infer_step: dict[str, int] = {}
-    _prev_actions: dict[str, np.ndarray] = {}
-    _action_shape: tuple[int, int] | None = None
-    _last_served_request_id: dict[
-        str, int
-    ] = {}  # robot_id -> last sd.request_id sent as a response
+        self._profile_and_send(policy, result_sock)
 
-    def _make_rtc_params(
-        robot_id: str,
-        request_id: int,
-        observation_step: int,
-        action_start_step: int,
-        execution_horizon: int,
-        d_param: float,
-    ) -> RTCParams | None:
-        nonlocal _action_shape
-        last = _last_infer_step.get(robot_id)
-        if last is not None and observation_step < last:
-            _last_infer_step.pop(robot_id, None)
-            _prev_actions.pop(robot_id, None)
-            last = None
-        s = observation_step - last if last is not None else 0
-        prev = _prev_actions.get(robot_id)
-        if prev is None and _action_shape is not None:
-            prev = np.zeros(_action_shape, dtype=np.float32)
-        if prev is None:
-            logger.info(
-                "RTC params unavailable for first chunk: robot=%s request_id=%d "
-                "obs_step=%d action_start_step=%d d=%.2f",
-                robot_id,
-                request_id,
-                observation_step,
-                action_start_step,
-                d_param,
-            )
-            return None
+        self.ready_event.set()
+        logger.info("GPU worker ready")
 
-        action_horizon = int(prev.shape[0])
-        action_lag = observation_step - action_start_step
-        rtc_window = s + float(d_param)
-        log_message = (
-            "RTC timing check: robot=%s request_id=%d obs_step=%d "
-            "action_start_step=%d obs_minus_action_start=%d last_rtc_obs_step=%s "
-            "s=%d d=%.2f s_plus_d=%.2f action_horizon=%d execution_horizon=%d "
-            "prev_action_shape=%s"
-        )
-        log_args = (
-            robot_id,
-            request_id,
-            observation_step,
-            action_start_step,
-            action_lag,
-            str(last),
-            s,
-            d_param,
-            rtc_window,
-            action_horizon,
-            execution_horizon,
-            tuple(prev.shape),
-        )
-        if action_lag > 1 or rtc_window > action_horizon or float(d_param) > action_horizon:
-            logger.warning(log_message, *log_args)
-        else:
-            logger.debug(log_message, *log_args)
-        return RTCParams(prev_action=prev, s_param=s, d_param=d_param)
+        # Per-robot inference state — initialised here (post-fork, not in __init__)
+        self._latency_tracker = EMALatencyTracker()
+        self._last_served_action_index: dict[RobotID, int] = {}
+        self._last_infer_step: dict[RobotID, int] = {}
+        self._prev_actions: dict[RobotID, np.ndarray] = {}
 
-    while True:
-        batch: RequestBatch = batch_queue.get()  # blocking
-        slot_reqs: list[SlotRequest] = batch.requests
+        while True:
+            self._process_server_messages(req_sock)
 
-        # Read obs and metadata together — guarantees they correspond to the same request,
-        # even if the slot was overwritten after the SlotRequest was enqueued.
-        slot_datas = [slots.read(sr.slot_index) for sr in slot_reqs]
+            batch: RequestBatch = self.batch_queue.get()  # blocking
+            slot_reqs: list[SlotRequest] = batch.requests
 
-        # Drop any real slot whose request_id has already been served.  This happens when the
-        # scheduler dispatches multiple SlotRequests for the same robot before the GPU
-        # finishes the first one: both read the same (overwritten) slot and would produce
-        # two InferResponses with identical request_ids.  request_ids are monotonically
-        # increasing, so a strict > check also handles episode resets correctly. Padding
-        # slots are still sent through inference to preserve the requested GPU batch size,
-        # but they never produce responses or scheduler state updates.
-        fresh = [
-            (sr, sd)
-            for sr, sd in zip(slot_reqs, slot_datas, strict=True)
-            if sr.is_padding or sd.request_id > _last_served_request_id.get(sr.robot_id, 0)
-        ]
-        if not fresh or not any(not sr.is_padding for sr, _ in fresh):
-            # Notify the scheduler so it can decrement _in_flight, even though
-            # no real inference happened.
-            notify_sock.send_pyobj([])
-            continue
-        slot_reqs, slot_datas = zip(*fresh, strict=True)
-        actual_batch_size = len(slot_reqs)
+            # FIXME: can be much more concise
+            slot_datas = []
+            chunk_ids = []
+            slot_requests = []
+            for sr, chunk_id in zip(slot_reqs, batch.chunk_ids, strict=True):
+                sd = self.slots.read(sr.slot_index)
+                if self._should_serve(sr, sd):
+                    slot_datas.append(sd)
+                    chunk_ids.append(chunk_id)
+                    slot_requests.append(sr)
+                else:
+                    logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
 
-        infer_requests = [
-            InferRequest(
-                robot_id=sr.robot_id,
-                observation=sd.obs,
-                observation_step=sd.observation_step,
-                action_start_step=sd.action_start_step,
-                execution_horizon=sd.execution_horizon,
-                request_timestamp=sd.request_timestamp,
-                deadline=sd.deadline,
-                infer_type=sd.infer_type,
-                params=_make_rtc_params(
-                    sr.robot_id,
-                    sd.request_id,
-                    sd.observation_step,
-                    sd.action_start_step,
-                    sd.execution_horizon,
-                    sr.estimated_d_param,
+            if len(slot_datas) == 0:
+                result_sock.send_pyobj(
+                    ResponseBatch(
+                        responses=[],
+                        batch_id=batch.batch_id,
+                        batch_size=len(slot_datas),
+                        inference_start_time=time.time(),
+                        inference_duration=0.0,
+                    )
                 )
-                if sd.infer_type == InferType.INFERENCE_TIME_RTC
-                else sd.params,
-                noise=sd.noise,
-            )
-            for sr, sd in zip(slot_reqs, slot_datas, strict=True)
-        ]
+                logger.warning("Sent empty response batch")
+                continue
 
-        logger.debug("Inferring batch of %d", len(infer_requests))
-        t0 = time.time()
-        actions = policy.infer_batch(infer_requests)
-        t1 = time.time()
+            infer_requests = [
+                InternalRequest.from_slot_data(sd, self._make_params(sd)) for sd in slot_datas
+            ]
 
-        responses = [
-            InferResponse(
-                robot_id=sr.robot_id,
-                request_id=sd.request_id,
-                observation_step=sd.observation_step,
-                action_start_step=sd.action_start_step,
-                request_timestamp=sd.request_timestamp,
-                execution_horizon=sd.execution_horizon,
-                actions=action_dict["actions"],
-                noise=action_dict["noise"],
-                server_arrival_time=sd.arrival_timestamp,
-                inference_start_time=t0,
-                inference_end_time=t1,
-            )
-            for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True)
-            if not sr.is_padding
-        ]
+            logger.info("Inferring batch of %d", len(infer_requests))
+            t0 = time.time()
+            actions = policy.infer_batch(infer_requests)
+            t1 = time.time()
+            inference_duration = t1 - t0
 
-        # Update per-robot RTC state
-        for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
-            if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
-                prev_action = action_dict.get(
-                    "rtc_prev_actions", action_dict["actions"]
-                )  # shape (ah, ad)
-                if _action_shape is None:
-                    _action_shape = prev_action.shape
-                _last_infer_step[sr.robot_id] = sd.observation_step
-                _prev_actions[sr.robot_id] = prev_action
-
-        # Record served request_ids before sending so the duplicate check stays consistent.
-        for sr, sd in zip(slot_reqs, slot_datas, strict=True):
-            if not sr.is_padding:
-                _last_served_request_id[sr.robot_id] = sd.request_id
-
-        # Send responses directly to WS — not via scheduler
-        response_sock.send_pyobj(
-            ResponseBatch(
-                responses=responses, batch_id=batch.batch_id, batch_size=actual_batch_size
-            )
-        )
-
-        # Notify scheduler of completion so it can update latency estimates
-        inference_duration = t1 - t0
-        notify_sock.send_pyobj(
-            [
-                CompletionNotification(
-                    robot_id=sr.robot_id,
-                    action_start_step=sd.action_start_step,
+            # TODO: eventually make this a class method on InferResponse or whatever
+            responses = [
+                InferResponse(
+                    robot_id=sd.robot_id,
                     request_id=sd.request_id,
-                    batch_size=actual_batch_size,
+                    chunk_id=chunk_id,
+                    observation_step=sd.observation_step,
+                    action_index_start=sd.action_index_start,
+                    request_timestamp=sd.request_timestamp,
+                    execution_horizon=sd.execution_horizon,
+                    actions=action_dict["actions"],
+                    noise=action_dict["noise"],
+                    server_arrival_time=sd.arrival_timestamp,
+                    inference_start_time=t0,
+                    inference_end_time=t1,
+                )
+                for sd, action_dict, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
+            ]
+
+            self._update_state(slot_reqs, slot_datas, actions)
+
+            # Send responses directly to WS — not via scheduler
+            result_sock.send_pyobj(
+                ResponseBatch(
+                    responses=[
+                        response
+                        for slot_request, response in zip(slot_requests, responses, strict=True)
+                        if not slot_request.is_padding
+                    ],
+                    batch_id=batch.batch_id,
+                    batch_size=len(slot_requests),
+                    inference_start_time=t0,
                     inference_duration=inference_duration,
                 )
-                for sr, sd in zip(slot_reqs, slot_datas, strict=True)
-                if not sr.is_padding
-            ],
+            )
+            logger.debug("Sent response batch: %s", responses)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _profile_and_send(self, policy, notify_sock: zmq.Socket) -> None:
+        logger.info("Profiling batch latency for sizes 1..%d", self.max_batch_size)
+        profile: dict[int, float] = {}
+        request = policy.make_infer_request()
+        for batch_size in range(1, self.max_batch_size + 1):
+            latencies = []
+            for _ in range(PROFILE_ITERATIONS):
+                start = time.perf_counter()
+                policy.infer_batch([request] * batch_size)
+                latencies.append(time.perf_counter() - start)
+            profile[batch_size] = sum(latencies) / len(latencies)
+            logger.info("  batch_size=%d: %.1f ms", batch_size, profile[batch_size] * 1000)
+        notify_sock.send_pyobj(BatchProfile(latencies=profile))
+        logger.info("Sent batch profile to scheduler")
+
+    def _process_server_messages(self, req_sock: zmq.Socket) -> None:
+        while req_sock.poll(0):
+            msg = req_sock.recv_pyobj(zmq.NOBLOCK)
+            if isinstance(msg, ResetRequest):
+                self._latency_tracker.clear(msg.robot_id)
+                logger.debug("Received reset request: %s", msg)
+            elif isinstance(msg, SlotRequest):
+                self._latency_tracker.update_obs(
+                    msg.robot_id, msg.arrival_timestamp, msg.request_timestamp
+                )
+                logger.debug("Received slot request: %s", msg)
+            elif isinstance(msg, AckNotification):
+                self._latency_tracker.update_action_delivery(
+                    msg.robot_id, msg.receive_time, msg.server_send_time
+                )
+                logger.debug("Received ack notification: %s", msg)
+            elif isinstance(msg, WarmupSeed):
+                for arrival_ts, request_ts in msg.obs_samples:
+                    self._latency_tracker.update_obs(msg.robot_id, arrival_ts, request_ts)
+                for client_receive_time, server_send_time in msg.delivery_samples:
+                    self._latency_tracker.update_action_delivery(
+                        msg.robot_id, client_receive_time, server_send_time
+                    )
+                logger.info(
+                    "Seeded latency for robot %s from warmup, observation_latency: %f, action_latency: %f",
+                    msg.robot_id,
+                    self._latency_tracker.observation_latency(msg.robot_id),
+                    self._latency_tracker.action_latency(msg.robot_id),
+                )
+            else:
+                logger.warning("Unknown message type: %s", type(msg).__name__)
+
+    def _make_params(
+        self, slot_data: SlotData
+    ) -> RTCParams | VlashParams | TrainTimeRTCParams | None:
+        if (
+            slot_data.infer_type == InferType.INFERENCE_TIME_RTC
+            and slot_data.robot_id in self._last_infer_step
+        ):
+            s = slot_data.action_index_start - self._last_infer_step[slot_data.robot_id]
+            d = (
+                self._latency_tracker.total_latency(slot_data.robot_id, len(slot_data))
+                * slot_data.control_hz
+            )
+            return RTCParams(
+                prev_action=self._prev_actions[slot_data.robot_id], s_param=s, d_param=d
+            )
+        return None
+
+    def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
+        return sr.is_padding or sd.action_index_start > self._last_served_action_index.get(
+            sd.robot_id, -1
         )
+
+    def _update_state(
+        self,
+        slot_reqs: list[SlotRequest],
+        slot_datas: list[SlotData],
+        actions: list[dict],
+    ) -> None:
+        for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
+            if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
+                self._last_served_action_index[sr.robot_id] = sd.action_index_start
+                self._prev_actions[sr.robot_id] = action_dict["actions"]

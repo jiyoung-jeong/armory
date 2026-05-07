@@ -93,12 +93,16 @@ def _load_control_hz(output_path: pathlib.Path, fallback: float = 20.0) -> float
 def _build_actions_left_matrix(
     output_path: pathlib.Path,
     control_hz: float | None = None,
-) -> tuple[list[str], np.ndarray, list[list[int]], float]:
-    """Align per-episode actions_left traces onto a shared wall-clock grid."""
+) -> tuple[list[str], np.ndarray, list[list[int]], float, float]:
+    """Align per-episode actions_left traces onto a shared wall-clock grid.
+
+    Returns ``(robots, matrix, episode_boundaries, control_hz, t0)`` where
+    ``t0`` is the earliest perf_counter timestamp used as the column-0 origin.
+    """
     by_robot = load_actions_left(output_path)
     resolved_control_hz = float(control_hz or _load_control_hz(output_path))
     if not by_robot:
-        return [], np.empty((0, 0), dtype=float), [], resolved_control_hz
+        return [], np.empty((0, 0), dtype=float), [], resolved_control_hz, 0.0
 
     robots = sorted(by_robot.keys(), key=int, reverse=True)
 
@@ -124,7 +128,7 @@ def _build_actions_left_matrix(
             boundaries.append(col)
         episode_boundaries.append(boundaries)
 
-    return robots, matrix, episode_boundaries, resolved_control_hz
+    return robots, matrix, episode_boundaries, resolved_control_hz, t0
 
 
 def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
@@ -201,6 +205,70 @@ def _server_batch_fields(
     batch_id, robot_ids, request_ids, start, end = batch[:5]
     batch_size = int(batch[5]) if len(batch) >= 6 and batch[5] is not None else len(robot_ids)
     return batch_id, robot_ids, request_ids, start, end, batch_size
+
+
+def _load_scheduler_decisions(output_path: pathlib.Path) -> list[dict]:
+    """Return raw scheduler-decision records from server_metrics_history.json.
+
+    Each record carries `started_at` (wall clock), `duration` (s), `candidates`,
+    `scheduled`, `batch_id`, `notes`, etc. Older histories that pre-date the
+    schema return an empty list, since old fields are normalized by the
+    SchedulerDecision loader on the server side.
+    """
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        return []
+    data = json.loads(history_path.read_text())
+    return list(data.get("scheduler_decisions") or [])
+
+
+def _server_clock_t0(output_path: pathlib.Path) -> float | None:
+    """Return server-side t0 (time.time()) used as origin for server timeline plots."""
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        return None
+    data = json.loads(history_path.read_text())
+    t0 = data.get("start_time")
+    return float(t0) if t0 is not None and t0 != float("inf") else None
+
+
+def _server_to_perf_offset(output_path: pathlib.Path) -> float | None:
+    """Return ``time.time() - time.perf_counter()`` offset, derived from saved data.
+
+    server_metrics_history.json holds time.time() values; timestamps.csv holds
+    time.perf_counter() values. Within the libero sim driver these clocks live
+    in the same process so the offset is approximately constant. We match the
+    earliest first-request timestamp on the server side with the earliest first
+    perf_counter from timestamps.csv to estimate it.
+    """
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        return None
+    data = json.loads(history_path.read_text())
+    earliest_request_time: float | None = None
+    for robot in data.get("robots", {}).values():
+        for ep in robot.get("episodes", []):
+            for req in ep.get("requests", []):
+                ts = req.get("request_timestamp")
+                if ts is None:
+                    continue
+                ts = float(ts)
+                if earliest_request_time is None or ts < earliest_request_time:
+                    earliest_request_time = ts
+    if earliest_request_time is None:
+        return None
+
+    earliest_perf: float | None = None
+    for ts_file in output_path.glob("**/timestamps.csv"):
+        df = pd.read_csv(ts_file, usecols=["timestamp"], nrows=1)
+        if df.empty:
+            continue
+        first = float(df["timestamp"].iloc[0])
+        if earliest_perf is None or first < earliest_perf:
+            earliest_perf = first
+    if earliest_perf is None:
+        return None
+    return earliest_request_time - earliest_perf
 
 
 def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
@@ -664,7 +732,7 @@ def generate_actions_left_heatmap(
     of using request_timestamp to place each step at its real wall-clock position).
     Episode boundaries are marked with vertical lines.
     """
-    robots, matrix, episode_boundaries, control_hz = _build_actions_left_matrix(
+    robots, matrix, episode_boundaries, control_hz, t0_perf = _build_actions_left_matrix(
         output_path, control_hz
     )
     if matrix.size == 0:
@@ -706,6 +774,45 @@ def generate_actions_left_heatmap(
                 alpha=0.7,
             )
 
+    # Overlay scheduler decisions: green tick on the row of each scheduled robot
+    # for batched decisions, faint cyan tick along the top for skipped decisions.
+    decisions_overlaid = 0
+    decisions = _load_scheduler_decisions(output_path)
+    offset = _server_to_perf_offset(output_path) if decisions else None
+    if decisions and offset is not None:
+        robot_to_row = {rid: i for i, rid in enumerate(robots)}
+        for d in decisions:
+            started_at = d.get("started_at")
+            if started_at is None:
+                continue
+            col = (float(started_at) - offset - t0_perf) * control_hz
+            if col < -0.5 or col > max_len - 0.5:
+                continue
+            scheduled = d.get("scheduled") or []
+            if scheduled and d.get("batch_id") is not None:
+                for rid in scheduled:
+                    row = robot_to_row.get(str(rid))
+                    if row is None:
+                        continue
+                    ax.plot(
+                        [col, col],
+                        [row - 0.42, row + 0.42],
+                        color="lime",
+                        linewidth=0.7,
+                        alpha=0.8,
+                    )
+                decisions_overlaid += 1
+            else:
+                # Skipped decisions get a faint top-edge tick — quick visual of
+                # how often the scheduler woke up without dispatching.
+                ax.plot(
+                    [col, col],
+                    [n_robots - 0.5, n_robots - 0.4],
+                    color="deepskyblue",
+                    linewidth=0.5,
+                    alpha=0.6,
+                )
+
     cbar = fig.colorbar(im, ax=ax, pad=0.01)
     cbar.set_label("Actions left in queue", fontweight="bold")
 
@@ -715,8 +822,11 @@ def generate_actions_left_heatmap(
     x_ticks = np.arange(0, max_len, tick_interval)
     ax.set_xticks(x_ticks)
     ax.set_xticklabels([f"{t // tick_interval}s" for t in x_ticks], fontsize=6)
+    decision_legend = (
+        " | green ticks = scheduler decision dispatch" if decisions_overlaid > 0 else ""
+    )
     ax.set_xlabel(
-        "Wall-clock time in seconds (white lines = episode boundaries)",
+        f"Wall-clock time in seconds (white lines = episode boundaries{decision_legend})",
         fontweight="bold",
     )
     ax.set_ylabel("Robot", fontweight="bold")
@@ -909,7 +1019,7 @@ def generate_starvation_variance_plot(
     output_path: pathlib.Path, control_hz: float | None = None
 ) -> None:
     """Plot cumulative starvation rate per robot and its cross-robot variance."""
-    robots, matrix, _, control_hz = _build_actions_left_matrix(output_path, control_hz)
+    robots, matrix, _, control_hz, _ = _build_actions_left_matrix(output_path, control_hz)
     if matrix.size == 0:
         logger.warning("No actions_left.npy data found for starvation variance plot")
         return
@@ -1070,7 +1180,12 @@ def generate_staleness_plot(output_path: pathlib.Path) -> None:
 def generate_batch_size_plot(output_path: pathlib.Path) -> None:
     """Distribution of action chunk execution horizons (batch sizes)."""
 
-    with open(output_path / "server_metrics_history.json") as f:
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        logger.warning("No server_metrics_history.json; skipping batch size plot")
+        return
+
+    with open(history_path) as f:
         data = json.load(f)
 
     # FIXME: should use JSONDataclass loading
@@ -1380,6 +1495,195 @@ def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
     logger.info("Saved server timings over time plot to %s", out)
 
 
+def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
+    """Plot server inference batches as robot-lane Gantt bars over wall-clock time.
+
+    A `Decisions` lane below the robot lanes overlays scheduler decisions:
+    decision-start ticks, decision-duration whiskers, and a green/red marker
+    indicating whether the decision produced a batch (linked to the batch_id).
+    """
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        logger.warning("No server_metrics_history.json; skipping server batch Gantt plot")
+        return
+    data = json.loads(history_path.read_text())
+
+    batch_rows = []
+    for batch in data.get("batches", []):
+        batch_id, robot_ids, _, start, end, batch_size = _server_batch_fields(batch)
+        if start is None or end is None:
+            continue
+        if not robot_ids:
+            continue
+        start = float(start)
+        end = float(end)
+        if end < start:
+            continue
+        batch_rows.append(
+            {
+                "batch_id": batch_id,
+                "robot_ids": list(robot_ids),
+                "start": start,
+                "duration": max(end - start, 0.0),
+                "batch_size": int(batch_size),
+            }
+        )
+
+    if not batch_rows:
+        logger.warning("No valid server batches; skipping server batch Gantt plot")
+        return
+
+    batch_rows.sort(key=lambda row: (row["start"], str(row["batch_id"])))
+    t0 = float(data.get("start_time") or min(row["start"] for row in batch_rows))
+
+    robot_ids = sorted({str(rid) for row in batch_rows for rid in row["robot_ids"]})
+    robot_y = {rid: i for i, rid in enumerate(robot_ids)}
+    cmap = matplotlib.colormaps["tab20" if len(robot_ids) > 10 else "tab10"]
+    robot_color = {rid: cmap(i % cmap.N) for i, rid in enumerate(robot_ids)}
+
+    decisions = _load_scheduler_decisions(output_path)
+    decisions = [
+        d for d in decisions if d.get("started_at") is not None and float(d["started_at"]) >= t0
+    ]
+    decisions.sort(key=lambda d: float(d["started_at"]))
+    has_decisions = bool(decisions)
+    decision_y = len(robot_ids)  # extra lane below all robot lanes
+
+    fig_height = max(3.0, (len(robot_ids) + (1.2 if has_decisions else 0)) * 0.45 + 1.5)
+    fig, ax = plt.subplots(figsize=(14, fig_height))
+
+    for row in batch_rows:
+        start_t = row["start"] - t0
+        duration = row["duration"]
+        for rid_raw in row["robot_ids"]:
+            rid = str(rid_raw)
+            ax.barh(
+                robot_y[rid],
+                duration,
+                left=start_t,
+                height=0.72,
+                color=robot_color[rid],
+                edgecolor="black",
+                linewidth=0.35,
+                alpha=0.9,
+            )
+
+    if has_decisions:
+        # Whisker = decision duration; marker = decision outcome (green=dispatched, red=skipped).
+        scheduled_t, scheduled_dur = [], []
+        skipped_t, skipped_dur = [], []
+        for d in decisions:
+            t = float(d["started_at"]) - t0
+            dur = float(d.get("duration") or 0.0)
+            if d.get("batch_id") is not None:
+                scheduled_t.append(t)
+                scheduled_dur.append(dur)
+            else:
+                skipped_t.append(t)
+                skipped_dur.append(dur)
+
+        for t, dur in zip(scheduled_t, scheduled_dur):
+            ax.plot(
+                [t, t + dur],
+                [decision_y, decision_y],
+                color="seagreen",
+                linewidth=2.2,
+                alpha=0.85,
+                solid_capstyle="butt",
+            )
+        for t, dur in zip(skipped_t, skipped_dur):
+            ax.plot(
+                [t, t + dur],
+                [decision_y, decision_y],
+                color="indianred",
+                linewidth=2.2,
+                alpha=0.55,
+                solid_capstyle="butt",
+            )
+        if scheduled_t:
+            ax.scatter(
+                scheduled_t,
+                [decision_y] * len(scheduled_t),
+                marker="|",
+                color="darkgreen",
+                s=80,
+                linewidths=1.4,
+                zorder=3,
+                label="decision → batch",
+            )
+        if skipped_t:
+            ax.scatter(
+                skipped_t,
+                [decision_y] * len(skipped_t),
+                marker="|",
+                color="firebrick",
+                s=80,
+                linewidths=1.0,
+                alpha=0.7,
+                zorder=3,
+                label="decision → skip",
+            )
+
+        # Connect each dispatched decision to the corresponding batch with a faint vertical line.
+        batch_start_by_id = {row["batch_id"]: row["start"] - t0 for row in batch_rows}
+        for d in decisions:
+            bid = d.get("batch_id")
+            if bid is None:
+                continue
+            batch_t = batch_start_by_id.get(bid)
+            if batch_t is None:
+                continue
+            t = float(d["started_at"]) - t0
+            ax.plot(
+                [t, batch_t],
+                [decision_y, decision_y - 0.5],
+                color="dimgray",
+                linewidth=0.4,
+                alpha=0.35,
+                zorder=1,
+            )
+
+    yticks = list(range(len(robot_ids)))
+    ylabels = list(robot_ids)
+    if has_decisions:
+        yticks.append(decision_y)
+        ylabels.append("Decisions")
+
+    ax.set_yticks(yticks)
+    ax.set_yticklabels(ylabels, fontsize=9)
+    ax.invert_yaxis()
+
+    title = "GPU Gantt"
+    if has_decisions:
+        scheduler_names = sorted(
+            {d.get("scheduler") or d.get("scheduler_name") or "" for d in decisions}
+        )
+        scheduler_names = [n for n in scheduler_names if n]
+        if scheduler_names:
+            title = f"GPU Gantt ({', '.join(scheduler_names)})"
+    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.set_xlabel("Time since server start (s)", fontsize=12)
+    ax.set_ylabel("Robot", fontsize=12)
+    ax.grid(axis="x", alpha=0.3)
+
+    handles = [Patch(facecolor=robot_color[rid], label=rid) for rid in robot_ids]
+    if len(handles) <= 20:
+        legend = ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=False)
+        if has_decisions:
+            ax.add_artist(legend)
+            ax.legend(loc="lower right", fontsize=8, frameon=False)
+    elif has_decisions:
+        ax.legend(loc="lower right", fontsize=8, frameon=False)
+
+    fig.tight_layout()
+
+    out = output_path / "plots" / "server_batch_gantt.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    logger.info("Saved server batch Gantt plot to %s", out)
+
+
 def generate_all_plots(output_path: pathlib.Path) -> None:
     """Generate all plots."""
     logger.info("Generating plots...")
@@ -1395,6 +1699,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     generate_batch_size_plot(output_path)
     generate_server_timings_plot(output_path)
     generate_server_timings_over_time_plot(output_path)
+    generate_server_batch_gantt_plot(output_path)
     logger.info("Done!")
 
 

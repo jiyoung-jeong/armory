@@ -15,10 +15,9 @@ from armory.serving.metrics.schemas import (
     RequestRecord,
     ResponseRecord,
     Robot,
-    RobotID,
     window_filter,
 )
-from armory.serving.schemas import ResponseBatch, SchedulerDecision, SlotRequest
+from armory.serving.schemas import ResponseBatch, RobotID, SchedulerDecision, SlotRequest
 from armory_client.messages import EpisodeEnd, EpisodeStart, EpisodeStep, InferResponse, ResponseAck
 from armory_client.schemas import JSONDataclass
 
@@ -183,14 +182,14 @@ class MetricsStore(JSONDataclass):
 
     # request/response lifecycle
 
-    def record_request(self, robot_id: str, request: SlotRequest) -> None:
+    def record_request(self, robot_id: RobotID, request: SlotRequest) -> None:
         """Called when client sends InferRequest."""
         with lock:
             record = RequestRecord(
                 robot_id=robot_id,
                 request_id=request.request_id,
                 observation_step=request.observation_step,
-                action_start_step=request.action_start_step,
+                action_index_start=request.action_index_start,
                 execution_horizon=request.execution_horizon,
                 request_timestamp=request.request_timestamp,
                 server_arrival_time=request.arrival_timestamp,  # FIXME: make timestamp/arrival time naming convention consistent
@@ -204,13 +203,25 @@ class MetricsStore(JSONDataclass):
 
     def record_response(
         self,
-        robot_id: str,
+        robot_id: RobotID,
         response: InferResponse,
         ack: ResponseAck,
     ) -> None:
         """Called when client sends ResponseAck."""
         with lock:
-            request_record = self.robots[robot_id].get_request(ack.request_id)
+            try:
+                request_record = self.robots[robot_id].get_request(ack.request_id)
+            except StopIteration:
+                request_record = RequestRecord(
+                    robot_id=robot_id,
+                    request_id=ack.request_id,
+                    observation_step=response.observation_step,
+                    action_index_start=response.action_index_start,
+                    execution_horizon=response.execution_horizon,
+                    request_timestamp=response.request_timestamp,
+                    server_arrival_time=response.server_arrival_time,
+                )
+                self.robots[robot_id].add_request(request_record)
             batch = next(b for b in reversed(self.batches) if ack.request_id in b.request_ids)
             self.robots[robot_id].add_response(
                 ResponseRecord(
@@ -229,7 +240,7 @@ class MetricsStore(JSONDataclass):
 
     def record_episode_start(
         self,
-        robot_id: str,
+        robot_id: RobotID,
         episode_start: EpisodeStart,
     ) -> None:
         """Called when client streams an in-progress task step count."""
@@ -238,7 +249,7 @@ class MetricsStore(JSONDataclass):
                 self.robots[robot_id] = Robot(robot_id=robot_id, episodes=[])
             self.robots[robot_id].start_episode(episode_start)
 
-    def record_episode_step(self, robot_id: str, episode_step: EpisodeStep) -> None:
+    def record_episode_step(self, robot_id: RobotID, episode_step: EpisodeStep) -> None:
         with lock:
             if robot_id in self.robots and self.robots[robot_id].episodes:
                 timestamp = (
@@ -251,7 +262,7 @@ class MetricsStore(JSONDataclass):
 
     def record_episode_end(
         self,
-        robot_id: str,
+        robot_id: RobotID,
         episode_end: EpisodeEnd,
     ) -> None:
         """Called when client streams an in-progress task step count."""
@@ -388,14 +399,14 @@ class MetricsStore(JSONDataclass):
             # ---- batch history for charts ----
             # FIXME: maybe move these into their own classes
             plan_activation_abs = sorted(
-                sample.recorded_at
+                sample.started_at
                 for sample in self.scheduler_decisions
-                if sample.metric_name == "plan_activated" and sample.recorded_at <= self.end_time
+                if sample.metric_name == "plan_activated" and sample.started_at <= self.end_time
             )
             kickoff_abs = sorted(
-                sample.recorded_at
+                sample.started_at
                 for sample in self.scheduler_decisions
-                if sample.metric_name == "replan_kickoff" and sample.recorded_at <= self.end_time
+                if sample.metric_name == "replan_kickoff" and sample.started_at <= self.end_time
             )
             replan_markers = [
                 {
@@ -495,19 +506,28 @@ class MetricsStore(JSONDataclass):
             scheduler_timing_ms: dict[str, list[float]] = {}
             scheduling_decisions: list[dict] = []
             for sample in self.scheduler_decisions:
+                if sample.started_at < start_timestamp or sample.started_at > self.end_time:
+                    continue
                 if sample.metric_name == "batch_scheduled":
                     scheduling_decisions.append(
                         {
-                            "t": round(sample.recorded_at - t0, 3),
+                            "t": round(sample.started_at - t0, 3),
+                            "duration_ms": round(sample.duration * 1000, 3),
+                            "scheduler": sample.scheduler_name,
                             "candidates": sample.candidates,
                             "scheduled": sample.scheduled,
+                            "batch_id": sample.batch_id,
+                            "in_flight_batches": sample.in_flight_batches,
+                            "next_server_available_t": round(sample.next_server_available - t0, 3),
+                            "deadlines": {
+                                rid: round(d - t0, 3) for rid, d in sample.deadlines.items()
+                            },
+                            "notes": sample.notes,
                         }
                     )
-                else:
-                    # FIXME: idk what this is
-                    scheduler_timing_ms.setdefault(
-                        f"{sample.scheduler_name}.{sample.metric_name}", []
-                    ).append(round(sample.duration * 1000, 3))
+                scheduler_timing_ms.setdefault(
+                    f"{sample.scheduler_name}.{sample.metric_name}", []
+                ).append(round(sample.duration * 1000, 3))
 
             # ---- task events (completed episodes in window) ----
             task_events = []

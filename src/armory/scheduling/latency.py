@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from armory.serving.schemas import RobotID
+
 
 class LatencyTracker(ABC):
     """Per-robot and per-batch-size latency estimates (in seconds).
@@ -24,28 +26,28 @@ class LatencyTracker(ABC):
         pass
 
     # FIXME: rename time and ts
-    def update_obs(self, robot_id: str, arrival_ts: float, request_ts: float) -> None:
+    def update_obs(self, robot_id: RobotID, arrival_ts: float, request_ts: float) -> None:
         self._update_measurement(self._observation_latency, robot_id, arrival_ts - request_ts)
 
     def update_infer(self, batch_size: int, duration: float) -> None:
         self._update_measurement(self._infer_latency, batch_size, duration)
 
     def update_action_delivery(
-        self, robot_id: str, receive_time: float, server_send_time: float
+        self, robot_id: RobotID, receive_time: float, server_send_time: float
     ) -> None:
         self._update_measurement(self._action_latency, robot_id, receive_time - server_send_time)
 
     # FIXME: how to make sure these are only called when these are available?
-    def observation_latency(self, robot_id: str) -> float:
+    def observation_latency(self, robot_id: RobotID) -> float:
         return self._observation_latency[robot_id]
 
     def infer_latency(self, batch_size: int) -> float:
         return self._infer_latency[batch_size]
 
-    def action_latency(self, robot_id: str) -> float:
+    def action_latency(self, robot_id: RobotID) -> float:
         return self._action_latency[robot_id]
 
-    def total_latency(self, robot_id: str, batch_size: int) -> float:
+    def total_latency(self, robot_id: RobotID, batch_size: int) -> float:
         """Total latency from observation timestep to robot receiving the action. Used as d param in RTC."""
         return (
             self.observation_latency(robot_id)
@@ -53,9 +55,12 @@ class LatencyTracker(ABC):
             + self.action_latency(robot_id)
         )
 
-    def clear(self, robot_id: str) -> None:
+    def clear(self, robot_id: RobotID) -> None:
         self._observation_latency.pop(robot_id, None)
         self._action_latency.pop(robot_id, None)
+
+    def __repr__(self) -> str:
+        return f"LatencyTracker(observation_latency={self._observation_latency}, infer_latency={self._infer_latency}, action_latency={self._action_latency})"
 
 
 class EMALatencyTracker(LatencyTracker):
@@ -68,9 +73,3 @@ class EMALatencyTracker(LatencyTracker):
             d[key] = value
         else:
             d[key] = (1.0 - self._alpha) * d[key] + self._alpha * value
-
-
-class JacobsonKarelsLatencyTracker(LatencyTracker):
-    def update_measurement(self, d: dict, key: object, value: float) -> None:
-        # FIXME: implement jacobson-karels tracker from https://github.com/jackvial/drtc/blob/0f6317703eae654d878956011e26fb50fa528162/src/lerobot/async_inference/utils/latency_estimation.py#L88 and compare accuracy
-        raise NotImplementedError("JacobsonKarelsLatencyTracker is not implemented")

@@ -3,13 +3,13 @@ from __future__ import annotations
 import itertools
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import NamedTuple, TypeAlias, TypeVar
+from typing import NamedTuple, TypeVar
 
 import numpy as np
 
+from armory.serving.schemas import RobotID
 from armory_client.messages import EpisodeEnd, EpisodeStart
 
-RobotID: TypeAlias = str
 T = TypeVar("T")
 
 
@@ -20,7 +20,7 @@ class RequestRecord:
     robot_id: RobotID
     request_id: int
     observation_step: int
-    action_start_step: int
+    action_index_start: int
     execution_horizon: int
     request_timestamp: float  # client: when request was created
     server_arrival_time: float  # server: when observation arrived
@@ -86,7 +86,7 @@ class Episode:
         self.requests = [RequestRecord(**r) if isinstance(r, dict) else r for r in self.requests]
         self.responses = [ResponseRecord(**r) if isinstance(r, dict) else r for r in self.responses]
         assert all(
-            next_request.action_start_step >= prev_request.action_start_step
+            next_request.action_index_start >= prev_request.action_index_start
             for prev_request, next_request in zip(
                 self.requests[:-1], self.requests[1:], strict=True
             )
@@ -164,7 +164,7 @@ class Episode:
 class Robot:
     """Per-robot mutable state tracked during inference."""
 
-    robot_id: str
+    robot_id: RobotID
     episodes: list[Episode]
     # Requests/responses received before any EpisodeStart (robots that don't send episode data).
     orphan_requests: list[RequestRecord] = field(default_factory=list)
