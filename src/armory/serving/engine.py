@@ -33,6 +33,7 @@ from armory_client.messages import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 PROFILE_ITERATIONS = 5
 
@@ -115,6 +116,8 @@ class GpuWorker:
                     slot_datas.append(sd)
                     chunk_ids.append(chunk_id)
                     slot_requests.append(sr)
+                else:
+                    logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
 
             if len(slot_datas) == 0:
                 result_sock.send_pyobj(
@@ -126,14 +129,14 @@ class GpuWorker:
                         inference_duration=0.0,
                     )
                 )
-                logger.debug("Sent empty response batch")
+                logger.warning("Sent empty response batch")
                 continue
 
             infer_requests = [
                 InternalRequest.from_slot_data(sd, self._make_params(sd)) for sd in slot_datas
             ]
 
-            logger.debug("Inferring batch of %d", len(infer_requests))
+            logger.info("Inferring batch of %d", len(infer_requests))
             t0 = time.time()
             actions = policy.infer_batch(infer_requests)
             t1 = time.time()

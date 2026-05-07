@@ -1,7 +1,9 @@
 import itertools
 import logging
 import multiprocessing as mp
+import time
 from abc import ABC, abstractmethod
+from typing import Any
 
 from armory.scheduling.latency import EMALatencyTracker
 from armory.scheduling.mirror import Mirror
@@ -53,29 +55,80 @@ class RequestScheduler(ABC):
         self.mirror.confirm_chunk(notification)
 
     def schedule(self) -> list[SchedulerDecision]:
-        """Return a list of batches of requests to be sent to the GPU."""
-        # TODO: better traces
-        batches = self.get_next_batches()
-        decisions: list[SchedulerDecision] = []
+        """Run one decision pass: dispatch batches and emit a SchedulerDecision per call.
 
+        Subclasses provide ``get_next_batches`` which returns the chosen batches
+        plus a ``notes`` dict of algorithm-specific debug info; the base class
+        snapshots common state (candidates, deadlines, mirror clock, slack) and
+        wraps everything into ``SchedulerDecision`` records that flow into the
+        metrics store.
+        """
+        started_at = time.time()
+        next_avail = self.mirror.next_time_server_available()
+        in_flight = self.mirror.in_flight_batches_count
+        candidates = self.mirror.schedulable_requests(self._latest_requests)
+        candidate_ids = [r.robot_id for r in candidates]
+        deadlines = self.mirror.deadlines() if self.mirror.robots else {}
+
+        batches, notes = self.get_next_batches(candidates)
+
+        decisions: list[SchedulerDecision] = []
         for batch in batches:
             batch_id = next(self.next_batch_id)
             chunks = self.mirror.queue_batch([slot.robot_id for slot in batch], batch_id)
             self._batch_queue.put_nowait(
                 RequestBatch(
                     requests=batch,
-                    chunk_ids=[
-                        chunk.chunk_id for chunk in chunks
-                    ],  # FIXME: can make clean up dataclasses later
+                    chunk_ids=[chunk.chunk_id for chunk in chunks],
                     batch_id=batch_id,
+                )
+            )
+            decisions.append(
+                SchedulerDecision(
+                    scheduler_name=type(self).__name__,
+                    started_at=started_at,
+                    duration=time.time() - started_at,
+                    next_server_available=next_avail,
+                    in_flight_batches=in_flight,
+                    candidates=candidate_ids,
+                    deadlines=dict(deadlines),
+                    batch_id=batch_id,
+                    scheduled=[slot.robot_id for slot in batch],
+                    notes=dict(notes),
+                )
+            )
+
+        if not decisions and candidate_ids:
+            # No batch dispatched but there were candidates worth recording why.
+            decisions.append(
+                SchedulerDecision(
+                    scheduler_name=type(self).__name__,
+                    started_at=started_at,
+                    duration=time.time() - started_at,
+                    next_server_available=next_avail,
+                    in_flight_batches=in_flight,
+                    candidates=candidate_ids,
+                    deadlines=dict(deadlines),
+                    batch_id=None,
+                    scheduled=[],
+                    notes=dict(notes),
                 )
             )
 
         return decisions
 
     @abstractmethod
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        pass
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        """Return (batches_to_dispatch, debug_notes) for the current tick.
+
+        ``candidates`` is the list of robots the mirror considers schedulable
+        right now. Subclasses may consult additional state (latency tracker,
+        in-flight batches, etc.) but should treat ``candidates`` as the
+        authoritative pool to draw from.
+        """
+        ...
 
     def reset_robot(self, robot_id: str) -> None:
         self._latest_requests.pop(robot_id, None)

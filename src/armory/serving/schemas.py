@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
 import numpy as np
 from jaxtyping import Float
@@ -94,22 +94,50 @@ class ResponseBatch(NamedTuple):
 
 @dataclass
 class SchedulerDecision:
-    """A scheduler decision: a batch scheduling event."""
+    """One pass of the scheduler's decision loop, recorded for debugging.
+
+    Fields fall into three groups:
+    - timing: when the decision started (`started_at`) and how long it took (`duration`),
+    - state observed at decision time (mirror snapshot, `candidates`, `deadlines`,
+      `next_server_available`, `in_flight_batches`),
+    - outcome (`batch_id`, `scheduled`).
+
+    `notes` is a free-form per-scheduler dict for algorithm-specific debug info
+    (e.g. search nodes visited, slack budget, score components). The legacy
+    `metric_name` defaults to "batch_scheduled" and is retained so older
+    dashboard code keeps working.
+    """
 
     scheduler_name: str
-    metric_name: str
-    duration: float
-    recorded_at: float
-    batch_id: int
-    requests: list[dict] = field(default_factory=list)
-    candidates: list[dict] = field(default_factory=list)
-    scheduled: list[dict] = field(default_factory=list)
+    started_at: float = 0.0
+    duration: float = 0.0
+    next_server_available: float = 0.0
+    in_flight_batches: int = 0
+    candidates: list[RobotID] = field(default_factory=list)
+    deadlines: dict[RobotID, float] = field(default_factory=dict)
+    batch_id: int | None = None
+    scheduled: list[RobotID] = field(default_factory=list)
+    notes: dict[str, Any] = field(default_factory=dict)
+    metric_name: str = "batch_scheduled"
+
+    @property
+    def recorded_at(self) -> float:
+        """Backwards-compat alias used by older snapshot code."""
+        return self.started_at
 
     @classmethod
     def from_json(cls, data: SchedulerDecision | dict) -> SchedulerDecision:
         if isinstance(data, cls):
             return data
-        return cls(**data)
+        # Tolerate older payloads where `recorded_at` was the canonical name.
+        payload = dict(data)
+        if "recorded_at" in payload and "started_at" not in payload:
+            payload["started_at"] = payload.pop("recorded_at")
+        else:
+            payload.pop("recorded_at", None)
+        # Drop fields the new schema no longer carries.
+        payload.pop("requests", None)
+        return cls(**payload)
 
 
 # TODO: copied over InferRequest, fix later

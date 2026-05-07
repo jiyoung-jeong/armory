@@ -260,7 +260,7 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
     return summary
 
 
-@app.function(image=image, timeout=60 * 60, cpu=4, memory=16384)
+@app.function(image=image, timeout=60 * 60, cpu=8, memory=16384)
 def run_case(
     case: SweepCase,
     *,

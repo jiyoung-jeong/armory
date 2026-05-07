@@ -399,14 +399,14 @@ class MetricsStore(JSONDataclass):
             # ---- batch history for charts ----
             # FIXME: maybe move these into their own classes
             plan_activation_abs = sorted(
-                sample.recorded_at
+                sample.started_at
                 for sample in self.scheduler_decisions
-                if sample.metric_name == "plan_activated" and sample.recorded_at <= self.end_time
+                if sample.metric_name == "plan_activated" and sample.started_at <= self.end_time
             )
             kickoff_abs = sorted(
-                sample.recorded_at
+                sample.started_at
                 for sample in self.scheduler_decisions
-                if sample.metric_name == "replan_kickoff" and sample.recorded_at <= self.end_time
+                if sample.metric_name == "replan_kickoff" and sample.started_at <= self.end_time
             )
             replan_markers = [
                 {
@@ -506,19 +506,28 @@ class MetricsStore(JSONDataclass):
             scheduler_timing_ms: dict[str, list[float]] = {}
             scheduling_decisions: list[dict] = []
             for sample in self.scheduler_decisions:
+                if sample.started_at < start_timestamp or sample.started_at > self.end_time:
+                    continue
                 if sample.metric_name == "batch_scheduled":
                     scheduling_decisions.append(
                         {
-                            "t": round(sample.recorded_at - t0, 3),
+                            "t": round(sample.started_at - t0, 3),
+                            "duration_ms": round(sample.duration * 1000, 3),
+                            "scheduler": sample.scheduler_name,
                             "candidates": sample.candidates,
                             "scheduled": sample.scheduled,
+                            "batch_id": sample.batch_id,
+                            "in_flight_batches": sample.in_flight_batches,
+                            "next_server_available_t": round(sample.next_server_available - t0, 3),
+                            "deadlines": {
+                                rid: round(d - t0, 3) for rid, d in sample.deadlines.items()
+                            },
+                            "notes": sample.notes,
                         }
                     )
-                else:
-                    # FIXME: idk what this is
-                    scheduler_timing_ms.setdefault(
-                        f"{sample.scheduler_name}.{sample.metric_name}", []
-                    ).append(round(sample.duration * 1000, 3))
+                scheduler_timing_ms.setdefault(
+                    f"{sample.scheduler_name}.{sample.metric_name}", []
+                ).append(round(sample.duration * 1000, 3))
 
             # ---- task events (completed episodes in window) ----
             task_events = []

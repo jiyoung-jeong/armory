@@ -7,6 +7,7 @@ import multiprocessing as mp
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
@@ -170,10 +171,17 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        candidates = self.mirror.schedulable_requests(self._latest_requests)
-        if not candidates:
-            return []
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        # The search plans far enough ahead that ``schedulable_requests`` filtering
+        # discards future batches it explicitly counted on (e.g. dispatching robot_X
+        # again at time t+infer_lat after its current chunk would be midway through).
+        # We trust the planner's whole schedule and dispatch every batch it returns,
+        # mapping robot_ids back through the most-recent SlotRequest the scheduler
+        # has on file.
+        if not self._latest_requests:
+            return [], {"reason": "no_requests"}
 
         next_avail = self.mirror.next_time_server_available()
         slack = next_avail - time.time()
@@ -185,8 +193,19 @@ class LookaheadActionsScheduler(RequestScheduler):
             _mirror_summary(self.mirror, next_avail),
         )
 
+        notes: dict[str, Any] = {
+            "rule": "lookahead_actions",
+            "horizon": self.horizon,
+            "max_depth": self.max_depth,
+            "step_budget_nodes": self.step_budget_nodes,
+            "scheduling_buffer": self.scheduling_buffer,
+            "slack_s": slack,
+            "next_server_available": next_avail,
+        }
+
         if slack < self.scheduling_buffer:
-            return [self._greedy(candidates)]
+            notes["mode"] = "greedy_no_slack"
+            return [self._greedy()], notes
 
         search = IncrementalSearch(
             self.mirror,
@@ -195,19 +214,42 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.horizon,
             self.max_depth,
         )
+        search_started_at = time.time()
         while not search.is_done() and (next_avail - time.time()) > self.scheduling_buffer:
             search.step(self.step_budget_nodes)
+        search_duration = time.time() - search_started_at
+
+        notes.update(
+            {
+                "search_duration_s": search_duration,
+                "search_done": search.is_done(),
+                "search_nodes_visited": search.nodes_visited,
+                "best_objective": (
+                    None if search.best_objective == -float("inf") else search.best_objective
+                ),
+                "best_schedule_depth": len(search.best_schedule),
+                "best_schedule": [list(b.robot_ids) for b in search.best_schedule],
+            }
+        )
 
         best = search.best()
         if not best:
-            return [self._greedy(candidates)]
+            notes["mode"] = "greedy_search_empty"
+            return [self._greedy()], notes
 
-        candidate_by_id = {req.robot_id: req for req in candidates}
-        first_batch = [candidate_by_id[rid] for rid in best[0].robot_ids if rid in candidate_by_id]
-        return [first_batch] if first_batch else []
+        notes["mode"] = "search"
+        batches: list[list[SlotRequest]] = []
+        for sb in best:
+            batch = [
+                self._latest_requests[rid] for rid in sb.robot_ids if rid in self._latest_requests
+            ]
+            if batch:
+                batches.append(batch)
+        return batches, notes
 
-    def _greedy(self, candidates: list[SlotRequest]) -> list[SlotRequest]:
+    def _greedy(self) -> list[SlotRequest]:
         deadlines = self.mirror.deadlines()
-        return sorted(candidates, key=lambda r: deadlines.get(r.robot_id, r.deadline))[
+        requests = list(self._latest_requests.values())
+        return sorted(requests, key=lambda r: deadlines.get(r.robot_id, r.deadline))[
             : self._max_batch_size
         ]

@@ -195,6 +195,7 @@ class Batch:
     batch_id: int
     robot_ids: list[RobotID]
     chunk_ids: list[int]
+    completion_time: float = 0.0  # estimated wall time when inference finishes
 
     @property
     def size(self) -> int:
@@ -203,10 +204,11 @@ class Batch:
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """Snapshot of a Mirror's append-only state. Restore truncates lists back."""
+    """Snapshot of a Mirror's append-only state. Restore resets lists and batch queue."""
 
     lengths: dict[RobotID, tuple[int, int]]  # (n_steps, n_chunks) per robot
-    queued_batches: int
+    in_flight_batches: tuple[Batch, ...]
+    last_batch_completed_time: float
 
 
 class Mirror:
@@ -236,7 +238,9 @@ class Mirror:
         robot = self.robots[rid]
         obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(rid)
         cs = robot.get_latest_control_step_before(obs_cutoff)
-        assert cs is not None, f"robot {rid} has no control step before {obs_cutoff}"
+        assert cs is not None, (
+            f"robot {rid} has no control step before {obs_cutoff}, first control step: {robot.steps[0].time}"
+        )
         return cs, robot.next_chunk_start(cs)
 
     def queue_batch(self, batch: list[RobotID], batch_id: int) -> list[ActionChunk]:
@@ -257,7 +261,12 @@ class Mirror:
             chunks.append(chunk)
             robot.queue_chunk(chunk)
         self.in_flight_batches.append(
-            Batch(batch_id=batch_id, robot_ids=batch, chunk_ids=[c.chunk_id for c in chunks])
+            Batch(
+                batch_id=batch_id,
+                robot_ids=batch,
+                chunk_ids=[c.chunk_id for c in chunks],
+                completion_time=dispatch_time + infer_lat,
+            )
         )
         return chunks
 
@@ -291,17 +300,25 @@ class Mirror:
         robot.update_chunk_arrival_time(ack.chunk_id, ack.receive_time, arrived=True)
 
     def next_time_server_available(self) -> float:
-        if not self.in_flight_batches:
-            return time.time()
-        assert self.last_batch_completed_time is not None
-        return self.last_batch_completed_time + sum(
-            self.latency_tracker.infer_latency(b.size) for b in self.in_flight_batches
-        )
+        if len(self.in_flight_batches) == 0:
+            # During simulation last_batch_completed_time is a future simulated time;
+            # during production it's in the past so time.time() dominates.
+            return max(time.time(), self.last_batch_completed_time)
+        # Each batch's completion_time is already chained: queue_batch sets it to
+        # next_time_server_available() + infer_lat at enqueue time, so the tail
+        # of the queue is exactly when the server next becomes free.
+        return self.in_flight_batches[-1].completion_time
 
     def schedulable_requests(self, requests: dict[RobotID, SlotRequest]) -> list[SlotRequest]:
         schedulable_requests: list[SlotRequest] = []
 
         dispatch_time = self.next_time_server_available()
+        # logger.debug(
+        #     "Dispatch time: %f, last batch completed time: %f, current time: %f",
+        #     dispatch_time,
+        #     self.last_batch_completed_time,
+        #     time.time(),
+        # )
         for robot_id, request in requests.items():
             robot = self.robots[robot_id]
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
@@ -323,14 +340,19 @@ class Mirror:
         self,
         time: float,
     ) -> None:
-        """Advance every robot's clock to ``time``."""
+        """Advance every robot's clock to ``time`` and mark completed batches."""
         for robot in self.robots.values():
             robot.step_forward(time)
+
+        while self.in_flight_batches and self.in_flight_batches[0].completion_time <= time:
+            completed = self.in_flight_batches.popleft()
+            self.last_batch_completed_time = completed.completion_time
 
     def checkpoint(self) -> Checkpoint:
         return Checkpoint(
             lengths={rid: (len(r.steps), len(r.chunks)) for rid, r in self.robots.items()},
-            queued_batches=len(self.in_flight_batches),
+            in_flight_batches=tuple(self.in_flight_batches),
+            last_batch_completed_time=self.last_batch_completed_time,
         )
 
     def restore(self, ckpt: Checkpoint) -> None:
@@ -342,8 +364,8 @@ class Mirror:
             r = self.robots[rid]
             del r.steps[n_steps:]
             del r.chunks[n_chunks:]
-        while len(self.in_flight_batches) > ckpt.queued_batches:
-            self.in_flight_batches.pop()
+        self.in_flight_batches = deque(ckpt.in_flight_batches)
+        self.last_batch_completed_time = ckpt.last_batch_completed_time
 
     def deadlines(self) -> dict[RobotID, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}

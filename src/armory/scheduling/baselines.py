@@ -3,6 +3,7 @@ import logging
 import multiprocessing as mp
 import random
 import time
+from typing import Any
 
 from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import RobotID, SlotRequest
@@ -14,33 +15,46 @@ logger = logging.getLogger(__name__)
 class MaxBatchScheduler(RequestScheduler):
     """Greedy scheduler that always fills to max_batch_size, prioritizing requests with earliest deadlines."""
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        if (
-            self.mirror.in_flight_batches_count > 0
-            or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
-        ):
-            return []
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        if self.mirror.in_flight_batches_count > 0:
+            return [], {"reason": "server_busy"}
+        if not candidates:
+            return [], {"reason": "no_candidates"}
 
         deadlines = self.mirror.deadlines()
-        candidates = sorted(candidates, key=lambda r: deadlines[r.robot_id])
-        return [candidates[: self._max_batch_size]]
+        ordered = sorted(candidates, key=lambda r: deadlines[r.robot_id])
+        batch = ordered[: self._max_batch_size]
+        notes = {
+            "rule": "edf_prefix",
+            "max_batch_size": self._max_batch_size,
+            "ordered": [r.robot_id for r in ordered],
+        }
+        return [batch], notes
 
 
 class FixedMaxBatchScheduler(RequestScheduler):
     """Always dispatch max_batch_size rows, padding with artificial duplicate requests if needed."""
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        if (
-            self.mirror.in_flight_batches_count > 0
-            or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
-        ):
-            return []
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        if self.mirror.in_flight_batches_count > 0:
+            return [], {"reason": "server_busy"}
+        if not candidates:
+            return [], {"reason": "no_candidates"}
 
         deadlines = self.mirror.deadlines()
-        candidates = sorted(candidates, key=lambda r: deadlines[r.robot_id])
-        batch = candidates[: self._max_batch_size]
-        if len(batch) == self._max_batch_size:
-            return [batch]
+        ordered = sorted(candidates, key=lambda r: deadlines[r.robot_id])
+        batch = list(ordered[: self._max_batch_size])
+        real_size = len(batch)
+        if real_size == self._max_batch_size:
+            return [batch], {
+                "rule": "edf_prefix_fixed",
+                "max_batch_size": self._max_batch_size,
+                "padded": 0,
+            }
 
         pad_sources = list(batch)
         pad_index = 0
@@ -48,24 +62,26 @@ class FixedMaxBatchScheduler(RequestScheduler):
             source = pad_sources[pad_index % len(pad_sources)]
             batch.append(dataclasses.replace(source, is_padding=True))
             pad_index += 1
-        return [batch]
+        notes = {
+            "rule": "edf_prefix_fixed",
+            "max_batch_size": self._max_batch_size,
+            "padded": self._max_batch_size - real_size,
+        }
+        return [batch], notes
 
 
 class GreedyDeadlineScheduler(RequestScheduler):
     """Earliest-deadline-first: sort all pending requests by deadline."""
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        if (
-            self.mirror.in_flight_batches_count > 0
-            or (candidates := self.mirror.schedulable_requests(self._latest_requests)) == []
-        ):
-            return []
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        if self.mirror.in_flight_batches_count > 0:
+            return [], {"reason": "server_busy"}
+        if not candidates:
+            return [], {"reason": "no_candidates"}
 
         deadlines = self.mirror.deadlines()
-        logger.debug(
-            "Deadlines: %s",
-            {rid: deadline - min(deadlines.values()) for rid, deadline in deadlines.items()},
-        )
         candidates_and_infer_deadlines = sorted(
             [
                 (
@@ -79,11 +95,15 @@ class GreedyDeadlineScheduler(RequestScheduler):
         )
         _, earliest_infer_deadline = candidates_and_infer_deadlines[0]
         batch_size = self.get_largest_batch_size(earliest_infer_deadline)
-        logger.debug(
-            "Scheduling batch: %s",
-            [x[0].robot_id for x in candidates_and_infer_deadlines[:batch_size]],
-        )
-        return [[x[0] for x in candidates_and_infer_deadlines[:batch_size]]]
+        batch = [x[0] for x in candidates_and_infer_deadlines[:batch_size]]
+        notes = {
+            "rule": "edf_with_latency_fit",
+            "max_batch_size": self._max_batch_size,
+            "chosen_batch_size": batch_size,
+            "earliest_infer_deadline": earliest_infer_deadline,
+            "infer_deadlines": {slot.robot_id: d for slot, d in candidates_and_infer_deadlines},
+        }
+        return [batch], notes
 
     def get_largest_batch_size(self, infer_deadline: float) -> int:
         """Return the largest batch size whose profiled latency fits within the time remaining until deadline."""
@@ -120,19 +140,20 @@ class RoundRobinScheduler(RequestScheduler):
         if request.robot_id not in self._rr_robot_order:
             self._rr_robot_order.append(request.robot_id)
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
         if self.mirror.in_flight_batches_count > 0:
-            return []
+            return [], {"reason": "server_busy"}
 
-        candidate_by_robot = {
-            req.robot_id: req for req in self.mirror.schedulable_requests(self._latest_requests)
-        }
+        candidate_by_robot = {req.robot_id: req for req in candidates}
         n_robots = len(self._rr_robot_order)
         if not candidate_by_robot or n_robots == 0:
-            return []
+            return [], {"reason": "no_candidates" if not candidate_by_robot else "no_robots_known"}
 
         batch: list[SlotRequest] = []
         idx = self._rr_index % n_robots
+        starting_index = idx
         for _ in range(n_robots):
             robot_id = self._rr_robot_order[idx]
             if robot_id in candidate_by_robot:
@@ -142,7 +163,14 @@ class RoundRobinScheduler(RequestScheduler):
                 break
 
         self._rr_index = idx
-        return [batch] if batch else []
+        notes = {
+            "rule": "round_robin",
+            "max_batch_size": self._max_batch_size,
+            "rr_index_before": starting_index,
+            "rr_index_after": idx,
+            "robot_order": list(self._rr_robot_order),
+        }
+        return ([batch], notes) if batch else ([], notes)
 
     def reset_robot(self, robot_id: RobotID) -> None:
         super().reset_robot(robot_id)
@@ -157,13 +185,21 @@ class RoundRobinScheduler(RequestScheduler):
 class RandomBatchScheduler(RequestScheduler):
     """Randomly select up to max_batch_size from pending requests."""
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
         if self.mirror.in_flight_batches_count > 0:
-            return []
-
-        candidates = list(self.mirror.schedulable_requests(self._latest_requests))
+            return [], {"reason": "server_busy"}
         if not candidates:
-            return []
+            return [], {"reason": "no_candidates"}
 
         k = min(self._max_batch_size, len(candidates))
-        return [random.sample(candidates, random.randint(1, k))]
+        chosen_size = random.randint(1, k)
+        batch = random.sample(candidates, chosen_size)
+        notes = {
+            "rule": "random",
+            "max_batch_size": self._max_batch_size,
+            "candidate_pool_size": len(candidates),
+            "chosen_batch_size": chosen_size,
+        }
+        return [batch], notes

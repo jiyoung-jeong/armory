@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import time
+from typing import Any
 
 from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import RobotID, SlotRequest
@@ -50,9 +51,13 @@ class DynamicActionScheduler(RequestScheduler):
         self._demand_rate[request.robot_id] = self._compute_demand_rate(request)
         self._service_debt.setdefault(request.robot_id, 0.0)
 
-    def get_next_batches(self) -> list[list[SlotRequest]]:
-        if not self._batch_queue.empty() or (candidates := self.schedulable_requests) == []:
-            return []
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        if self.mirror.in_flight_batches_count > 0:
+            return [], {"reason": "server_busy"}
+        if not candidates:
+            return [], {"reason": "no_candidates"}
 
         now = time.time()
         self._advance_debts(now)
@@ -69,10 +74,17 @@ class DynamicActionScheduler(RequestScheduler):
                 best_score = score
 
         if best_batch is None:
-            return []
+            return [], {"reason": "no_feasible_batch"}
 
         self._charge_service(best_batch)
-        return [list(best_batch)]
+        notes = {
+            "rule": "dynamic_action",
+            "max_batch_size": self._max_batch_size,
+            "chosen_batch_size": len(best_batch),
+            "score": list(best_score) if best_score is not None else None,
+            "service_debt": dict(self._service_debt),
+        }
+        return [list(best_batch)], notes
 
     def reset_robot(self, robot_id: RobotID) -> None:
         self._advance_debts(time.time())
