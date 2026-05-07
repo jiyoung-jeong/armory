@@ -157,6 +157,74 @@ def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _jains_index(values: list[float]) -> float:
+    """Jain's fairness index: (Σx)^2 / (n · Σx^2). 1.0 if all values equal, 1/n at worst."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return 1.0
+    sq = float(np.sum(arr * arr))
+    if sq <= 0:
+        return 1.0
+    return float(np.sum(arr) ** 2 / (arr.size * sq))
+
+
+def compute_fairness_metrics(output_path: pathlib.Path) -> dict | None:
+    """Per-robot starvation rate and Jain's index on the freshness rate (1 - starvation_rate).
+
+    Starvation rate is the fraction of control steps a robot had no fresh action to execute,
+    so 1 - starvation_rate is the per-robot quality of service. Jain's on freshness measures
+    whether all robots received fresh actions at equal rates.
+
+    Returns None when no per-episode metadata is available.
+    """
+    df = load_episodes(output_path)
+    if df.empty:
+        return None
+    psd = load_planner_starvation_metrics(output_path)
+    if psd.empty:
+        return None
+    df = df.merge(
+        psd,
+        on=["robot_idx", "episode_idx", "task_suite_name", "task_id"],
+        how="left",
+    )
+    if "starvation_steps" not in df.columns or "observed_steps" not in df.columns:
+        return None
+
+    agg = df.groupby("robot_idx").agg(
+        starvation_steps=("starvation_steps", "sum"),
+        observed_steps=("observed_steps", "sum"),
+    ).reset_index().sort_values("robot_idx")
+    if agg.empty:
+        return None
+
+    robot_idx = [int(i) for i in agg["robot_idx"].tolist()]
+    starvation_rate = [
+        float(s) / float(o) if o > 0 else 0.0
+        for s, o in zip(agg["starvation_steps"], agg["observed_steps"])
+    ]
+    freshness_rate = [1.0 - r for r in starvation_rate]
+
+    alpha = None
+    server_path = output_path / "server_metadata.json"
+    if server_path.exists():
+        try:
+            with open(server_path) as f:
+                kwargs = (json.load(f) or {}).get("scheduler_kwargs") or {}
+            alpha = kwargs.get("alpha")
+        except (json.JSONDecodeError, OSError):
+            alpha = None
+
+    return {
+        "alpha": alpha,
+        "robot_idx": robot_idx,
+        "starvation_rate": starvation_rate,
+        "freshness_rate": freshness_rate,
+        "jain_freshness": _jains_index(freshness_rate),
+        "jain_starvation": _jains_index(starvation_rate),
+    }
+
+
 def load_experiment_duration(output_path: pathlib.Path) -> float | None:
     """Compute total experiment wall-clock duration from timestamps.csv files.
 
@@ -991,6 +1059,79 @@ def generate_starvation_variance_plot(
     logger.info(f"Saved {plots_dir / 'starvation_variance_over_time.png'}")
 
 
+def generate_jains_starvation_over_time_plot(
+    output_path: pathlib.Path, control_hz: float | None = None
+) -> None:
+    """Plot Jain's index on cumulative per-robot starvation rate over time.
+
+    1.0 = all robots have equal starvation rate at this point in the run; lower means
+    one or more robots are disproportionately starved. Only robots that have observed
+    at least one step are included at each timestep.
+    """
+    robots, matrix, _, control_hz = _build_actions_left_matrix(output_path, control_hz)
+    if matrix.size == 0:
+        logger.warning("No actions_left.npy data found for Jain's-over-time plot")
+        return
+
+    valid_mask = ~np.isnan(matrix)
+    starved_mask = valid_mask & (matrix <= 0)
+    cumulative_observed = np.cumsum(valid_mask, axis=1)
+    cumulative_starved = np.cumsum(starved_mask, axis=1)
+    cumulative_rates = np.divide(
+        cumulative_starved,
+        cumulative_observed,
+        out=np.full(matrix.shape, np.nan, dtype=float),
+        where=cumulative_observed > 0,
+    )
+
+    n_steps = matrix.shape[1]
+    jains = np.full(n_steps, np.nan, dtype=float)
+    active_count = (cumulative_observed > 0).sum(axis=0)
+    for t in range(n_steps):
+        active = cumulative_observed[:, t] > 0
+        if active.sum() < 2:
+            continue
+        rates = cumulative_rates[active, t]
+        s = float(rates.sum())
+        sq = float((rates * rates).sum())
+        jains[t] = (s * s) / (active.sum() * sq) if sq > 0 else 1.0
+
+    time_seconds = np.arange(n_steps, dtype=float) / max(control_hz, 1.0)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(time_seconds, jains, color="navy", linewidth=1.6)
+    ax.set_xlabel("Wall-clock time (s)", fontsize=12)
+    ax.set_ylabel("Jain's index on cumulative starvation rate", fontsize=12)
+    ax.set_ylim(0, 1.02)
+    ax.set_title(
+        "Starvation Fairness (Jain's) Over Time",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.grid(True, alpha=0.3)
+
+    final_jain = float(jains[~np.isnan(jains)][-1]) if np.any(~np.isnan(jains)) else float("nan")
+    n_active = int(active_count[-1]) if active_count.size else 0
+    ax.axhline(final_jain, color="navy", linestyle="--", linewidth=1, alpha=0.5)
+    ax.text(
+        time_seconds[-1],
+        final_jain,
+        f" final = {final_jain:.4f}  (n={n_active})",
+        va="center",
+        ha="right",
+        fontsize=9,
+        color="navy",
+    )
+
+    plt.tight_layout()
+    plots_dir = output_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    out = plots_dir / "jains_starvation_over_time.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"Saved {out}")
+
+
 def generate_staleness_plot(output_path: pathlib.Path) -> None:
     """Per-robot actions_left distribution (staleness), excluding starvation steps (NaN).
 
@@ -1391,6 +1532,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     generate_starvation_plot(output_path)
     generate_starvation_tail_metrics_plot(output_path)
     generate_starvation_variance_plot(output_path)
+    generate_jains_starvation_over_time_plot(output_path)
     generate_staleness_plot(output_path)
     generate_batch_size_plot(output_path)
     generate_server_timings_plot(output_path)
@@ -1520,4 +1662,27 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
         )
         console.print(
             f"[bold cyan]Throughput: {successes_per_second:.3f} successes/second[/bold cyan]"
+        )
+
+    fairness = compute_fairness_metrics(output_path)
+    if fairness is not None:
+        fair_table = Table(title="Per-Robot Outcome Fairness")
+        fair_table.add_column("Robot", style="cyan")
+        fair_table.add_column("Starvation Rate", style="yellow")
+        fair_table.add_column("Freshness Rate (1-starv)", style="green")
+        for idx, sr, fr in zip(
+            fairness["robot_idx"],
+            fairness["starvation_rate"],
+            fairness["freshness_rate"],
+        ):
+            fair_table.add_row(str(idx), f"{sr:.3f}", f"{fr:.3f}")
+        console.print(fair_table)
+        alpha_str = f" (alpha={fairness['alpha']})" if fairness["alpha"] is not None else ""
+        console.print(
+            f"[bold magenta]Jain's index on freshness rate{alpha_str}: "
+            f"{fairness['jain_freshness']:.4f}[/bold magenta]"
+        )
+        console.print(
+            f"[bold magenta]Jain's index on starvation rate: "
+            f"{fairness['jain_starvation']:.4f}[/bold magenta]"
         )

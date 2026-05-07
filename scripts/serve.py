@@ -123,6 +123,7 @@ def main(args: Args) -> None:
     scheduler_kwargs = build_scheduler_kwargs(
         args, action_horizon_steps=resolved.metadata.action_horizon
     )
+    resolved.metadata.scheduler_kwargs = scheduler_kwargs
 
     server = PolicyServer(
         metadata=resolved.metadata,
