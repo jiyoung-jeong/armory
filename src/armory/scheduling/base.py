@@ -98,23 +98,6 @@ class RequestScheduler(ABC):
                 )
             )
 
-        if not decisions and candidate_ids:
-            # No batch dispatched but there were candidates worth recording why.
-            decisions.append(
-                SchedulerDecision(
-                    scheduler_name=type(self).__name__,
-                    started_at=started_at,
-                    duration=time.time() - started_at,
-                    next_server_available=next_avail,
-                    in_flight_batches=in_flight,
-                    candidates=candidate_ids,
-                    deadlines=dict(deadlines),
-                    batch_id=None,
-                    scheduled=[],
-                    notes=dict(notes),
-                )
-            )
-
         return decisions
 
     @abstractmethod
