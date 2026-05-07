@@ -136,14 +136,32 @@ def _build_server_cmd(srv_cfg: dict[str, Any], *, port: int, scheduler: str) -> 
 
 
 def _expand_experiment_config(exp_cfg: dict[str, Any], num_robots: int) -> dict[str, Any]:
-    """Return a copy of exp_cfg with robot_0's profile replicated to num_robots robots."""
+    """Return a copy of exp_cfg with robot profiles set for num_robots robots.
+
+    If the config already defines more than one robot explicitly, those profiles are used
+    as-is and num_robots is ignored (the config is authoritative).
+    Otherwise robot_0's profile is replicated to fill num_robots robots.
+    """
+    if len(exp_cfg["robots"]) > 1:
+        actual = len(exp_cfg["robots"])
+        return {**exp_cfg, "experiment": {**exp_cfg["experiment"], "num_robots": actual}}
     robot_template = exp_cfg["robots"]["robot_0"]
-    expanded = {
+    return {
         **exp_cfg,
         "experiment": {**exp_cfg["experiment"], "num_robots": num_robots},
         "robots": {f"robot_{i}": dict(robot_template) for i in range(num_robots)},
     }
-    return expanded
+
+
+def _config_num_robots(cfg_path: str, fallback: int) -> int:
+    """Read robot count from a local config file when robots are pre-defined, else fallback."""
+    try:
+        n = len(json.loads(pathlib.Path(cfg_path).read_text()).get("robots", {}))
+        if n > 1:
+            return n
+    except Exception:
+        pass
+    return fallback
 
 
 def _build_client_cmd(
@@ -260,7 +278,7 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
     return summary
 
 
-@app.function(image=image, timeout=60 * 60, cpu=4, memory=2048)
+@app.function(image=image, timeout=60 * 60, cpu=4, memory=8192)
 def run_case(
     case: SweepCase,
     *,
@@ -370,7 +388,12 @@ def main(
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     artifacts_dir = out / "artifacts"
     cases = [
-        SweepCase(scheduler=scheduler, experiment_config=cfg, num_robots=n, seed=seed)
+        SweepCase(
+            scheduler=scheduler,
+            experiment_config=cfg,
+            num_robots=_config_num_robots(cfg, n),
+            seed=seed,
+        )
         for scheduler in _parse_csv(schedulers)
         for cfg in _parse_csv(experiment_configs)
         for n in _parse_csv(num_robots, cast=int)
