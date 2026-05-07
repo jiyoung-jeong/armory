@@ -237,7 +237,7 @@ class GpuWorker:
             s = slot_data.action_index_start - self._last_infer_step[slot_data.robot_id]
             d = (
                 self._latency_tracker.total_latency(slot_data.robot_id, len(slot_data))
-                / slot_data.control_hz
+                * slot_data.control_hz
             )
             return RTCParams(
                 prev_action=self._prev_actions[slot_data.robot_id], s_param=s, d_param=d
