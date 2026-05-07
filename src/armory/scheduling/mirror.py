@@ -189,6 +189,31 @@ class Robot:
                 return
         raise KeyError(f"chunk_id {chunk_id} not found")
 
+    def to_dict(self, now: float) -> dict:
+        step = self.steps[-1] if self.steps else None
+        return {
+            "control_hz": self.control_hz,
+            "execution_horizon": self.execution_horizon,
+            "n_steps": len(self.steps),
+            "n_chunks": len(self.chunks),
+            "action_index_range": (
+                [self.chunks[0].action_index_start, self.max_overall_action_step]
+                if self.chunks
+                else None
+            ),
+            "last_step": (
+                {
+                    "time_rel": step.time - now,
+                    "observation_step": step.observation_step,
+                    "next_action_step": step.next_action_step,
+                }
+                if step
+                else None
+            ),
+            "steps": [str(s) for s in self.steps],
+            "chunks": [str(c) for c in self.chunks],
+        }
+
 
 @dataclass
 class Batch:
@@ -235,6 +260,7 @@ class Mirror:
         self.robots[request.robot_id].step(request)
 
     def _next_chunk_context(self, rid: RobotID, dispatch_time: float) -> tuple[ControlStep, int]:
+        # Caller must fast-forward the mirror to at least ``dispatch_time`` first.
         robot = self.robots[rid]
         obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(rid)
         cs = robot.get_latest_control_step_before(obs_cutoff)
@@ -247,10 +273,15 @@ class Mirror:
         assert self.latency_tracker is not None
         dispatch_time = self.next_time_server_available()
         infer_lat = self.latency_tracker.infer_latency(len(batch))
+
+        ckpt = self.checkpoint()
+        self.fast_forward(dispatch_time)
+        contexts = [self._next_chunk_context(rid, dispatch_time) for rid in batch]
+        self.restore(ckpt)
+
         chunks: list[ActionChunk] = []
-        for rid in batch:
+        for rid, (cs, action_index_start) in zip(batch, contexts):
             robot = self.robots[rid]
-            cs, action_index_start = self._next_chunk_context(rid, dispatch_time)
             chunk = ActionChunk(
                 chunk_id=next(self.chunk_id_counter),
                 observation_step=cs.observation_step,
@@ -319,6 +350,8 @@ class Mirror:
         #     self.last_batch_completed_time,
         #     time.time(),
         # )
+        ckpt = self.checkpoint()
+        self.fast_forward(dispatch_time)
         for robot_id, request in requests.items():
             robot = self.robots[robot_id]
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
@@ -333,6 +366,7 @@ class Mirror:
             #     logger.debug("Robot: %s", robot_id)
             #     logger.debug("Robot steps: %s", self.robots[robot_id].steps)
             #     logger.debug("Robot chunks: %s", self.robots[robot_id].chunks)
+        self.restore(ckpt)
         return schedulable_requests
 
     # below are methods only used by search
@@ -369,3 +403,21 @@ class Mirror:
 
     def deadlines(self) -> dict[RobotID, float]:
         return {rid: robot.deadline() for rid, robot in self.robots.items()}
+
+    def to_dict(self) -> dict:
+        now = time.time()
+        return {
+            "robots": {rid: robot.to_dict(now) for rid, robot in sorted(self.robots.items())},
+            "in_flight_batches": [
+                {
+                    "batch_id": b.batch_id,
+                    "robot_ids": b.robot_ids,
+                    "chunk_ids": b.chunk_ids,
+                    "completion_time_rel": b.completion_time - now,
+                }
+                for b in self.in_flight_batches
+            ],
+            "last_batch_completed_time_rel": (
+                self.last_batch_completed_time - now if self.last_batch_completed_time > 0 else None
+            ),
+        }

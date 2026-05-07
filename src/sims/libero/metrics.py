@@ -1180,7 +1180,12 @@ def generate_staleness_plot(output_path: pathlib.Path) -> None:
 def generate_batch_size_plot(output_path: pathlib.Path) -> None:
     """Distribution of action chunk execution horizons (batch sizes)."""
 
-    with open(output_path / "server_metrics_history.json") as f:
+    history_path = output_path / "server_metrics_history.json"
+    if not history_path.exists():
+        logger.warning("No server_metrics_history.json; skipping batch size plot")
+        return
+
+    with open(history_path) as f:
         data = json.load(f)
 
     # FIXME: should use JSONDataclass loading

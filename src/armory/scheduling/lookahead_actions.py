@@ -160,8 +160,8 @@ class LookaheadActionsScheduler(RequestScheduler):
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
         *,
-        horizon: float = 0.5,
-        max_depth: int = 3,
+        horizon: float = 1.0,
+        max_depth: int = 5,
         step_budget_nodes: int = 32,
         scheduling_buffer: float = 0.01,
     ) -> None:
@@ -201,6 +201,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             "scheduling_buffer": self.scheduling_buffer,
             "slack_s": slack,
             "next_server_available": next_avail,
+            "mirror_state": self.mirror.to_dict(),
         }
 
         if slack < self.scheduling_buffer:
