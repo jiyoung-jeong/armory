@@ -1,8 +1,9 @@
 import multiprocessing as mp
 import time
+from typing import Any
 
-from armory.scheduling import RequestScheduler
-from armory.serving.schemas import SlotRequest
+from armory.scheduling.base import RequestScheduler
+from armory.serving.schemas import RobotID, SlotRequest
 
 
 class DynamicActionScheduler(RequestScheduler):

@@ -45,11 +45,11 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
                 start_step = existing_actions[0].step
                 end_step = max(
                     existing_actions[-1].step,
-                    action_chunk.action_start_step + action_chunk.execution_horizon - 1,
+                    action_chunk.action_index_start + action_chunk.execution_horizon - 1,
                 )
             else:
-                start_step = action_chunk.action_start_step
-                end_step = action_chunk.action_start_step + action_chunk.execution_horizon - 1
+                start_step = action_chunk.action_index_start
+                end_step = action_chunk.action_index_start + action_chunk.execution_horizon - 1
 
             # For each step, collect all predictions and ensemble them
             for step in range(start_step, end_step + 1):
@@ -57,8 +57,8 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
 
                 # Collect predictions from all chunks that cover this step
                 for chunk_idx, chunk in enumerate(self._action_chunks):
-                    chunk_start = chunk.action_start_step
-                    chunk_end = chunk.action_start_step + len(chunk.actions) - 1
+                    chunk_start = chunk.action_index_start
+                    chunk_end = chunk.action_index_start + len(chunk.actions) - 1
 
                     if chunk_start <= step <= chunk_end:
                         action_idx = step - chunk_start
@@ -78,8 +78,8 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
                             step=step,
                             action=ensembled_action,
                             action_chunk_index=len(self._action_chunks) - 1,
-                            index_in_chunk=step - action_chunk.action_start_step
-                            if step >= action_chunk.action_start_step
+                            index_in_chunk=step - action_chunk.action_index_start
+                            if step >= action_chunk.action_index_start
                             else None,
                         )
                     )

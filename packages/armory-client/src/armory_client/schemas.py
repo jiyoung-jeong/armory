@@ -152,8 +152,9 @@ class ActionChunk(ParquetDataclass):
     We store all actions, including past execution horizon, as they might come in handy for debugging later
     """
 
+    chunk_id: int
     observation_step: int
-    action_start_step: int
+    action_index_start: int
     execution_start_step: int  # which observation step the execution started on
     actions: np.ndarray
     execution_horizon: int
@@ -170,8 +171,9 @@ class ActionChunk(ParquetDataclass):
     ) -> "ActionChunk":
         # NOTE: copy attributes instead of composition to make it easier to serialize for parquet/csv
         return ActionChunk(
+            chunk_id=infer_response.chunk_id,
             observation_step=infer_response.observation_step,
-            action_start_step=infer_response.action_start_step,
+            action_index_start=infer_response.action_index_start,
             execution_start_step=execution_start_step,
             actions=infer_response.actions,
             execution_horizon=infer_response.execution_horizon,
@@ -196,7 +198,7 @@ class Action:
     The action_chunk_index and index_in_chunk will be None for the null action.
     """
 
-    step: int
+    step: int  # TODO: should be renamed as action_index
     action: Float[np.ndarray, " action_dim"]  # TODO: check the shape on this
     action_chunk_index: int | None
     index_in_chunk: int | None
