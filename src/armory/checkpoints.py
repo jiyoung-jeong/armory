@@ -41,6 +41,14 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
         "config": "pi0_libero",
         "dir": "/coc/flash8/rbansal66/openpi_rollout/openpi/.cache/openpi/openpi-assets/checkpoints/pi0_libero_pytorch_dexmal_mokapots",
     },
+    EnvMode.REAL_SORT_LEGOS: {
+        "config": "pi05_sort_legos_correct_bins_extra_data",
+        "dir": "/coc/flash7/rbansal66/vvla/openpi-training/checkpoints/pi05_sort_legos_correct_bins_extra_data/sort_legos_extra_data_finetune/20000",
+    },
+    EnvMode.REAL_STACK_CUBES: {
+        "config": "pi05_stack_cubes",
+        "dir": "/coc/flash7/rbansal66/vvla/openpi-training/checkpoints/pi05_stack_cubes/stack_cubes_finetune/8000",
+    },
 }
 
 

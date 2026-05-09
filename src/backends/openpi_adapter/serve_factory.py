@@ -22,10 +22,26 @@ class EnvMode(str, enum.Enum):
     LIBERO_PI0 = "libero_pi0"
     LIBERO_PYTORCH = "libero_pytorch"
     LIBERO_REALTIME = "libero_realtime"
+    REAL_SORT_LEGOS = "real_sort_legos"
+    REAL_STACK_CUBES = "real_stack_cubes"
+
+
+def _make_real_example():
+    """Real-robot example with 7-dim state (real finetunes use 7-dim, not 8)."""
+    import numpy as np
+
+    return {
+        "observation/state": np.random.rand(7),
+        "observation/image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "observation/wrist_image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "prompt": "do something",
+    }
 
 
 def _make_example_fn(env_mode: EnvMode | None):
     """Return the env-specific make_*_example() function for profiling/warmup."""
+    if env_mode in (EnvMode.REAL_SORT_LEGOS, EnvMode.REAL_STACK_CUBES):
+        return _make_real_example
     if env_mode in (
         EnvMode.LIBERO,
         EnvMode.LIBERO_PI0,

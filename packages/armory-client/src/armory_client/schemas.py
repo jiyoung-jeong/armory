@@ -246,6 +246,9 @@ class ServerMetadata(JSONDataclass):
     env: str  # environment mode (ALOHA, LIBERO, etc.)
     scheduling_algorithm: str  # TODO: maybe reference the enum from scheduler.py
 
+    # Per-algorithm scheduler kwargs (e.g., {"alpha": 1.0} for dynamic-action).
+    scheduler_kwargs: dict | None = None
+
     # Set by Modal when running behind a tunnel; clients should use this for WebSocket
     tunnel_url: str | None = None
     location: str | None = None
