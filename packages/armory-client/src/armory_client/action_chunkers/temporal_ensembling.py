@@ -20,6 +20,7 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
         control_hz: int,
         realtime: bool = True,
         m_param: float = 1.0,
+        real: bool = False,
     ):
         """
         Args:
@@ -27,8 +28,9 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
             control_hz: control frequency of the environment
             realtime: whether to run in realtime mode
             m_param: exponential decay rate (smaller = slower incorporation of new observations)
+            real: whether null actions should hold the observed robot state
         """
-        super().__init__(ws_client=ws_client, control_hz=control_hz, realtime=realtime)
+        super().__init__(ws_client=ws_client, control_hz=control_hz, realtime=realtime, real=real)
         self._m_param = m_param
 
     @override
