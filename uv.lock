@@ -16,6 +16,7 @@ required-markers = [
 members = [
     "armory",
     "armory-client",
+    "armory-tui",
 ]
 
 [[package]]
@@ -213,6 +214,7 @@ dependencies = [
     { name = "arrow" },
     { name = "asttokens" },
     { name = "async-lru" },
+    { name = "asyncssh" },
     { name = "attrs" },
     { name = "augmax" },
     { name = "av" },
@@ -555,6 +557,7 @@ requires-dist = [
     { name = "arrow", specifier = "==1.4.0" },
     { name = "asttokens", specifier = "==3.0.1" },
     { name = "async-lru", specifier = "==2.3.0" },
+    { name = "asyncssh", specifier = "==2.21.0" },
     { name = "attrs", specifier = "==26.1.0" },
     { name = "augmax", specifier = "==0.4.1" },
     { name = "av", specifier = "==17.0.0" },
@@ -905,6 +908,17 @@ requires-dist = [
 ]
 
 [[package]]
+name = "armory-tui"
+version = "0.1.0"
+source = { editable = "packages/armory-tui" }
+dependencies = [
+    { name = "armory" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "armory", editable = "." }]
+
+[[package]]
 name = "arrow"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -933,6 +947,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e8/1f/989ecfef8e64109a489fff357450cb73fa73a865a92bd8c272170a6922c2/async_lru-2.3.0.tar.gz", hash = "sha256:89bdb258a0140d7313cf8f4031d816a042202faa61d0ab310a0a538baa1c24b6", size = 16332, upload-time = "2026-03-19T01:04:32.413Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/e2/c2e3abf398f80732e58b03be77bde9022550d221dd8781bf586bd4d97cc1/async_lru-2.3.0-py3-none-any.whl", hash = "sha256:eea27b01841909316f2cc739807acea1c623df2be8c5cfad7583286397bb8315", size = 8403, upload-time = "2026-03-19T01:04:30.883Z" },
+]
+
+[[package]]
+name = "asyncssh"
+version = "2.21.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/d6/823ed5a227f7da70b33681e49eec4a36fae31b9296b27a8d6aead2bd3f77/asyncssh-2.21.0.tar.gz", hash = "sha256:450fe13bb8d86a8f4e7d7b5fafce7791181ca3e7c92e15bbc45dfb25866e48b3", size = 539740, upload-time = "2025-05-03T13:42:05.945Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/56/db25216aa7f385ec71fdc489af80812171515cddbe68c0e515e98a291390/asyncssh-2.21.0-py3-none-any.whl", hash = "sha256:cf7f3dfa52b2cb4ad31f0d77ff0d0a8fdd850203da84a0e72e62c36fdd4daf4b", size = 374919, upload-time = "2025-05-03T13:42:04.539Z" },
 ]
 
 [[package]]

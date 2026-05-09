@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src/armory", "src/backends/openpi_adapter", "src/sims"]
-dev-mode-dirs = ["src", "src/backends", "third_party/libero", "packages/armory-client/src"]
+dev-mode-dirs = ["src", "src/backends", "third_party/libero", "packages/armory-client/src", "packages/armory-tui/src"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src/armory" = "armory"
@@ -12,7 +12,7 @@ dev-mode-dirs = ["src", "src/backends", "third_party/libero", "packages/armory-c
 "src/sims" = "sims"
 
 [tool.uv.workspace]
-members = ["packages/armory-client"]
+members = ["packages/armory-client", "packages/armory-tui"]
 
 [tool.uv]
 required-environments = [
@@ -39,6 +39,7 @@ dependencies = [
     "arrow==1.4.0",
     "asttokens==3.0.1",
     "async-lru==2.3.0",
+    "asyncssh==2.21.0",
     "attrs==26.1.0",
     "augmax==0.4.1",
     "av==17.0.0",
@@ -399,6 +400,7 @@ ignore = [
 known-first-party = [
     "armory",
     "armory_client",
+    "armory_tui",
     "openpi_adapter",
     "sims",
 ]
