@@ -43,7 +43,7 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
     },
     EnvMode.REAL_SORT_LEGOS: {
         "config": "pi05_sort_legos_correct_bins_extra_data",
-        "dir": "/coc/flash7/rbansal66/vvla/openpi-training/checkpoints/pi05_sort_legos_correct_bins_extra_data/sort_legos_extra_data_finetune/11000",
+        "dir": "/coc/flash7/rbansal66/vvla/openpi-training/checkpoints/pi05_sort_legos_correct_bins_extra_data/sort_legos_extra_data_finetune/20000",
     },
     EnvMode.REAL_STACK_CUBES: {
         "config": "pi05_stack_cubes",
