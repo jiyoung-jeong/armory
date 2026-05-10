@@ -33,7 +33,7 @@ from armory_client.messages import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
 
 PROFILE_ITERATIONS = 5
 
@@ -56,6 +56,7 @@ class GpuWorker:
         gpu_out_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
+        min_ex: int = 10,
     ) -> None:
         self.policy_factory = policy_factory
         self.max_batch_size = max_batch_size
@@ -65,6 +66,7 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
+        self._min_ex = min_ex
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -203,6 +205,8 @@ class GpuWorker:
             msg = req_sock.recv_pyobj(zmq.NOBLOCK)
             if isinstance(msg, ResetRequest):
                 self._latency_tracker.clear(msg.robot_id)
+                self._last_served_action_index.pop(msg.robot_id, None)
+                self._prev_actions.pop(msg.robot_id, None)
                 logger.debug("Received reset request: %s", msg)
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
@@ -248,8 +252,10 @@ class GpuWorker:
         return None
 
     def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
-        return sr.is_padding or sd.action_index_start > self._last_served_action_index.get(
-            sd.robot_id, -1
+        return (
+            sr.is_padding
+            or sd.robot_id not in self._last_served_action_index
+            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_ex
         )
 
     def _update_state(
@@ -259,6 +265,6 @@ class GpuWorker:
         actions: list[dict],
     ) -> None:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
-            if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
+            if not sr.is_padding:
                 self._last_served_action_index[sr.robot_id] = sd.action_index_start
                 self._prev_actions[sr.robot_id] = action_dict["actions"]

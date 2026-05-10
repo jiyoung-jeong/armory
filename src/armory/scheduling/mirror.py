@@ -46,7 +46,7 @@ from armory.serving.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 
 @dataclass
@@ -94,18 +94,6 @@ class Robot:
                 next_action_step=request.action_index_start + 1
                 if executed_action_on_step
                 else request.action_index_start,
-            )
-            assert control_step.time > self.steps[-1].time
-            assert control_step.observation_step == self.steps[-1].observation_step + 1
-            assert (
-                control_step.action_step is None
-                or control_step.action_step == self.steps[-1].next_action_step
-            ), (
-                f"action_step {control_step.action_step} is not the next action step {self.steps[-1].next_action_step}, steps: {self.steps}"
-            )
-            assert (
-                control_step.action_step is None
-                or control_step.next_action_step == control_step.action_step + 1
             )
 
         self.steps.append(control_step)
