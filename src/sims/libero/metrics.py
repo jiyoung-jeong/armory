@@ -1178,7 +1178,7 @@ def generate_jains_starvation_over_time_plot(
     one or more robots are disproportionately starved. Only robots that have observed
     at least one step are included at each timestep.
     """
-    robots, matrix, _, control_hz = _build_actions_left_matrix(output_path, control_hz)
+    robots, matrix, _, control_hz, _ = _build_actions_left_matrix(output_path, control_hz)
     if matrix.size == 0:
         logger.warning("No actions_left.npy data found for Jain's-over-time plot")
         return

@@ -89,15 +89,16 @@ class GpuWorker:
         result_sock = ctx.socket(zmq.PUB)
         result_sock.bind(self.gpu_out_ep)
 
-        # Per-robot inference state — initialised here (post-fork, not in __init__)
-        self._latency_tracker = EMALatencyTracker()
-        self._last_served_action_index: dict[RobotID, int] = {}
-        self._prev_actions: dict[RobotID, np.ndarray] = {}
-
         self._profile_and_send(policy, result_sock)
 
         self.ready_event.set()
         logger.info("GPU worker ready")
+
+        # Per-robot inference state — initialised here (post-fork, not in __init__)
+        self._latency_tracker = EMALatencyTracker()
+        self._last_served_action_index: dict[RobotID, int] = {}
+        self._last_infer_step: dict[RobotID, int] = {}
+        self._prev_actions: dict[RobotID, np.ndarray] = {}
 
         while True:
             self._process_server_messages(req_sock)
@@ -115,8 +116,8 @@ class GpuWorker:
                     slot_datas.append(sd)
                     chunk_ids.append(chunk_id)
                     slot_requests.append(sr)
-                # else:
-                #     logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
+                else:
+                    logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
 
             if len(slot_datas) == 0:
                 result_sock.send_pyobj(
@@ -132,8 +133,7 @@ class GpuWorker:
                 continue
 
             infer_requests = [
-                InternalRequest.from_slot_data(sd, self._make_params(sd, len(slot_datas)))
-                for sd in slot_datas
+                InternalRequest.from_slot_data(sd, self._make_params(sd)) for sd in slot_datas
             ]
 
             logger.info("Inferring batch of %d", len(infer_requests))
@@ -194,7 +194,6 @@ class GpuWorker:
                 policy.infer_batch([request] * batch_size)
                 latencies.append(time.perf_counter() - start)
             profile[batch_size] = sum(latencies) / len(latencies)
-            self._latency_tracker.update_infer(batch_size, profile[batch_size])
             logger.info("  batch_size=%d: %.1f ms", batch_size, profile[batch_size] * 1000)
         notify_sock.send_pyobj(BatchProfile(latencies=profile))
         logger.info("Sent batch profile to scheduler")
@@ -232,15 +231,15 @@ class GpuWorker:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
 
     def _make_params(
-        self, slot_data: SlotData, batch_size: int
+        self, slot_data: SlotData
     ) -> RTCParams | VlashParams | TrainTimeRTCParams | None:
         if (
             slot_data.infer_type == InferType.INFERENCE_TIME_RTC
-            and slot_data.robot_id in self._last_served_action_index
+            and slot_data.robot_id in self._last_infer_step
         ):
-            s = slot_data.action_index_start - self._last_served_action_index[slot_data.robot_id]
+            s = slot_data.action_index_start - self._last_infer_step[slot_data.robot_id]
             d = (
-                self._latency_tracker.total_latency(slot_data.robot_id, batch_size)
+                self._latency_tracker.total_latency(slot_data.robot_id, len(slot_data))
                 * slot_data.control_hz
             )
             return RTCParams(
@@ -249,11 +248,8 @@ class GpuWorker:
         return None
 
     def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
-        # REALLY BAD HACK:
-        return (
-            sr.is_padding
-            or sd.robot_id not in self._last_served_action_index
-            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + 10
+        return sr.is_padding or sd.action_index_start > self._last_served_action_index.get(
+            sd.robot_id, -1
         )
 
     def _update_state(
@@ -263,6 +259,6 @@ class GpuWorker:
         actions: list[dict],
     ) -> None:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
-            if not sr.is_padding:
+            if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
                 self._last_served_action_index[sr.robot_id] = sd.action_index_start
                 self._prev_actions[sr.robot_id] = action_dict["actions"]
