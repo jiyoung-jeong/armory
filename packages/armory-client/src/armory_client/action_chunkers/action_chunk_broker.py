@@ -11,22 +11,24 @@ from armory_client.schemas import Action, ActionChunk, Observation
 class ActionChunkBrokerBase:
     def __init__(
         self,
+        real: bool = False,
     ) -> None:
+        self._real = real
         self._action_queue: deque[Action] = deque()
         self._action_chunks: list[ActionChunk] = []
         self._next_observation_step: int = 0  # next observation step to see
         self._next_action_step: int = 0  # next action step to execute
-        self._prev_action: Action = self._create_null_action(-1)
+        self._prev_action: Action = self._create_null_action(-1, None)
         self._actions_left_history: list[int] = []
 
-    def get_action(self, observation_step: int) -> Action:
+    def get_action(self, observation_step: int, obs: Observation | None = None) -> Action:
         self._actions_left_history.append(len(self._action_queue))
         self._next_observation_step = observation_step + 1
         if self._action_queue:
             action = self._action_queue.popleft()
             self._next_action_step += 1
         else:
-            action = self._create_null_action(observation_step)
+            action = self._create_null_action(observation_step, obs)
 
         self._prev_action = action
         return action
@@ -57,19 +59,24 @@ class ActionChunkBrokerBase:
             if action_chunk.action_index_start + i >= self._next_action_step
         )
 
-    def _create_null_action(self, observation_step: int) -> Action:
+    def _create_null_action(self, observation_step: int, obs: Observation | None) -> Action:
         # FIXME: hardcoded, should move this outside of this class
         import numpy as np
 
-        action = np.zeros(7)
-        action[-1] = (
-            self.current_action_chunk.get_action(-1)[-1]
-            if self.current_action_chunk is not None
-            else 0.0
-        )
+        if self._real and obs is not None and obs.state is not None:
+            action = obs.state.copy()
+            step = observation_step
+        else:
+            action = np.zeros(7)
+            action[-1] = (
+                self.current_action_chunk.get_action(-1)[-1]
+                if self.current_action_chunk is not None
+                else 0.0
+            )
+            step = None
 
         return Action(
-            step=None,
+            step=step,
             action=action,
             action_chunk_index=None,
             index_in_chunk=None,
@@ -96,8 +103,9 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         control_hz: int,
         realtime: bool = True,
         execution_horizon: int = 0,
+        real: bool = False,
     ) -> None:
-        super().__init__()
+        super().__init__(real=real)
 
         self._step_duration = 1 / control_hz
         self._realtime = realtime
@@ -114,16 +122,19 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         """Client continuously streams observations to the server."""
         with self._lock:
             # count actions left in queue before we pop the next action
-            action = self.get_action(obs.step)
+            action = self.get_action(obs.step, obs)
 
-            self._ws_client.send(
-                obs,
-                self.deadline,
-                self._next_action_step,
-                execution_horizon=self.execution_horizon,
-            )
+            self._infer(obs)
 
             return action
+
+    def _infer(self, obs: Observation) -> None:
+        self._ws_client.send(
+            obs,
+            self.deadline,
+            self._next_action_step,
+            execution_horizon=self.execution_horizon,
+        )
 
     def _receive_actions(self) -> None:
         while True:
