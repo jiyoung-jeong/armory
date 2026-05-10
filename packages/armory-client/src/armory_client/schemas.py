@@ -3,7 +3,7 @@ import json
 import pathlib
 import time
 from dataclasses import asdict, dataclass, field, fields
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -231,6 +231,12 @@ class ServerMetadata(JSONDataclass):
 
     Sent from server to clients at connection time.
     """
+
+    @classmethod
+    def from_http_metadata(cls, payload: dict[str, Any]) -> "ServerMetadata":
+        """Create metadata from server JSON, ignoring newer server-only fields."""
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in payload.items() if k in allowed})
 
     # Training config info
     config_name: str  # e.g., "pi0_aloha_sim", "pi05_libero"

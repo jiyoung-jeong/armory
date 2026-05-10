@@ -164,6 +164,8 @@ class MetricsStore(JSONDataclass):
         """Called once per batch by _router_task."""
         with lock:
             responses = batch.responses
+            if len(responses) == 0:
+                return
             self.batches.append(
                 BatchSummary(
                     batch_id=batch.batch_id,

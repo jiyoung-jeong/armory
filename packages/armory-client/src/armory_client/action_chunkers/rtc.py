@@ -13,6 +13,7 @@ class InferenceTimeRTCBroker(ActionChunkBroker):
         control_hz: int,
         realtime: bool = True,
         execution_horizon: int = 0,
+        real: bool = False,
     ):
         """
         Args:
@@ -20,12 +21,14 @@ class InferenceTimeRTCBroker(ActionChunkBroker):
             control_hz: the control frequency of the environment
             realtime: whether to run in realtime mode, setting this False essentially means inference latency is 0
             execution_horizon: how many steps in the predicted chunk the robot is willing to execute
+            real: whether null actions should hold the observed robot state
         """
         super().__init__(
             ws_client=ws_client,
             control_hz=control_hz,
             realtime=realtime,
             execution_horizon=execution_horizon,
+            real=real,
         )
 
     @override
