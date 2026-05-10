@@ -255,6 +255,9 @@ class ServerMetadata(JSONDataclass):
     # Per-algorithm scheduler kwargs (e.g., {"alpha": 1.0} for dynamic-action).
     scheduler_kwargs: dict | None = None
 
+    # Minimum action-index gap between serves for a robot (GPU worker throttle).
+    min_ex: int = 10
+
     # Set by Modal when running behind a tunnel; clients should use this for WebSocket
     tunnel_url: str | None = None
     location: str | None = None

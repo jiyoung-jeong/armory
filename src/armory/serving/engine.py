@@ -56,6 +56,7 @@ class GpuWorker:
         gpu_out_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
+        min_ex: int = 10,
     ) -> None:
         self.policy_factory = policy_factory
         self.max_batch_size = max_batch_size
@@ -65,6 +66,7 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
+        self._min_ex = min_ex
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -204,6 +206,8 @@ class GpuWorker:
             msg = req_sock.recv_pyobj(zmq.NOBLOCK)
             if isinstance(msg, ResetRequest):
                 self._latency_tracker.clear(msg.robot_id)
+                self._last_served_action_index.pop(msg.robot_id, None)
+                self._prev_actions.pop(msg.robot_id, None)
                 logger.debug("Received reset request: %s", msg)
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
@@ -253,7 +257,7 @@ class GpuWorker:
         return (
             sr.is_padding
             or sd.robot_id not in self._last_served_action_index
-            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + 10
+            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_ex
         )
 
     def _update_state(
