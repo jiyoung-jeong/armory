@@ -252,6 +252,7 @@ def _start_backend(
             socket_addresses["gpu_out_ep"],
             gpu_ready,
             log_queue,
+            min_ex=metadata.min_ex,
         ).run,
         daemon=True,
     )

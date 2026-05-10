@@ -46,7 +46,7 @@ from armory.serving.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger.setLevel(logging.DEBUG)
 
 
 @dataclass
