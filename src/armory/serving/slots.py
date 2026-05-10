@@ -33,6 +33,7 @@ class SlotData:
     infer_type: Any
     params: Any
     noise: Any  # np.ndarray | None
+    control_hz: float
 
 
 class RobotSlot:
