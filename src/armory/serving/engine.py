@@ -33,7 +33,7 @@ from armory_client.messages import (
 )
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
 
 PROFILE_ITERATIONS = 5
 

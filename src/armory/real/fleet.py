@@ -578,7 +578,7 @@ class FleetController:
         return await self._start_detached_docker_processes(
             robots,
             label="Piper client",
-            command="ros2 run piper piper_client",
+            command="ros2 run piper piper_client_armory",
             cwd=PIPER_WORKSPACE_DIR,
             log_suffix="client",
             callback=callback,
@@ -606,7 +606,7 @@ class FleetController:
         return await self._kill_detached_docker_processes(
             robots,
             label="Piper client",
-            command="ros2 run piper piper_client",
+            command="ros2 run piper piper_client_armory",
             log_suffix="client",
             callback=callback,
             signal_first="INT",
@@ -620,7 +620,7 @@ class FleetController:
     ):
         return await self._check_detached_docker_processes(
             robots,
-            command="ros2 run piper piper_client",
+            command="ros2 run piper piper_client_armory",
             log_suffix="client",
             callback=callback,
         )
