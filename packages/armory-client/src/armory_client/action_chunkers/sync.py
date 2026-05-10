@@ -18,6 +18,7 @@ class SyncBroker(ActionChunkBroker):
         control_hz: int,
         realtime: bool = True,
         execution_horizon: int = 0,
+        real: bool = False,
     ):
         server_action_horizon = ws_client.server_metadata.action_horizon
         resolved_execution_horizon = (
@@ -29,6 +30,7 @@ class SyncBroker(ActionChunkBroker):
             control_hz=control_hz,
             realtime=realtime,
             execution_horizon=resolved_execution_horizon,
+            real=real,
         )
 
     @override
