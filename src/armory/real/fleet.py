@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import pathlib
 import re
 import shlex
 import threading
@@ -27,6 +28,9 @@ from armory.real.config import FleetConfig, Robot, RobotStatus
 DOCKER_CONTAINER = "piper_env"
 DATA_COLLECTION_DIR = "/CS4803ARM_Lab/user_data/data_collection"
 PIPER_WORKSPACE_DIR = "/CS4803ARM_Lab/user_data/piper_ros"
+# Default data dir written by RealSaver inside the container (bind-mounted to the
+# workstation host). Override via the run_trial(remote_subdir=...) parameter.
+DEFAULT_EPISODE_SUBDIR = "armory_episodes"
 
 
 class FleetController:
@@ -42,6 +46,9 @@ class FleetController:
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._connections: dict[int, asyncssh.SSHClientConnection] = {}
         self._lock = asyncio.Lock()
+        # Per-robot cache of the resolved host-side user_data path
+        # (echo $PIPER_DOCKER_DIR/../user_data). Populated lazily on first fetch.
+        self._user_data_host_path: dict[int, str] = {}
 
         # Per-workstation file loggers (internal — not the event stream).
         self._loggers: dict[int, logging.Logger] = {}
@@ -153,9 +160,15 @@ class FleetController:
         self,
         robots: list[Robot],
         callback: Callable | None = None,
+        grace_sec: float = 5.0,
     ):
-        """Stop the Piper client node inside Docker."""
-        return self.submit(self._kill_clients(robots, callback))
+        """Stop the Piper client node inside Docker.
+
+        Sends SIGINT first (which the client's rclpy.spin loop translates to a
+        KeyboardInterrupt → clean destroy_node → RealSaver flush), waits
+        ``grace_sec`` seconds, then sends SIGKILL.
+        """
+        return self.submit(self._kill_clients(robots, callback, grace_sec=grace_sec))
 
     def check_clients(
         self,
@@ -164,6 +177,26 @@ class FleetController:
     ):
         """Check whether Piper client nodes are running inside Docker."""
         return self.submit(self._check_clients(robots, callback))
+
+    def fetch_episode_data(
+        self,
+        robots: list[Robot],
+        local_dir: pathlib.Path,
+        remote_subdir: str = DEFAULT_EPISODE_SUBDIR,
+        include_video: bool = False,
+        callback: Callable | None = None,
+    ):
+        """Pull each robot's episode tree to ``local_dir/<robot_name>/`` via SFTP.
+
+        ``remote_subdir`` is a path relative to the workstation's user_data
+        bind mount (host side of /CS4803ARM_Lab/user_data/). Default
+        ``armory_episodes`` matches RealSaver's default.
+        """
+        return self.submit(
+            self._fetch_episode_data(
+                robots, local_dir, remote_subdir, include_video, callback
+            )
+        )
 
     # ── internal async methods ──────────────────────────────────
 
@@ -568,6 +601,7 @@ class FleetController:
         self,
         robots: list[Robot],
         callback: Callable | None = None,
+        grace_sec: float = 5.0,
     ):
         return await self._kill_detached_docker_processes(
             robots,
@@ -575,6 +609,8 @@ class FleetController:
             command="ros2 run piper piper_client",
             log_suffix="client",
             callback=callback,
+            signal_first="INT",
+            grace_sec=grace_sec,
         )
 
     async def _check_clients(
@@ -723,10 +759,15 @@ class FleetController:
         command: str,
         log_suffix: str,
         callback: Callable | None = None,
+        signal_first: str = "TERM",
+        grace_sec: float = 0.5,
     ):
         results = {}
         tasks = [
-            self._kill_detached_docker_process(robot, label, command, log_suffix)
+            self._kill_detached_docker_process(
+                robot, label, command, log_suffix,
+                signal_first=signal_first, grace_sec=grace_sec,
+            )
             for robot in robots
         ]
         outputs = await asyncio.gather(*tasks, return_exceptions=True)
@@ -742,6 +783,8 @@ class FleetController:
         label: str,
         command: str,
         log_suffix: str,
+        signal_first: str = "TERM",
+        grace_sec: float = 0.5,
     ) -> str:
         logger = self._loggers[robot.id]
         container_pid_path = f"/tmp/armory_{log_suffix}.pid"
@@ -754,11 +797,14 @@ class FleetController:
         container_pid_path_q = shlex.quote(container_pid_path)
         host_pid_path_q = shlex.quote(host_pid_path)
         docker_filter_q = shlex.quote(f"name={DOCKER_CONTAINER}")
+        sig_q = shlex.quote(signal_first.lstrip("-"))
+        grace_str = f"{max(0.0, float(grace_sec)):.3f}"
         container_stop_script = (
             f"if [ -s {container_pid_path_q} ]; then "
             f"pid=$(cat {container_pid_path_q}); "
-            "kill -- -\"$pid\" >/dev/null 2>&1 || kill \"$pid\" >/dev/null 2>&1 || true; "
-            "sleep 0.5; "
+            f"kill -{sig_q} -- -\"$pid\" >/dev/null 2>&1 "
+            f"|| kill -{sig_q} \"$pid\" >/dev/null 2>&1 || true; "
+            f"sleep {grace_str}; "
             "kill -9 -- -\"$pid\" >/dev/null 2>&1 || kill -9 \"$pid\" >/dev/null 2>&1 || true; "
             f"rm -f {container_pid_path_q}; "
             "fi; "
@@ -855,6 +901,108 @@ class FleetController:
             return result.stdout.strip() == "RUNNING"
         except Exception:
             return False
+
+    # ── SFTP fetch ──────────────────────────────────────────────
+
+    async def _resolve_user_data_host_path(self, robot: Robot) -> str:
+        """Return the workstation host path that backs /CS4803ARM_Lab/user_data."""
+        cached = self._user_data_host_path.get(robot.id)
+        if cached:
+            return cached
+        conn = await self._get_connection(robot)
+        # PIPER_DOCKER_DIR is set in the workstation's ~/.bashrc; resolve via a
+        # login shell so the env var is available, then normalize the path.
+        result = await conn.run(
+            "bash -lc 'readlink -f \"$PIPER_DOCKER_DIR/../user_data\"'",
+            timeout=10,
+        )
+        path = result.stdout.strip()
+        if not path:
+            raise RuntimeError(
+                f"WS-{robot.id}: could not resolve $PIPER_DOCKER_DIR/../user_data; "
+                "is PIPER_DOCKER_DIR set in ~/.bashrc?"
+            )
+        self._user_data_host_path[robot.id] = path
+        return path
+
+    async def _fetch_episode_data(
+        self,
+        robots: list[Robot],
+        local_dir: pathlib.Path,
+        remote_subdir: str,
+        include_video: bool,
+        callback: Callable | None,
+    ) -> dict[int, str]:
+        local_dir = pathlib.Path(local_dir)
+        local_dir.mkdir(parents=True, exist_ok=True)
+        tasks = [
+            self._fetch_one_robot(robot, local_dir, remote_subdir, include_video)
+            for robot in robots
+        ]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        results: dict[int, str] = {}
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = (
+                f"ERROR: {out}" if isinstance(out, Exception) else str(out)
+            )
+        if callback:
+            callback(results)
+        return results
+
+    async def _fetch_one_robot(
+        self,
+        robot: Robot,
+        local_dir: pathlib.Path,
+        remote_subdir: str,
+        include_video: bool,
+    ) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            user_data = await self._resolve_user_data_host_path(robot)
+        except Exception as e:
+            self._emit(f"WS-{robot.id}: fetch FAILED — {e}")
+            return f"ERROR: {e}"
+
+        remote_root = os.path.join(user_data, remote_subdir.lstrip("/"))
+        # Land each robot's tree under <local_dir>/<robot_name>/.
+        per_robot_local = pathlib.Path(local_dir) / robot.name
+        per_robot_local.mkdir(parents=True, exist_ok=True)
+
+        conn = await self._get_connection(robot)
+        try:
+            async with conn.start_sftp_client() as sftp:
+                if not await sftp.isdir(remote_root):
+                    msg = f"no data at {remote_root}"
+                    self._emit(f"WS-{robot.id}: {msg}")
+                    return msg
+
+                logger.info("SFTP fetch: %s -> %s", remote_root, per_robot_local)
+                self._emit(
+                    f"WS-{robot.id}: fetching {remote_root} -> {per_robot_local}"
+                )
+                # Recursive copy of the entire tree.
+                await sftp.mget(
+                    remote_root, str(per_robot_local), recurse=True
+                )
+        except Exception as e:
+            logger.error("SFTP fetch failed: %s", e)
+            self._emit(f"WS-{robot.id}: fetch FAILED — {e}")
+            return f"ERROR: {e}"
+
+        if not include_video:
+            removed = 0
+            for mp4 in per_robot_local.rglob("out.mp4"):
+                try:
+                    mp4.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+            if removed:
+                logger.info("Dropped %d video file(s) (include_video=False)", removed)
+
+        msg = f"fetched to {per_robot_local}"
+        self._emit(f"WS-{robot.id}: {msg}")
+        return msg
 
     # ── helpers ──────────────────────────────────────────────────
 

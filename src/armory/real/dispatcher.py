@@ -2,11 +2,13 @@
 
 Composes ``FleetController`` primitives into the broadcast operations a
 fleet operator actually invokes (enable, disable, goto, boot, shutdown,
-client/listener lifecycle).
+client/listener lifecycle, run-trial).
 """
 
 from __future__ import annotations
 
+import asyncio
+import pathlib
 from typing import TYPE_CHECKING, Callable
 
 from armory.real.config import Robot, RobotStatus
@@ -86,6 +88,35 @@ class FleetDispatcher:
         """Stop the Piper client node inside Docker."""
         return self.fleet.kill_clients(robots, callback)
 
+    def run_trial(
+        self,
+        robots: list[Robot],
+        duration_sec: float,
+        output_dir: pathlib.Path,
+        fetch_video: bool = False,
+        grace_sec: float = 5.0,
+        remote_subdir: str = "armory_episodes",
+        callback: Callable | None = None,
+    ):
+        """Run a bounded client trial then fetch each robot's data via SFTP.
+
+        Sequence:
+          1. ``start_clients(robots)``
+          2. wait ``duration_sec`` seconds
+          3. ``kill_clients(robots, grace_sec=grace_sec)`` (SIGINT, then SIGKILL)
+          4. brief settle so RealSaver flushes its background writes
+          5. ``fetch_episode_data(robots, output_dir, remote_subdir, fetch_video)``
+
+        Returns a Future whose result is a summary dict with keys
+        ``start``, ``kill``, ``fetch``, and ``output_dir``.
+        """
+        return self.fleet.submit(
+            self._run_trial(
+                robots, duration_sec, pathlib.Path(output_dir),
+                fetch_video, grace_sec, remote_subdir, callback,
+            )
+        )
+
     # ── sequential compound commands ────────────────────────────
 
     async def _enable(self, robots: list[Robot], callback: Callable | None = None):
@@ -154,6 +185,54 @@ class FleetDispatcher:
         if callback:
             callback(results)
         return results
+
+    async def _run_trial(
+        self,
+        robots: list[Robot],
+        duration_sec: float,
+        output_dir: pathlib.Path,
+        fetch_video: bool,
+        grace_sec: float,
+        remote_subdir: str,
+        callback: Callable | None,
+    ):
+        log = self.fleet.logger
+        n = len(robots)
+
+        log.info(
+            f"trial: start_clients on {n} robot(s); will run for {duration_sec:.1f}s"
+        )
+        start_results = await self.fleet._start_clients(robots, callback=None)
+
+        await asyncio.sleep(max(0.0, float(duration_sec)))
+
+        log.info(f"trial: killing clients (SIGINT, grace={grace_sec:.1f}s)")
+        kill_results = await self.fleet._kill_clients(
+            robots, callback=None, grace_sec=grace_sec
+        )
+
+        # Settle so RealSaver's executor finishes flushing after SIGINT.
+        await asyncio.sleep(min(grace_sec, 2.0))
+
+        log.info(f"trial: fetching episode data to {output_dir}")
+        fetch_results = await self.fleet._fetch_episode_data(
+            robots,
+            local_dir=pathlib.Path(output_dir),
+            remote_subdir=remote_subdir,
+            include_video=fetch_video,
+            callback=None,
+        )
+
+        summary = {
+            "start": start_results,
+            "kill": kill_results,
+            "fetch": fetch_results,
+            "output_dir": str(output_dir),
+        }
+        log.info(f"trial: complete — {output_dir}")
+        if callback:
+            callback(summary)
+        return summary
 
     @staticmethod
     def _result_ok(result) -> bool:
