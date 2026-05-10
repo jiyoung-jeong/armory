@@ -370,7 +370,7 @@ class FleetController:
                 " -v /home/data_collection/dhe83/:/datasets/"
                 " -v /dev:/dev"
                 " -w /CS4803ARM_Lab/user_data/data_collection"
-                " firefall/cluster_piper_env:v1"
+                " firefall/cluster_piper_env:v2"
                 " infinity'"
             )
             result = await conn.run(boot_cmd, timeout=30)
@@ -578,7 +578,7 @@ class FleetController:
         return await self._start_detached_docker_processes(
             robots,
             label="Piper client",
-            command="ros2 run piper piper_client",
+            command="ros2 run piper piper_client_armory",
             cwd=PIPER_WORKSPACE_DIR,
             log_suffix="client",
             callback=callback,
@@ -606,7 +606,7 @@ class FleetController:
         return await self._kill_detached_docker_processes(
             robots,
             label="Piper client",
-            command="ros2 run piper piper_client",
+            command="ros2 run piper piper_client_armory",
             log_suffix="client",
             callback=callback,
             signal_first="INT",
@@ -620,7 +620,7 @@ class FleetController:
     ):
         return await self._check_detached_docker_processes(
             robots,
-            command="ros2 run piper piper_client",
+            command="ros2 run piper piper_client_armory",
             log_suffix="client",
             callback=callback,
         )

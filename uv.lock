@@ -211,6 +211,7 @@ dependencies = [
     { name = "anyio" },
     { name = "argon2-cffi" },
     { name = "argon2-cffi-bindings" },
+    { name = "armory-tui" },
     { name = "arrow" },
     { name = "asttokens" },
     { name = "async-lru" },
@@ -554,6 +555,7 @@ requires-dist = [
     { name = "anyio", specifier = "==4.13.0" },
     { name = "argon2-cffi", specifier = "==25.1.0" },
     { name = "argon2-cffi-bindings", specifier = "==25.1.0" },
+    { name = "armory-tui", editable = "packages/armory-tui" },
     { name = "arrow", specifier = "==1.4.0" },
     { name = "asttokens", specifier = "==3.0.1" },
     { name = "async-lru", specifier = "==2.3.0" },
@@ -575,7 +577,7 @@ requires-dist = [
     { name = "chex", specifier = "==0.1.89" },
     { name = "click", specifier = "==8.3.2" },
     { name = "cloudpickle", specifier = "==2.1.0" },
-    { name = "cmake", specifier = "==4.3.1" },
+    { name = "cmake", specifier = "==3.30.0" },
     { name = "comm", specifier = "==0.2.3" },
     { name = "cryptography", specifier = "==46.0.7" },
     { name = "cycler", specifier = "==0.12.1" },
@@ -1206,28 +1208,26 @@ wheels = [
 
 [[package]]
 name = "cmake"
-version = "4.3.1"
+version = "3.30.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/40/72/c295e190193af5f41d583517db1ca1cf43eaa2af8140856dca114fa6486d/cmake-4.3.1.tar.gz", hash = "sha256:6fe523413cdd2568a19a6ec297b8f869a95a3f8edaf0dd73731b81412216e00e", size = 36968, upload-time = "2026-03-31T21:02:08.594Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/6e/969bd8e01358730ddcfce4a04a7caa8ab3c5e2fd1f1bbad9e6b6276c8b54/cmake-3.30.0.tar.gz", hash = "sha256:b6b9b584ce226dfde4d419578a2ae542e72409655c0ea2c989d5f9bb688cf024", size = 31314, upload-time = "2024-07-03T15:14:24.275Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/07/05be57c389f8f0c3d0d7b878685ec1eed863b77787d65584c9399e294531/cmake-4.3.1-py3-none-macosx_10_10_universal2.whl", hash = "sha256:976337df534f4eea6b100a7af39f9a7a538aa5fd65b7d770cf2a07907439dca8", size = 52555201, upload-time = "2026-03-28T15:28:10.956Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/80/09c381519855d53a5cce0e5e10e184f9e89caf6a6f1f7d7b42c17bd68d2e/cmake-4.3.1-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:bb7b7ef74beb69c099c39d7f151cfc94256bba1b75354e48ea87d6bf0dcb3007", size = 29569639, upload-time = "2026-03-28T15:28:14.368Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/0d/eab407c3592442711584d09bef5de17df93f39ea69baaa310c4564436177/cmake-4.3.1-py3-none-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:8874aac9fbd07d71c506fcaf57255ff2cc015a15ea44146c0d1e694843d5e312", size = 30668021, upload-time = "2026-03-28T15:28:17.284Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/de/c7f487b21b33918c0af1dabfdf8d858799e01d62c2bd139fc871b86b21a2/cmake-4.3.1-py3-none-manylinux2014_ppc64le.manylinux_2_17_ppc64le.whl", hash = "sha256:f439501f3f3ecf1dbafbee6226fc6cc680203202ddfe59586357d076c417ae8f", size = 30454909, upload-time = "2026-03-31T21:01:21.595Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/9c/2de3a3b5a5983b72c3e2eeaa23a6c8d251ebae79d15cedb9818e708a4caf/cmake-4.3.1-py3-none-manylinux2014_s390x.manylinux_2_17_s390x.whl", hash = "sha256:345f5e4ee783cd7691c6b54a631b43bb0c2efabf45afa64ac9000f9b0885d250", size = 28373243, upload-time = "2026-03-31T21:01:24.896Z" },
-    { url = "https://files.pythonhosted.org/packages/87/32/542ed40b3393bced9af073402f75fb6ae3e57d6656cc38a9470942de7b8c/cmake-4.3.1-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:80fc99c1958dbd926f529448dfcdbb1b176ecf31a8d485a3d68bd469487e8933", size = 29504762, upload-time = "2026-03-31T21:01:28.15Z" },
-    { url = "https://files.pythonhosted.org/packages/7f/ec/4f99b7414984d668aaa9c6214df84af689db8756f1536ea81720bb2fef91/cmake-4.3.1-py3-none-manylinux_2_31_armv7l.whl", hash = "sha256:fdb744921ff4739e755faee005b36b97223d2bb8591ebd7b57abb5cf97300925", size = 26620758, upload-time = "2026-03-31T21:01:31.017Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/b4/627e18c8acf6219b1c8c521e7d702bca36edab21994992b64e68e1007430/cmake-4.3.1-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:fdc39eb421177bfa946af3600c797612ee76bfe6daa6036ff8958c504a99937b", size = 26759382, upload-time = "2026-03-31T21:01:33.833Z" },
-    { url = "https://files.pythonhosted.org/packages/cc/e1/e3b3dd1c81e72329f1ec3350a02154f74547eab2c1db8270eb2bc344edc1/cmake-4.3.1-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:8d1d224f9df9e82f154ad31b9798b7b4c0d509a11ccdca695d0ee4d140c30c6d", size = 38584793, upload-time = "2026-03-31T21:01:36.853Z" },
-    { url = "https://files.pythonhosted.org/packages/98/3e/7a1ca1992de268fe1284b3738549ea8859f665dec294d584ae9200d66ce6/cmake-4.3.1-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:056483831febe0934f25959bc74da077b18f23c7a064a0417432447ec27b8fb2", size = 35214335, upload-time = "2026-03-31T21:01:40.857Z" },
-    { url = "https://files.pythonhosted.org/packages/16/ce/9b0e79835b674d2680fae7e57d3229abac0765c3d80ddcc6c5c67ec78fd8/cmake-4.3.1-py3-none-musllinux_1_2_i686.whl", hash = "sha256:9567aac26ee7a0594e6b71a8f94e907c7ce957cdeedeca1404504228f2c9885f", size = 41252469, upload-time = "2026-03-31T21:01:44.393Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/3a/eb15faf1ce961431017cda585650bd37a259fe53e836eae34263ea3647ab/cmake-4.3.1-py3-none-musllinux_1_2_ppc64le.whl", hash = "sha256:8cadd35606d3e4f9a43173f7236cd8947fb9652fdfb272a916f0600ad169fbf2", size = 40427440, upload-time = "2026-03-31T21:01:47.715Z" },
-    { url = "https://files.pythonhosted.org/packages/48/34/b76e2c7aa0c1aa833430a2b4a1caff3f4163b9db7c38d208a4b6e0287d54/cmake-4.3.1-py3-none-musllinux_1_2_riscv64.whl", hash = "sha256:75622c1e7266e60fab9d4f1f4b4dc25f22a4b57e902d9792c39538f46a997269", size = 35482864, upload-time = "2026-03-31T21:01:50.611Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/3b/afd7d51aabec951e8881812d9bf1d4c74c1882434e97eb9ed6f097591dd1/cmake-4.3.1-py3-none-musllinux_1_2_s390x.whl", hash = "sha256:e43acaa51bb8fe57a914424edb0efa91eb82d577fb74ecc6ff67da47a1d23524", size = 37712157, upload-time = "2026-03-31T21:01:53.674Z" },
-    { url = "https://files.pythonhosted.org/packages/4f/be/6d9c4f0ef5383622c3d7fd508acb531b1cbaee530e7cf4196c415f548131/cmake-4.3.1-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:e8bc1c42517ed9cb26eb293e720449830940ef7be6dcc101638b9cc65ece98c8", size = 38543688, upload-time = "2026-03-31T21:01:56.785Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/49/ca3671c1b6859b5efe5b9f1bebf95cad823d48a3a8f366a72e207a1d7a02/cmake-4.3.1-py3-none-win32.whl", hash = "sha256:cd9058d730da5fa68394c41b26036b18850de494d730a0a85cde51558138b70b", size = 37816372, upload-time = "2026-03-31T21:01:59.873Z" },
-    { url = "https://files.pythonhosted.org/packages/2a/2a/a8db7d73a6941e9d4a177011137378b222cd6dcec383f1998f3594c73a0c/cmake-4.3.1-py3-none-win_amd64.whl", hash = "sha256:73fb3851fe760b0395983c5d3dd6da2364b1ce324f8546aee2078d162d96005a", size = 41267090, upload-time = "2026-03-31T21:02:03.04Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/be/d62156e55b8a9614f29cd8e576e9bf925ee2b428e43bb0c4f02b5cb97c65/cmake-4.3.1-py3-none-win_arm64.whl", hash = "sha256:86e97fed7c9a61638b08937981fdc9bca9caec9df9c88b87aa0a47442583e02a", size = 39606866, upload-time = "2026-03-31T21:02:05.973Z" },
+    { url = "https://files.pythonhosted.org/packages/68/23/0c44c6b86c83f18aef38e711a4ab2594e82ee89efbd04bbd28cf028f9937/cmake-3.30.0-py3-none-macosx_10_10_x86_64.macosx_11_0_universal2.macosx_11_0_arm64.whl", hash = "sha256:9caf5839d041f3276596abf564267f7bbaf4b36731ad1f574f3d4c04d7f8c26b", size = 47941312, upload-time = "2024-07-03T15:12:56.19Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/13/f54c99dc24af358156faa15b167382fc23337c17ce9bf25a8986fb0dac67/cmake-3.30.0-py3-none-manylinux_2_12_i686.manylinux2010_i686.whl", hash = "sha256:2c19c50ee12fb1fddb636401b60f301e873b1f0bc726968509556450496c26fb", size = 26705024, upload-time = "2024-07-03T15:13:06.704Z" },
+    { url = "https://files.pythonhosted.org/packages/36/44/d87a7b8036ab9f6c7db1816f3376ef314854c72bc9b94f7b5141efdd3a4a/cmake-3.30.0-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.whl", hash = "sha256:cc343a5fd4b3013e313083fd3226f4599210560e4d72743faa98057e9f41ccea", size = 25983511, upload-time = "2024-07-03T15:13:14.697Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/fd/447ee6f5fe16a9189484b80fdf8492d30437734c335bcd159da91950da94/cmake-3.30.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:cbe32916158e6ca2f45f6e1dc4578a99f5c9ab6cfc7e4f812fae284d54c4749d", size = 26265481, upload-time = "2024-07-03T15:13:22.916Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/cf/fa4e2fcb2a54830610ac259a6140ac0f8996b8e518a3c21494a633f83e43/cmake-3.30.0-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:4a981336efd0d97a02bab4aba90f989077516a42c2510a1ba216f1a5cc00656f", size = 27983492, upload-time = "2024-07-03T15:13:32.63Z" },
+    { url = "https://files.pythonhosted.org/packages/62/18/803e561b42bba18e7ec1a2fec441340c096cb685be76185e4388bc67795c/cmake-3.30.0-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:59b8491d54064bf734e709001b1f79b1356a4c6c016f78445d5c0516785d096b", size = 29782081, upload-time = "2024-07-03T15:13:39.26Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/c4/bfbe474c72597784403626beeb45c4c94c8df8a074ea4d4bfba7b1202754/cmake-3.30.0-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:968e00571f6c07f36b2226a8dbd63eeba4888bcc2f9f30b1dbd2673f75b98564", size = 26041869, upload-time = "2024-07-03T15:13:47.431Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/2e/4f04db5517547aea3cf7dc59c4fef66b2b0e647792babd913b956aa95ceb/cmake-3.30.0-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e123afb34f08e38e76cd3303d1cea166f15ec7acd48353b6fe9d1175b10b4553", size = 26919936, upload-time = "2024-07-03T15:13:50.509Z" },
+    { url = "https://files.pythonhosted.org/packages/21/d7/3ac38fd5d82bed0878998b812289b91157d41a4c838f9feb7f88066f4edc/cmake-3.30.0-py3-none-musllinux_1_1_aarch64.whl", hash = "sha256:d7c6265b3d066b25eaf07fc69b8672c28f531b59403cbabb864219f84098b378", size = 26999718, upload-time = "2024-07-03T15:13:53.551Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/b6/c62489c54d68e47f5ce9410be8c0f038e6363993279a27dba9b499de93c1/cmake-3.30.0-py3-none-musllinux_1_1_i686.whl", hash = "sha256:a6960b4b9e91bbcd68fc1a0395306a0eab68981752e667d4dc1721d9ad895358", size = 30427109, upload-time = "2024-07-03T15:13:58Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/c6/bef3d960d738d9e57063ec07614ea6576486c20b3e534e5c003a5636e0e5/cmake-3.30.0-py3-none-musllinux_1_1_ppc64le.whl", hash = "sha256:100da4b77c2133a426ec6bffc01efcbdd9c212665c0b9acaa20bcaf98dc75097", size = 31135129, upload-time = "2024-07-03T15:14:02.017Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/7e/9209607bb386da0ddce98061b713124a6cebe0f37624c6891b5779470412/cmake-3.30.0-py3-none-musllinux_1_1_s390x.whl", hash = "sha256:e6e3ab9d48d5bf5564840e8152bcfe41a9318b1fe95b1410f8cc1f15800ff2bf", size = 27088098, upload-time = "2024-07-03T15:14:05.983Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/a6/2784d503c11c12b0f9286b0b599645eebad30e43ac3080c0715665588a89/cmake-3.30.0-py3-none-musllinux_1_1_x86_64.whl", hash = "sha256:bfb761c3dc275034d251494503e643dc8f23d15e8e6284eca1b2bfbde4634851", size = 28576745, upload-time = "2024-07-03T15:14:09.554Z" },
+    { url = "https://files.pythonhosted.org/packages/93/bc/062cd2d42629841cd12ea2e594d04bcb8b5d3f706b6c36b2f31814f03b48/cmake-3.30.0-py3-none-win32.whl", hash = "sha256:23253f76f44f0f69cf18c8343e56184ea3ab51e837198db691fbdef1bf986455", size = 32551034, upload-time = "2024-07-03T15:14:13.465Z" },
+    { url = "https://files.pythonhosted.org/packages/51/e1/b22898f5eabf60c821e4ebb9815bfb394472a8da9c2d2c18f3640f66dcb2/cmake-3.30.0-py3-none-win_amd64.whl", hash = "sha256:aa9b483ff53804566909ec7ef8c25eaf4226c224756d731cb3dd28d9be2dea46", size = 35620605, upload-time = "2024-07-03T15:14:17.136Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/9e/275ad404ae6b8fe950ddaa9dc865c283dfc9902db001c4fb9a980be6d5a5/cmake-3.30.0-py3-none-win_arm64.whl", hash = "sha256:fc9aba5cc8a631cbbe7a6b4b6b1f981346e70af35900459b4ac6a1b18f489568", size = 35145013, upload-time = "2024-07-03T15:14:21.011Z" },
 ]
 
 [[package]]
