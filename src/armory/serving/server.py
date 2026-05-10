@@ -444,6 +444,7 @@ def create_app(
                             infer_type=req.infer_type,
                             params=req.params,
                             noise=req.noise,
+                            control_hz=state.robot_metadata[robot_id].control_hz,
                         ),
                     )
 
