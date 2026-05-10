@@ -265,6 +265,6 @@ class GpuWorker:
         actions: list[dict],
     ) -> None:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
-            if not sr.is_padding and sd.infer_type == InferType.INFERENCE_TIME_RTC:
+            if not sr.is_padding:
                 self._last_served_action_index[sr.robot_id] = sd.action_index_start
                 self._prev_actions[sr.robot_id] = action_dict["actions"]
