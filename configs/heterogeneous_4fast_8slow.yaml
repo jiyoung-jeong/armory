@@ -1,0 +1,22 @@
+# Heterogeneous control-rate config for run_real.py.
+#
+# Maps workstation id (int, matches FleetConfig.robots[].id) to the control_hz
+# the piper_client_armory node should declare. Robots not listed here use the
+# node's default (CONTROL_HZ in client_node_armory.py).
+#
+# This config: 4 fast (20 Hz) + 7 slow (10 Hz) = 11 robots. Per request.
+# (Note: only 11 entries — drop one robot from the trial selection or extend
+# this file if you want all 12.)
+control_hz:
+  14: 20
+  13: 20
+  12: 20
+  11: 20
+  8: 10
+  7: 10
+  6: 10
+  5: 10
+  4: 10
+  3: 10
+  2: 10
+  1: 10

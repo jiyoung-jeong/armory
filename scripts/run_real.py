@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 import requests
 import tyro
+import yaml
 
 from armory.real import FleetConfig, FleetController, FleetDispatcher, RobotStatus
 from armory_client.schemas import RuntimeMetadata
@@ -64,6 +65,11 @@ class Args:
     require_status: bool = True
     """If true, skip robots that aren't BOOTED before starting."""
 
+    het_config_path: str | None = None
+    """Optional YAML mapping workstation id → control_hz. If set, each
+    matching robot is launched with ``--ros-args -p control_hz:=<N>``.
+    See configs/heterogeneous_*.yaml for examples."""
+
     #################################################################################
     # Server metrics (optional)
     #################################################################################
@@ -92,6 +98,27 @@ def _default_config_path() -> str:
     """Locate configs/armory-tui.yaml relative to this script."""
     here = pathlib.Path(__file__).resolve().parent
     return str(here.parent / "configs" / "armory-tui.yaml")
+
+
+def _load_het_config(path: str) -> dict[int, int]:
+    """Parse the heterogeneous control-rate YAML.
+
+    Schema: ``control_hz: {<station_id>: <hz>, ...}``. Returns
+    ``{station_id: hz}`` with ints on both sides; raises on malformed input.
+    """
+    raw = yaml.safe_load(pathlib.Path(path).read_text())
+    if not isinstance(raw, dict) or "control_hz" not in raw:
+        sys.exit(f"het config {path}: missing top-level 'control_hz' mapping")
+    mapping = raw["control_hz"]
+    if not isinstance(mapping, dict):
+        sys.exit(f"het config {path}: 'control_hz' must be a mapping")
+    out: dict[int, int] = {}
+    for k, v in mapping.items():
+        try:
+            out[int(k)] = int(v)
+        except (TypeError, ValueError):
+            sys.exit(f"het config {path}: bad entry {k!r}: {v!r} (need int → int)")
+    return out
 
 
 def _select_targets(cfg: FleetConfig, args: Args) -> list:
@@ -188,6 +215,14 @@ def main(args: Args) -> None:
         if args.fetch_server_metrics and args.server_host:
             _reset_server_metrics(args)
 
+        het_overrides = _load_het_config(args.het_config_path) if args.het_config_path else None
+        if het_overrides:
+            applied = {r.id: het_overrides[r.id] for r in targets if r.id in het_overrides}
+            unmatched = sorted(set(het_overrides) - {r.id for r in targets})
+            logger.info("control_hz overrides applied: %s", applied)
+            if unmatched:
+                logger.warning("control_hz config has entries for non-target ids: %s", unmatched)
+
         # Run the trial — start, wait, kill, fetch.
         fut = dispatcher.run_trial(
             targets,
@@ -196,6 +231,7 @@ def main(args: Args) -> None:
             fetch_video=args.fetch_video,
             grace_sec=args.grace_sec,
             remote_subdir=args.remote_subdir,
+            control_hz_overrides=het_overrides,
         )
         # Total time: trial duration + grace + fetch overhead. Add a 60s buffer.
         summary = fut.result(timeout=args.duration_sec + args.grace_sec * 2 + 120)

@@ -144,9 +144,17 @@ class FleetController:
         self,
         robots: list[Robot],
         callback: Callable | None = None,
+        extra_args_per_robot: dict[int, str] | None = None,
     ):
-        """Start the Piper client node inside Docker."""
-        return self.submit(self._start_clients(robots, callback))
+        """Start the Piper client node inside Docker.
+
+        ``extra_args_per_robot`` maps workstation id to a string appended
+        verbatim to the launch command (e.g.
+        ``{14: "--ros-args -p control_hz:=20"}``).
+        """
+        return self.submit(
+            self._start_clients(robots, callback, extra_args_per_robot=extra_args_per_robot)
+        )
 
     def kill_data_listeners(
         self,
@@ -574,6 +582,7 @@ class FleetController:
         self,
         robots: list[Robot],
         callback: Callable | None = None,
+        extra_args_per_robot: dict[int, str] | None = None,
     ):
         return await self._start_detached_docker_processes(
             robots,
@@ -582,6 +591,7 @@ class FleetController:
             cwd=PIPER_WORKSPACE_DIR,
             log_suffix="client",
             callback=callback,
+            extra_args_per_robot=extra_args_per_robot,
         )
 
     async def _kill_data_listeners(
@@ -633,6 +643,7 @@ class FleetController:
         cwd: str,
         log_suffix: str,
         callback: Callable | None = None,
+        extra_args_per_robot: dict[int, str] | None = None,
     ):
         results = {}
         connections = []
@@ -650,7 +661,7 @@ class FleetController:
                 robot,
                 conn,
                 label,
-                command,
+                self._command_for_robot(command, robot, extra_args_per_robot),
                 cwd,
                 log_suffix,
             )
@@ -663,6 +674,21 @@ class FleetController:
         if callback:
             callback(results)
         return results
+
+    @staticmethod
+    def _command_for_robot(
+        base_command: str,
+        robot: Robot,
+        extra_args_per_robot: dict[int, str] | None,
+    ) -> str:
+        """Append per-robot args to the base command. Kill matching uses the
+        base command as a substring pattern, so any suffix here is invisible
+        to ``_kill_detached_docker_process`` — start/kill stay symmetric.
+        """
+        if not extra_args_per_robot:
+            return base_command
+        extra = extra_args_per_robot.get(robot.id)
+        return f"{base_command} {extra}".rstrip() if extra else base_command
 
     async def _start_detached_docker_process(
         self,

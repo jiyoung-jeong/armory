@@ -97,6 +97,7 @@ class FleetDispatcher:
         grace_sec: float = 5.0,
         remote_subdir: str = "armory_episodes",
         callback: Callable | None = None,
+        control_hz_overrides: dict[int, int] | None = None,
     ):
         """Run a bounded client trial then fetch each robot's data via SFTP.
 
@@ -107,6 +108,10 @@ class FleetDispatcher:
           4. brief settle so RealSaver flushes its background writes
           5. ``fetch_episode_data(robots, output_dir, remote_subdir, fetch_video)``
 
+        ``control_hz_overrides`` (workstation id → control_hz) is forwarded
+        per-robot as ``--ros-args -p control_hz:=<N>``. Robots not in the dict
+        use the node's compiled-in default.
+
         Returns a Future whose result is a summary dict with keys
         ``start``, ``kill``, ``fetch``, and ``output_dir``.
         """
@@ -114,6 +119,7 @@ class FleetDispatcher:
             self._run_trial(
                 robots, duration_sec, pathlib.Path(output_dir),
                 fetch_video, grace_sec, remote_subdir, callback,
+                control_hz_overrides,
             )
         )
 
@@ -195,14 +201,29 @@ class FleetDispatcher:
         grace_sec: float,
         remote_subdir: str,
         callback: Callable | None,
+        control_hz_overrides: dict[int, int] | None = None,
     ):
         log = self.fleet.logger
         n = len(robots)
 
+        extra_args_per_robot = (
+            {rid: f"--ros-args -p control_hz:={int(hz)}"
+             for rid, hz in control_hz_overrides.items()}
+            if control_hz_overrides
+            else None
+        )
+        if extra_args_per_robot:
+            applied = {r.id: extra_args_per_robot[r.id] for r in robots
+                       if r.id in extra_args_per_robot}
+            if applied:
+                log.info(f"trial: applying control_hz overrides for {len(applied)} robot(s)")
+
         log.info(
             f"trial: start_clients on {n} robot(s); will run for {duration_sec:.1f}s"
         )
-        start_results = await self.fleet._start_clients(robots, callback=None)
+        start_results = await self.fleet._start_clients(
+            robots, callback=None, extra_args_per_robot=extra_args_per_robot,
+        )
 
         await asyncio.sleep(max(0.0, float(duration_sec)))
 
