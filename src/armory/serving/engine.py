@@ -164,7 +164,7 @@ class GpuWorker:
                 for sd, action_dict, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
-            self._update_state(slot_reqs, slot_datas, actions)
+            self._update_state(slot_requests, slot_datas, actions)
 
             # Send responses directly to WS — not via scheduler
             result_sock.send_pyobj(
