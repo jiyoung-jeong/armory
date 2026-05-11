@@ -140,7 +140,11 @@ class RealSaver(_subscriber.Subscriber):
 
         self._timestamps.append(
             Timestamp(
-                timestamp=time.perf_counter(),
+                # Wall-clock (seconds since epoch). Real robots run in separate
+                # processes on separate machines, so time.perf_counter() origins
+                # diverge — using it here would push cross-robot column offsets
+                # in metrics._build_actions_left_matrix into the millions.
+                timestamp=time.time(),
                 action_chunk_index=action.action_chunk_index,
                 action_index=action.index_in_chunk,
                 env_step=observation.step,

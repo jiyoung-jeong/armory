@@ -70,8 +70,8 @@ class Args:
     fetch_server_metrics: bool = True
     """Pull /save-metrics from the running server too (enables Gantt + scheduler plots)."""
 
-    server_host: str | None = None
-    """Server host for /save-metrics. If unset, server fetch is skipped."""
+    server_host: str | None = "localhost"
+    """Server host for /save-metrics. Set to None to skip the server fetch."""
 
     server_port: int = 8080
 

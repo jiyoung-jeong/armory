@@ -1826,22 +1826,29 @@ def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
 
 
 def generate_all_plots(output_path: pathlib.Path) -> None:
-    """Generate all plots."""
+    """Generate all plots; one failure doesn't kill the rest."""
     logger.info("Generating plots...")
-    generate_latency_plot(output_path)
-    generate_success_rate_plot(output_path)
-    generate_steps_plot(output_path)
-    generate_per_robot_success_rate_plot(output_path)
-    generate_actions_left_heatmap(output_path)
-    generate_starvation_plot(output_path)
-    generate_starvation_tail_metrics_plot(output_path)
-    generate_starvation_variance_plot(output_path)
-    generate_jains_starvation_over_time_plot(output_path)
-    generate_staleness_plot(output_path)
-    generate_batch_size_plot(output_path)
-    generate_server_timings_plot(output_path)
-    generate_server_timings_over_time_plot(output_path)
-    generate_server_batch_gantt_plot(output_path)
+    plotters = [
+        generate_latency_plot,
+        generate_success_rate_plot,
+        generate_steps_plot,
+        generate_per_robot_success_rate_plot,
+        generate_actions_left_heatmap,
+        generate_starvation_plot,
+        generate_starvation_tail_metrics_plot,
+        generate_starvation_variance_plot,
+        generate_jains_starvation_over_time_plot,
+        generate_staleness_plot,
+        generate_batch_size_plot,
+        generate_server_timings_plot,
+        generate_server_timings_over_time_plot,
+        generate_server_batch_gantt_plot,
+    ]
+    for plotter in plotters:
+        try:
+            plotter(output_path)
+        except Exception:
+            logger.exception("Plot %s failed; continuing", plotter.__name__)
     logger.info("Done!")
 
 
