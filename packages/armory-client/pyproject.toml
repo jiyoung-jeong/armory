@@ -12,7 +12,7 @@ only-include = ["src/armory_client"]
 name = "armory-client"
 version = "0.1.0"
 description = "Lightweight client library for the armory serving system"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "armory",
     "msgpack>=1.0",

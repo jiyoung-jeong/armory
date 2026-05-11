@@ -3,7 +3,7 @@ import json
 import pathlib
 import time
 from dataclasses import asdict, dataclass, field, fields
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -232,6 +232,12 @@ class ServerMetadata(JSONDataclass):
     Sent from server to clients at connection time.
     """
 
+    @classmethod
+    def from_http_metadata(cls, payload: dict[str, Any]) -> "ServerMetadata":
+        """Create metadata from server JSON, ignoring newer server-only fields."""
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in payload.items() if k in allowed})
+
     # Training config info
     config_name: str  # e.g., "pi0_aloha_sim", "pi05_libero"
     checkpoint_dir: str
@@ -245,6 +251,12 @@ class ServerMetadata(JSONDataclass):
     max_batch_size: int
     env: str  # environment mode (ALOHA, LIBERO, etc.)
     scheduling_algorithm: str  # TODO: maybe reference the enum from scheduler.py
+
+    # Per-algorithm scheduler kwargs (e.g., {"alpha": 1.0} for dynamic-action).
+    scheduler_kwargs: dict | None = None
+
+    # Minimum action-index gap between serves for a robot (GPU worker throttle).
+    min_ex: int = 10
 
     # Set by Modal when running behind a tunnel; clients should use this for WebSocket
     tunnel_url: str | None = None

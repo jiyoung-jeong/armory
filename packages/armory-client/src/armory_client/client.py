@@ -83,7 +83,7 @@ class BidirectionalWebsocket:
                     timeout=5,
                 )
                 resp.raise_for_status()
-                return ServerMetadata(**resp.json())
+                return ServerMetadata.from_http_metadata(resp.json())
             except requests.exceptions.RequestException:
                 logging.info("Still waiting for server...")
                 time.sleep(5)

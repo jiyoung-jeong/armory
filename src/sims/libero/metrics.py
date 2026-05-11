@@ -50,16 +50,20 @@ def load_episodes(output_path: pathlib.Path) -> pd.DataFrame:
 
 def load_actions_left(
     output_path: pathlib.Path,
-) -> dict[str, list[tuple[float, np.ndarray]]]:
-    """Load actions_left.npy files grouped by robot_idx, with start timestamps.
+) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
+    """Load actions_left.npy files grouped by robot_idx, with per-step timestamps.
 
     Returns:
-        {robot_idx_str: [(start_timestamp, episode_array), ...]} sorted by episode order.
-        start_timestamp is the perf_counter value of the first step (from timestamps.csv),
-        or 0.0 if timestamps.csv is missing.
+        ``{robot_idx_str: [(timestamps, episode_array), ...]}`` sorted by episode
+        order. ``timestamps`` is a 1-D float array, one wall-clock value per step
+        from ``timestamps.csv`` (matching ``len(episode_array)``). When the
+        timestamps file is missing or shorter than the array, falls back to a
+        synthetic series starting at 0 with 1-step spacing — callers that align
+        episodes onto a wall-clock grid will produce a degenerate but
+        non-crashing result in that case.
     """
     files = sorted(output_path.glob("**/actions_left.npy"))
-    by_robot: dict[str, list[tuple[int, float, np.ndarray]]] = {}
+    by_robot: dict[str, list[tuple[int, np.ndarray, np.ndarray]]] = {}
     for f in files:
         # path: <out_dir>/<robot_idx>/<ep_idx>_<suite>_<task>_<result>/actions_left.npy
         parts = f.parts
@@ -69,13 +73,24 @@ def load_actions_left(
         arr = np.load(f)
         ts_file = f.parent / "timestamps.csv"
         if ts_file.exists():
-            start_time = float(pd.read_csv(ts_file, nrows=1)["timestamp"].iloc[0])
+            ts = pd.read_csv(ts_file)["timestamp"].to_numpy(dtype=float)
+            if len(ts) < len(arr):
+                # Pad with linear extrapolation at the trailing cadence so we
+                # never index past the array.
+                if len(ts) >= 2:
+                    dt = float(np.median(np.diff(ts)))
+                else:
+                    dt = 0.0
+                pad = ts[-1] + dt * np.arange(1, len(arr) - len(ts) + 1)
+                ts = np.concatenate([ts, pad])
+            elif len(ts) > len(arr):
+                ts = ts[: len(arr)]
         else:
-            start_time = 0.0
-        by_robot.setdefault(robot_idx, []).append((ep_idx, start_time, arr))
+            ts = np.arange(len(arr), dtype=float)
+        by_robot.setdefault(robot_idx, []).append((ep_idx, ts, arr))
 
     return {
-        robot: [(st, arr) for _, st, arr in sorted(eps)]
+        robot: [(ts, arr) for _, ts, arr in sorted(eps, key=lambda x: x[0])]
         for robot, eps in sorted(by_robot.items(), key=lambda kv: int(kv[0]))
     }
 
@@ -100,32 +115,71 @@ def _build_actions_left_matrix(
     ``t0`` is the earliest perf_counter timestamp used as the column-0 origin.
     """
     by_robot = load_actions_left(output_path)
-    resolved_control_hz = float(control_hz or _load_control_hz(output_path))
     if not by_robot:
-        return [], np.empty((0, 0), dtype=float), [], resolved_control_hz, 0.0
+        return [], np.empty((0, 0), dtype=float), [], float(control_hz or _load_control_hz(output_path)), 0.0
 
     robots = sorted(by_robot.keys(), key=int, reverse=True)
 
-    # Global t0: earliest episode start across all robots.
-    t0 = min(start_time for eps in by_robot.values() for start_time, _ in eps)
+    # Canvas rate: caller-supplied wins; otherwise derive from data so the
+    # heatmap respects heterogeneous control rates. Using the max observed
+    # rate keeps the ratio of cells-per-step correct (e.g. with a 30 Hz
+    # robot and a 10 Hz robot, the slow robot's bars should be 3x wider
+    # than the fast robot's). Falling back to runtime_metadata.control_hz
+    # when there's no per-step timing.
+    if control_hz is not None:
+        resolved_control_hz = float(control_hz)
+    else:
+        per_robot_rates = []
+        for eps in by_robot.values():
+            for ts, _ in eps:
+                if len(ts) >= 2:
+                    median_gap = float(np.median(np.diff(ts)))
+                    if median_gap > 0:
+                        per_robot_rates.append(1.0 / median_gap)
+        resolved_control_hz = max(per_robot_rates) if per_robot_rates else _load_control_hz(output_path)
 
-    episode_boundaries: list[list[int]] = []
-    robot_offsets: list[list[tuple[int, np.ndarray]]] = []
+    # Global t0: earliest first-step timestamp across all robots.
+    t0 = min(ts[0] for eps in by_robot.values() for ts, _ in eps if len(ts) > 0)
+
+    # Place each step at its actual wall-clock column instead of stacking
+    # consecutive steps in consecutive columns. With heterogeneous control
+    # rates (e.g. WS-14 at 30 Hz, others at 10 Hz), the old behavior made
+    # faster robots' rows extend past the trial's wall-clock end on the time
+    # axis. Now every robot terminates at the column matching its real last
+    # timestamp, regardless of how many steps it took.
+    max_col = 0
+    placements: list[list[tuple[np.ndarray, np.ndarray]]] = []
     for robot in robots:
-        offsets = []
-        for start_time, arr in by_robot[robot]:
-            col = round((start_time - t0) * resolved_control_hz)
-            offsets.append((col, arr))
-        robot_offsets.append(offsets)
+        per_episode: list[tuple[np.ndarray, np.ndarray]] = []
+        for ts, arr in by_robot[robot]:
+            cols = np.round((ts - t0) * resolved_control_hz).astype(int)
+            np.clip(cols, 0, None, out=cols)
+            per_episode.append((cols, arr))
+            if cols.size:
+                max_col = max(max_col, int(cols.max()))
+        placements.append(per_episode)
 
-    max_len = max(col + len(arr) for offsets in robot_offsets for col, arr in offsets)
-    matrix = np.full((len(robots), max_len), np.nan, dtype=float)
-
-    for i, offsets in enumerate(robot_offsets):
+    matrix = np.full((len(robots), max_col + 1), np.nan, dtype=float)
+    episode_boundaries: list[list[int]] = []
+    for i, per_episode in enumerate(placements):
         boundaries = []
-        for col, arr in offsets:
-            matrix[i, col : col + len(arr)] = arr
-            boundaries.append(col)
+        for cols, arr in per_episode:
+            if not cols.size:
+                continue
+            # Forward-fill each step's queue depth until the next step at
+            # this robot. Without this, robots whose actual rate is below
+            # the canvas rate (e.g. 10 Hz on a 20 Hz canvas) leave NaN gaps
+            # at every other column, which imshow renders as transparent
+            # bars. Forward-fill is the right semantics: the queue depth
+            # observed at step t is the best estimate of depth at any
+            # wall-clock moment between t and the next step.
+            for j in range(len(cols)):
+                start = int(cols[j])
+                end = int(cols[j + 1]) if j + 1 < len(cols) else start + 1
+                if end <= start:
+                    end = start + 1
+                matrix[i, start:end] = arr[j]
+            boundaries.append(int(cols[0]))
         episode_boundaries.append(boundaries)
 
     return robots, matrix, episode_boundaries, resolved_control_hz, t0
@@ -159,6 +213,74 @@ def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
             )
 
     return pd.DataFrame(rows)
+
+
+def _jains_index(values: list[float]) -> float:
+    """Jain's fairness index: (Σx)^2 / (n · Σx^2). 1.0 if all values equal, 1/n at worst."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return 1.0
+    sq = float(np.sum(arr * arr))
+    if sq <= 0:
+        return 1.0
+    return float(np.sum(arr) ** 2 / (arr.size * sq))
+
+
+def compute_fairness_metrics(output_path: pathlib.Path) -> dict | None:
+    """Per-robot starvation rate and Jain's index on the freshness rate (1 - starvation_rate).
+
+    Starvation rate is the fraction of control steps a robot had no fresh action to execute,
+    so 1 - starvation_rate is the per-robot quality of service. Jain's on freshness measures
+    whether all robots received fresh actions at equal rates.
+
+    Returns None when no per-episode metadata is available.
+    """
+    df = load_episodes(output_path)
+    if df.empty:
+        return None
+    psd = load_planner_starvation_metrics(output_path)
+    if psd.empty:
+        return None
+    df = df.merge(
+        psd,
+        on=["robot_idx", "episode_idx", "task_suite_name", "task_id"],
+        how="left",
+    )
+    if "starvation_steps" not in df.columns or "observed_steps" not in df.columns:
+        return None
+
+    agg = df.groupby("robot_idx").agg(
+        starvation_steps=("starvation_steps", "sum"),
+        observed_steps=("observed_steps", "sum"),
+    ).reset_index().sort_values("robot_idx")
+    if agg.empty:
+        return None
+
+    robot_idx = [int(i) for i in agg["robot_idx"].tolist()]
+    starvation_rate = [
+        float(s) / float(o) if o > 0 else 0.0
+        for s, o in zip(agg["starvation_steps"], agg["observed_steps"])
+    ]
+    freshness_rate = [1.0 - r for r in starvation_rate]
+
+    alpha = None
+    server_path = output_path / "server_metadata.json"
+    if server_path.exists():
+        try:
+            with open(server_path) as f:
+                kwargs = (json.load(f) or {}).get("scheduler_kwargs") or {}
+            alpha = kwargs.get("alpha")
+        except (json.JSONDecodeError, OSError):
+            alpha = None
+
+    return {
+        "alpha": alpha,
+        "robot_idx": robot_idx,
+        "starvation_rate": starvation_rate,
+        "freshness_rate": freshness_rate,
+        "jain_freshness": _jains_index(freshness_rate),
+        "jain_starvation": _jains_index(starvation_rate),
+    }
 
 
 def load_experiment_duration(output_path: pathlib.Path) -> float | None:
@@ -1101,6 +1223,79 @@ def generate_starvation_variance_plot(
     logger.info(f"Saved {plots_dir / 'starvation_variance_over_time.png'}")
 
 
+def generate_jains_starvation_over_time_plot(
+    output_path: pathlib.Path, control_hz: float | None = None
+) -> None:
+    """Plot Jain's index on cumulative per-robot starvation rate over time.
+
+    1.0 = all robots have equal starvation rate at this point in the run; lower means
+    one or more robots are disproportionately starved. Only robots that have observed
+    at least one step are included at each timestep.
+    """
+    robots, matrix, _, control_hz, _ = _build_actions_left_matrix(output_path, control_hz)
+    if matrix.size == 0:
+        logger.warning("No actions_left.npy data found for Jain's-over-time plot")
+        return
+
+    valid_mask = ~np.isnan(matrix)
+    starved_mask = valid_mask & (matrix <= 0)
+    cumulative_observed = np.cumsum(valid_mask, axis=1)
+    cumulative_starved = np.cumsum(starved_mask, axis=1)
+    cumulative_rates = np.divide(
+        cumulative_starved,
+        cumulative_observed,
+        out=np.full(matrix.shape, np.nan, dtype=float),
+        where=cumulative_observed > 0,
+    )
+
+    n_steps = matrix.shape[1]
+    jains = np.full(n_steps, np.nan, dtype=float)
+    active_count = (cumulative_observed > 0).sum(axis=0)
+    for t in range(n_steps):
+        active = cumulative_observed[:, t] > 0
+        if active.sum() < 2:
+            continue
+        rates = cumulative_rates[active, t]
+        s = float(rates.sum())
+        sq = float((rates * rates).sum())
+        jains[t] = (s * s) / (active.sum() * sq) if sq > 0 else 1.0
+
+    time_seconds = np.arange(n_steps, dtype=float) / max(control_hz, 1.0)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(time_seconds, jains, color="navy", linewidth=1.6)
+    ax.set_xlabel("Wall-clock time (s)", fontsize=12)
+    ax.set_ylabel("Jain's index on cumulative starvation rate", fontsize=12)
+    ax.set_ylim(0, 1.02)
+    ax.set_title(
+        "Starvation Fairness (Jain's) Over Time",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.grid(True, alpha=0.3)
+
+    final_jain = float(jains[~np.isnan(jains)][-1]) if np.any(~np.isnan(jains)) else float("nan")
+    n_active = int(active_count[-1]) if active_count.size else 0
+    ax.axhline(final_jain, color="navy", linestyle="--", linewidth=1, alpha=0.5)
+    ax.text(
+        time_seconds[-1],
+        final_jain,
+        f" final = {final_jain:.4f}  (n={n_active})",
+        va="center",
+        ha="right",
+        fontsize=9,
+        color="navy",
+    )
+
+    plt.tight_layout()
+    plots_dir = output_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    out = plots_dir / "jains_starvation_over_time.png"
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info(f"Saved {out}")
+
+
 def generate_staleness_plot(output_path: pathlib.Path) -> None:
     """Per-robot actions_left distribution (staleness), excluding starvation steps (NaN).
 
@@ -1685,21 +1880,29 @@ def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
 
 
 def generate_all_plots(output_path: pathlib.Path) -> None:
-    """Generate all plots."""
+    """Generate all plots; one failure doesn't kill the rest."""
     logger.info("Generating plots...")
-    generate_latency_plot(output_path)
-    generate_success_rate_plot(output_path)
-    generate_steps_plot(output_path)
-    generate_per_robot_success_rate_plot(output_path)
-    generate_actions_left_heatmap(output_path)
-    generate_starvation_plot(output_path)
-    generate_starvation_tail_metrics_plot(output_path)
-    generate_starvation_variance_plot(output_path)
-    generate_staleness_plot(output_path)
-    generate_batch_size_plot(output_path)
-    generate_server_timings_plot(output_path)
-    generate_server_timings_over_time_plot(output_path)
-    generate_server_batch_gantt_plot(output_path)
+    plotters = [
+        generate_latency_plot,
+        generate_success_rate_plot,
+        generate_steps_plot,
+        generate_per_robot_success_rate_plot,
+        generate_actions_left_heatmap,
+        generate_starvation_plot,
+        generate_starvation_tail_metrics_plot,
+        generate_starvation_variance_plot,
+        generate_jains_starvation_over_time_plot,
+        generate_staleness_plot,
+        generate_batch_size_plot,
+        generate_server_timings_plot,
+        generate_server_timings_over_time_plot,
+        generate_server_batch_gantt_plot,
+    ]
+    for plotter in plotters:
+        try:
+            plotter(output_path)
+        except Exception:
+            logger.exception("Plot %s failed; continuing", plotter.__name__)
     logger.info("Done!")
 
 
@@ -1825,4 +2028,27 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
         )
         console.print(
             f"[bold cyan]Throughput: {successes_per_second:.3f} successes/second[/bold cyan]"
+        )
+
+    fairness = compute_fairness_metrics(output_path)
+    if fairness is not None:
+        fair_table = Table(title="Per-Robot Outcome Fairness")
+        fair_table.add_column("Robot", style="cyan")
+        fair_table.add_column("Starvation Rate", style="yellow")
+        fair_table.add_column("Freshness Rate (1-starv)", style="green")
+        for idx, sr, fr in zip(
+            fairness["robot_idx"],
+            fairness["starvation_rate"],
+            fairness["freshness_rate"],
+        ):
+            fair_table.add_row(str(idx), f"{sr:.3f}", f"{fr:.3f}")
+        console.print(fair_table)
+        alpha_str = f" (alpha={fairness['alpha']})" if fairness["alpha"] is not None else ""
+        console.print(
+            f"[bold magenta]Jain's index on freshness rate{alpha_str}: "
+            f"{fairness['jain_freshness']:.4f}[/bold magenta]"
+        )
+        console.print(
+            f"[bold magenta]Jain's index on starvation rate: "
+            f"{fairness['jain_starvation']:.4f}[/bold magenta]"
         )

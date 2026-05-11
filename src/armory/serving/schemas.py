@@ -67,6 +67,17 @@ class WarmupSeed:
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 
 
+@dataclass(frozen=True)
+class ResetAll:
+    """Server-internal: drop all per-robot AND mirror-wide state.
+
+    Sent on /reset so next run doesn't inherit
+    in-flight batches, last_batch_completed_time, or stale per-robot mirror
+    entries from the previous one. Per-robot ResetRequests sent on websocket
+    close already cover the per-robot half; this covers the mirror-wide half.
+    """
+
+
 # TODO: rename as ActionChunkMetadata
 @dataclass(frozen=True)
 class ActionChunk:
