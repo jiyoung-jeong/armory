@@ -963,7 +963,8 @@ class FleetController:
             self._emit(f"WS-{robot.id}: fetch FAILED — {e}")
             return f"ERROR: {e}"
 
-        remote_root = os.path.join(user_data, remote_subdir.lstrip("/"))
+        # remote_root = os.path.join(user_data, remote_subdir.lstrip("/"))
+        remote_root = "/home/data_collection/dhe83/armory_episodes"
         # Land each robot's tree under <local_dir>/<robot_name>/.
         per_robot_local = pathlib.Path(local_dir) / robot.name
         per_robot_local.mkdir(parents=True, exist_ok=True)
