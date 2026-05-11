@@ -119,7 +119,8 @@ class GpuWorker:
                     chunk_ids.append(chunk_id)
                     slot_requests.append(sr)
                 else:
-                    logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
+                    pass
+                    # logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
 
             if len(slot_datas) == 0:
                 result_sock.send_pyobj(
@@ -131,7 +132,7 @@ class GpuWorker:
                         inference_duration=0.0,
                     )
                 )
-                logger.warning("Sent empty response batch")
+                # logger.warning("Sent empty response batch")
                 continue
 
             infer_requests = [

@@ -342,6 +342,15 @@ class Mirror:
         self.fast_forward(dispatch_time)
         for robot_id, request in requests.items():
             robot = self.robots[robot_id]
+
+            # added by Rohan. sometimes client clock is slightly off on reset, so new robot's first step lands after obs_cutoff,
+            # then get_latest_control_step_before returns None and it blows up. I added the below to skip this robot initially,
+            # it will get re-scheduled in the future.
+            obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(robot_id)
+            if robot.get_latest_control_step_before(obs_cutoff) is None:
+                continue
+            #
+            
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
             if len(robot.chunks) == 0 or action_index_start > robot.chunks[-1].action_index_start:
                 schedulable_requests.append(request)
