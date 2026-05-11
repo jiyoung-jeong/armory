@@ -675,8 +675,8 @@ class FleetController:
             callback(results)
         return results
 
-    @staticmethod
     def _command_for_robot(
+        self,
         base_command: str,
         robot: Robot,
         extra_args_per_robot: dict[int, str] | None,
@@ -688,7 +688,13 @@ class FleetController:
         if not extra_args_per_robot:
             return base_command
         extra = extra_args_per_robot.get(robot.id)
-        return f"{base_command} {extra}".rstrip() if extra else base_command
+        if not extra:
+            return base_command
+        resolved = f"{base_command} {extra}".rstrip()
+        # Surface the resolved per-robot command so you can verify the override
+        # actually reached the SSH layer without tailing each workstation log.
+        self.logger.info("WS-%s: resolved launch command: %s", robot.id, resolved)
+        return resolved
 
     async def _start_detached_docker_process(
         self,

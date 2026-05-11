@@ -216,7 +216,20 @@ class FleetDispatcher:
             applied = {r.id: extra_args_per_robot[r.id] for r in robots
                        if r.id in extra_args_per_robot}
             if applied:
-                log.info(f"trial: applying control_hz overrides for {len(applied)} robot(s)")
+                log.info(
+                    "trial: control_hz overrides applied to %d robot(s): %s",
+                    len(applied),
+                    {rid: extras for rid, extras in applied.items()},
+                )
+            else:
+                log.warning(
+                    "trial: control_hz_overrides was provided but no target "
+                    "robot ids matched (overrides=%s, target ids=%s)",
+                    sorted(extra_args_per_robot),
+                    [r.id for r in robots],
+                )
+        else:
+            log.info("trial: no control_hz overrides (using node default)")
 
         log.info(
             f"trial: start_clients on {n} robot(s); will run for {duration_sec:.1f}s"
