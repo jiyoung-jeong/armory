@@ -16,6 +16,7 @@ from armory.serving.schemas import (
     BatchProfile,
     InternalRequest,
     RequestBatch,
+    ResetAll,
     ResponseBatch,
     RobotID,
     SlotRequest,
@@ -164,7 +165,7 @@ class GpuWorker:
                 for sd, action_dict, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
-            self._update_state(slot_requests, slot_datas, actions)
+            self._update_state(slot_requests, slot_datas, actions) # NOTE from Rohan: this was originally slot_reqs
 
             # Send responses directly to WS — not via scheduler
             result_sock.send_pyobj(
@@ -209,6 +210,13 @@ class GpuWorker:
                 self._last_served_action_index.pop(msg.robot_id, None)
                 self._prev_actions.pop(msg.robot_id, None)
                 logger.debug("Received reset request: %s", msg)
+            elif isinstance(msg, ResetAll):
+                self._last_served_action_index.clear()
+                self._prev_actions.clear()
+                # Latency tracker is per-robot via .clear(rid); EMALatencyTracker
+                # has no clear-all, so just rebuild it.
+                self._latency_tracker = EMALatencyTracker()
+                logger.info("Received ResetAll: cleared engine state")
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
                     msg.robot_id, msg.arrival_timestamp, msg.request_timestamp

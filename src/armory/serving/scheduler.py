@@ -21,6 +21,7 @@ from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
+    ResetAll,
     ResponseBatch,
     SlotRequest,
     WarmupSeed,
@@ -60,6 +61,7 @@ class SchedulerWorker:
         scheduler_kwargs: dict | None,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
+        min_ex: int = 0,
     ) -> None:
         self.sched_in_ep = sched_in_ep
         self.result_ep = result_ep
@@ -70,6 +72,7 @@ class SchedulerWorker:
         self.scheduler_kwargs = scheduler_kwargs
         self.ready_event = ready_event
         self.log_queue = log_queue
+        self.min_ex = min_ex
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -98,7 +101,12 @@ class SchedulerWorker:
         result_sock.connect(self.result_ep)  # GPU connects
 
         extra_kwargs: dict = dict(self.scheduler_kwargs or {})
-        scheduler = cls(self.batch_queue, max_batch_size=self.max_batch_size, **extra_kwargs)
+        scheduler = cls(
+            self.batch_queue,
+            max_batch_size=self.max_batch_size,
+            min_ex=self.min_ex,
+            **extra_kwargs,
+        )
 
         batch_profile = self._recv_batch_profile(result_sock)
         for batch_size, latency in batch_profile.items():
@@ -149,6 +157,9 @@ class SchedulerWorker:
             if isinstance(msg, ResetRequest):
                 scheduler.reset_robot(msg.robot_id)
                 logger.debug("Received reset request: %s", msg)
+            elif isinstance(msg, ResetAll):
+                scheduler.reset_all()
+                logger.info("Received ResetAll: cleared scheduler + mirror state")
             elif isinstance(msg, SlotRequest):
                 scheduler.update(msg)
                 logger.debug("Received slot request: %s", msg)

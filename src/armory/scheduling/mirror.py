@@ -292,8 +292,17 @@ class Mirror:
     def update_batch_completion(self, batch: ResponseBatch) -> None:
         """Refine each chunk's arrival_time once GPU inference has completed."""
         assert self.latency_tracker is not None
+        # Stale ResponseBatches can arrive from before a ResetAll: the GPU was
+        # already mid-flight when /reset cleared in_flight_batches. Ignore them
+        # — batch_ids are monotonic, so a mismatch means we're seeing the past.
+        if not self.in_flight_batches or self.in_flight_batches[0].batch_id != batch.batch_id:
+            logger.debug(
+                "Ignoring stale ResponseBatch %s (head=%s)",
+                batch.batch_id,
+                self.in_flight_batches[0].batch_id if self.in_flight_batches else None,
+            )
+            return
         in_flight = self.in_flight_batches.popleft()
-        assert in_flight.batch_id == batch.batch_id
 
         actual_completion = batch.inference_start_time + batch.inference_duration
         self.last_batch_completed_time = actual_completion
@@ -328,7 +337,15 @@ class Mirror:
         # of the queue is exactly when the server next becomes free.
         return self.in_flight_batches[-1].completion_time
 
-    def schedulable_requests(self, requests: dict[RobotID, SlotRequest]) -> list[SlotRequest]:
+    def schedulable_requests(
+        self,
+        requests: dict[RobotID, SlotRequest],
+        min_ex: int = 0,
+    ) -> list[SlotRequest]:
+        """Filter requests whose next-chunk start is at least ``min_ex`` past
+        the last queued chunk. Mirrors the engine's _should_serve gate so the
+        scheduler doesn't emit batches the engine will drop.
+        """
         schedulable_requests: list[SlotRequest] = []
 
         dispatch_time = self.next_time_server_available()
@@ -352,7 +369,10 @@ class Mirror:
             #
             
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
-            if len(robot.chunks) == 0 or action_index_start > robot.chunks[-1].action_index_start:
+            if (
+                len(robot.chunks) == 0
+                or action_index_start > robot.chunks[-1].action_index_start + min_ex
+            ):
                 schedulable_requests.append(request)
             # else:
             #     logger.debug("Request %s is not schedulable", request.robot_id)

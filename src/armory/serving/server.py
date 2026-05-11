@@ -45,6 +45,7 @@ from armory.serving.scheduler import SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
+    ResetAll,
     ResponseBatch,
     RobotID,
     SchedulerDecision,
@@ -89,6 +90,7 @@ class ServerState:
     scheduler_proc: mp.Process
     metrics_store: MetricsStore
     robot_metadata: dict[str, ConnectRequest]
+    batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
 
 
 async def _router_task(
@@ -234,7 +236,7 @@ def _start_backend(
     policy_factory: Callable,
     scheduler_kwargs: dict[str, object] | None,
     log_queue: mp.Queue | None,
-) -> tuple[mp.Process, mp.Process, RobotSlots, Event, Event, mp.Queue]:
+) -> tuple[mp.Process, mp.Process, RobotSlots, Event, Event, mp.Queue, mp.Queue]:
     slots = RobotSlots(max_robots=MAX_ROBOTS)
     batch_queue: mp.Queue = mp.Queue()
     scheduler_metrics_queue: mp.Queue = mp.Queue()
@@ -268,6 +270,7 @@ def _start_backend(
             scheduler_kwargs,
             sched_ready,
             log_queue,
+            min_ex=metadata.min_ex,
         ).run,
         daemon=True,
     )
@@ -284,6 +287,7 @@ def _start_backend(
         sched_ready,
         gpu_ready,
         scheduler_metrics_queue,
+        batch_queue,
     )
 
 
@@ -304,6 +308,7 @@ def create_app(
             sched_ready,
             gpu_ready,
             scheduler_metrics_queue,
+            batch_queue,
         ) = _start_backend(
             metadata,
             policy_factory,
@@ -336,6 +341,7 @@ def create_app(
             scheduler_proc=scheduler_proc,
             metrics_store=metrics_store,
             robot_metadata={},
+            batch_queue=batch_queue,
         )
 
         router = asyncio.create_task(_router_task(response_sock, response_queues, metrics_store))
@@ -504,9 +510,26 @@ def create_app(
 
     @app.post("/reset")
     async def reset_metrics(request: Request) -> dict:
-        request.app.state.server.metrics_store.reset()
-        # TODO: reset server state too
-        return {"status": "ok"}
+        state: ServerState = request.app.state.server
+        # 1. Drain any pending batches the scheduler queued for the GPU.
+        # If we don't, GPU keeps processing them after the reset and the
+        # ResponseBatches arrive at the (now-empty) scheduler in_flight queue,
+        # tripping the batch_id assertion. Drain BEFORE telling the scheduler
+        # to clear in_flight to minimise the race window.
+        drained = 0
+        while True:
+            try:
+                state.batch_queue.get_nowait()
+                drained += 1
+            except queue.Empty:
+                break
+        if drained:
+            logger.info("Reset: drained %d pending batches from queue", drained)
+        # 2. Tell scheduler + engine to clear all per-robot AND mirror-wide state.
+        await state.scheduler_sock.send_pyobj(ResetAll())
+        # 3. Reset metrics last so the post-reset state has nothing recorded.
+        state.metrics_store.reset()
+        return {"status": "ok", "drained_batches": drained}
 
     dash_app = create_dash_app(metadata, metrics_store)
     app.mount("/", WSGIMiddleware(dash_app.server))
