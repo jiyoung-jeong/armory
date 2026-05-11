@@ -115,11 +115,28 @@ def _build_actions_left_matrix(
     ``t0`` is the earliest perf_counter timestamp used as the column-0 origin.
     """
     by_robot = load_actions_left(output_path)
-    resolved_control_hz = float(control_hz or _load_control_hz(output_path))
     if not by_robot:
-        return [], np.empty((0, 0), dtype=float), [], resolved_control_hz, 0.0
+        return [], np.empty((0, 0), dtype=float), [], float(control_hz or _load_control_hz(output_path)), 0.0
 
     robots = sorted(by_robot.keys(), key=int, reverse=True)
+
+    # Canvas rate: caller-supplied wins; otherwise derive from data so the
+    # heatmap respects heterogeneous control rates. Using the max observed
+    # rate keeps the ratio of cells-per-step correct (e.g. with a 30 Hz
+    # robot and a 10 Hz robot, the slow robot's bars should be 3x wider
+    # than the fast robot's). Falling back to runtime_metadata.control_hz
+    # when there's no per-step timing.
+    if control_hz is not None:
+        resolved_control_hz = float(control_hz)
+    else:
+        per_robot_rates = []
+        for eps in by_robot.values():
+            for ts, _ in eps:
+                if len(ts) >= 2:
+                    median_gap = float(np.median(np.diff(ts)))
+                    if median_gap > 0:
+                        per_robot_rates.append(1.0 / median_gap)
+        resolved_control_hz = max(per_robot_rates) if per_robot_rates else _load_control_hz(output_path)
 
     # Global t0: earliest first-step timestamp across all robots.
     t0 = min(ts[0] for eps in by_robot.values() for ts, _ in eps if len(ts) > 0)
