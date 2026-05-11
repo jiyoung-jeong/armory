@@ -11,10 +11,11 @@ class DynamicActionScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
+        min_ex: int = 0,
         *,
         alpha: float = 0.0,
     ):
-        super().__init__(batch_queue, max_batch_size)
+        super().__init__(batch_queue, max_batch_size, min_ex=min_ex)
         self._alpha = max(0.0, alpha)
         self._service_debt: dict[str, float] = {}
         self._demand_rate: dict[str, float] = {}
