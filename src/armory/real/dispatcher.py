@@ -206,8 +206,15 @@ class FleetDispatcher:
         log = self.fleet.logger
         n = len(robots)
 
+        # Use --control-hz (argparse layer in client_node_armory) rather than
+        # --ros-args -p control_hz:=N: avoids both the int/float type-mismatch
+        # against declare_parameter("control_hz", 20.0) and any precedence
+        # confusion when the node also builds parameter_overrides.
+        # The leading `--` tells `ros2 run` to stop parsing its own flags and
+        # forward everything verbatim to the node — defensive against a future
+        # ros2 release adding a flag named --control-hz.
         extra_args_per_robot = (
-            {rid: f"--ros-args -p control_hz:={int(hz)}"
+            {rid: f"-- --control-hz {float(hz)}"
              for rid, hz in control_hz_overrides.items()}
             if control_hz_overrides
             else None
