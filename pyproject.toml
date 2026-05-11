@@ -57,7 +57,7 @@ dependencies = [
     "chex==0.1.89",
     "click==8.3.2",
     "cloudpickle==2.1.0",
-    "cmake==4.3.1",
+    "cmake==3.30.0",
     "comm==0.2.3",
     "cryptography==46.0.7",
     "cycler==0.12.1",
@@ -358,6 +358,7 @@ dependencies = [
     "zarr==3.1.5",
     "zipp==3.20.2",
     "albumentations==2.0.8",
+    "armory-tui",
     "hatchling>=1.29.0",
 ]
 
@@ -411,3 +412,4 @@ libero = { path = "third_party/libero", editable = true }
 openpi = { path = "third_party/openpi", editable = true }
 gr00t = { path = "third_party/Isaac-GR00T", editable = true }
 armory-client = { workspace = true }
+armory-tui = { workspace = true }
