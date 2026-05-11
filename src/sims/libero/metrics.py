@@ -50,16 +50,20 @@ def load_episodes(output_path: pathlib.Path) -> pd.DataFrame:
 
 def load_actions_left(
     output_path: pathlib.Path,
-) -> dict[str, list[tuple[float, np.ndarray]]]:
-    """Load actions_left.npy files grouped by robot_idx, with start timestamps.
+) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
+    """Load actions_left.npy files grouped by robot_idx, with per-step timestamps.
 
     Returns:
-        {robot_idx_str: [(start_timestamp, episode_array), ...]} sorted by episode order.
-        start_timestamp is the perf_counter value of the first step (from timestamps.csv),
-        or 0.0 if timestamps.csv is missing.
+        ``{robot_idx_str: [(timestamps, episode_array), ...]}`` sorted by episode
+        order. ``timestamps`` is a 1-D float array, one wall-clock value per step
+        from ``timestamps.csv`` (matching ``len(episode_array)``). When the
+        timestamps file is missing or shorter than the array, falls back to a
+        synthetic series starting at 0 with 1-step spacing — callers that align
+        episodes onto a wall-clock grid will produce a degenerate but
+        non-crashing result in that case.
     """
     files = sorted(output_path.glob("**/actions_left.npy"))
-    by_robot: dict[str, list[tuple[int, float, np.ndarray]]] = {}
+    by_robot: dict[str, list[tuple[int, np.ndarray, np.ndarray]]] = {}
     for f in files:
         # path: <out_dir>/<robot_idx>/<ep_idx>_<suite>_<task>_<result>/actions_left.npy
         parts = f.parts
@@ -69,13 +73,24 @@ def load_actions_left(
         arr = np.load(f)
         ts_file = f.parent / "timestamps.csv"
         if ts_file.exists():
-            start_time = float(pd.read_csv(ts_file, nrows=1)["timestamp"].iloc[0])
+            ts = pd.read_csv(ts_file)["timestamp"].to_numpy(dtype=float)
+            if len(ts) < len(arr):
+                # Pad with linear extrapolation at the trailing cadence so we
+                # never index past the array.
+                if len(ts) >= 2:
+                    dt = float(np.median(np.diff(ts)))
+                else:
+                    dt = 0.0
+                pad = ts[-1] + dt * np.arange(1, len(arr) - len(ts) + 1)
+                ts = np.concatenate([ts, pad])
+            elif len(ts) > len(arr):
+                ts = ts[: len(arr)]
         else:
-            start_time = 0.0
-        by_robot.setdefault(robot_idx, []).append((ep_idx, start_time, arr))
+            ts = np.arange(len(arr), dtype=float)
+        by_robot.setdefault(robot_idx, []).append((ep_idx, ts, arr))
 
     return {
-        robot: [(st, arr) for _, st, arr in sorted(eps)]
+        robot: [(ts, arr) for _, ts, arr in sorted(eps, key=lambda x: x[0])]
         for robot, eps in sorted(by_robot.items(), key=lambda kv: int(kv[0]))
     }
 
@@ -106,26 +121,48 @@ def _build_actions_left_matrix(
 
     robots = sorted(by_robot.keys(), key=int, reverse=True)
 
-    # Global t0: earliest episode start across all robots.
-    t0 = min(start_time for eps in by_robot.values() for start_time, _ in eps)
+    # Global t0: earliest first-step timestamp across all robots.
+    t0 = min(ts[0] for eps in by_robot.values() for ts, _ in eps if len(ts) > 0)
 
-    episode_boundaries: list[list[int]] = []
-    robot_offsets: list[list[tuple[int, np.ndarray]]] = []
+    # Place each step at its actual wall-clock column instead of stacking
+    # consecutive steps in consecutive columns. With heterogeneous control
+    # rates (e.g. WS-14 at 30 Hz, others at 10 Hz), the old behavior made
+    # faster robots' rows extend past the trial's wall-clock end on the time
+    # axis. Now every robot terminates at the column matching its real last
+    # timestamp, regardless of how many steps it took.
+    max_col = 0
+    placements: list[list[tuple[np.ndarray, np.ndarray]]] = []
     for robot in robots:
-        offsets = []
-        for start_time, arr in by_robot[robot]:
-            col = round((start_time - t0) * resolved_control_hz)
-            offsets.append((col, arr))
-        robot_offsets.append(offsets)
+        per_episode: list[tuple[np.ndarray, np.ndarray]] = []
+        for ts, arr in by_robot[robot]:
+            cols = np.round((ts - t0) * resolved_control_hz).astype(int)
+            np.clip(cols, 0, None, out=cols)
+            per_episode.append((cols, arr))
+            if cols.size:
+                max_col = max(max_col, int(cols.max()))
+        placements.append(per_episode)
 
-    max_len = max(col + len(arr) for offsets in robot_offsets for col, arr in offsets)
-    matrix = np.full((len(robots), max_len), np.nan, dtype=float)
-
-    for i, offsets in enumerate(robot_offsets):
+    matrix = np.full((len(robots), max_col + 1), np.nan, dtype=float)
+    episode_boundaries: list[list[int]] = []
+    for i, per_episode in enumerate(placements):
         boundaries = []
-        for col, arr in offsets:
-            matrix[i, col : col + len(arr)] = arr
-            boundaries.append(col)
+        for cols, arr in per_episode:
+            if not cols.size:
+                continue
+            # Forward-fill each step's queue depth until the next step at
+            # this robot. Without this, robots whose actual rate is below
+            # the canvas rate (e.g. 10 Hz on a 20 Hz canvas) leave NaN gaps
+            # at every other column, which imshow renders as transparent
+            # bars. Forward-fill is the right semantics: the queue depth
+            # observed at step t is the best estimate of depth at any
+            # wall-clock moment between t and the next step.
+            for j in range(len(cols)):
+                start = int(cols[j])
+                end = int(cols[j + 1]) if j + 1 < len(cols) else start + 1
+                if end <= start:
+                    end = start + 1
+                matrix[i, start:end] = arr[j]
+            boundaries.append(int(cols[0]))
         episode_boundaries.append(boundaries)
 
     return robots, matrix, episode_boundaries, resolved_control_hz, t0
