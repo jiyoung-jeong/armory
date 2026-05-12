@@ -68,7 +68,7 @@ class Args:
 
     alpha: float = 1.0
 
-    min_ex: int = 0
+    min_execution_horizon: int = 0
 
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
@@ -126,7 +126,7 @@ def main(args: Args) -> None:
         args, action_horizon_steps=resolved.metadata.action_horizon
     )
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
-    resolved.metadata.min_ex = args.min_ex
+    resolved.metadata.min_execution_horizon = args.min_execution_horizon
 
     server = PolicyServer(
         metadata=resolved.metadata,

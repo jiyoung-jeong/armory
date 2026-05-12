@@ -25,18 +25,18 @@ class RequestScheduler(ABC):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
     ):
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
         # Mirror the engine's _should_serve gate. The engine drops a request
-        # whose action_index_start is not at least min_ex past what was last
+        # whose action_index_start is not at least min_execution_horizon past what was last
         # served; if the scheduler doesn't apply the same gate, it keeps
         # emitting batches the engine will reject. Each rejected batch returns
         # an empty ResponseBatch which still pops in_flight, freeing the
         # GreedyDeadline gate to emit again — a tight loop that buries the
         # GPU's batch_queue.
-        self._min_ex = min_ex
+        self._min_ex = min_execution_horizon
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)

@@ -173,7 +173,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
         *,
         horizon: float = 1.0,
         max_depth: int = 5,
@@ -181,7 +181,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         step_budget_nodes: int = 32,
         scheduling_buffer: float = 0.01,
     ) -> None:
-        super().__init__(batch_queue, max_batch_size, min_ex=min_ex)
+        super().__init__(batch_queue, max_batch_size, min_execution_horizon=min_execution_horizon)
         self.horizon = horizon
         self.max_depth = max_depth
         self.max_in_flight = max_in_flight
