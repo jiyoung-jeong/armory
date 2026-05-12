@@ -17,6 +17,7 @@ from armory.serving.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class RequestScheduler(ABC):
@@ -48,8 +49,9 @@ class RequestScheduler(ABC):
         self.latency_tracker.update_obs(
             request.robot_id, request.arrival_timestamp, request.request_timestamp
         )
-        self.mirror.receive_request(request, request.control_hz)
-        self._latest_requests[request.robot_id] = request
+        accepted = self.mirror.receive_request(request, request.control_hz)
+        if accepted:
+            self._latest_requests[request.robot_id] = request
 
     def on_batch_completed(self, batch: ResponseBatch) -> None:
         self.latency_tracker.update_infer(batch.batch_size, batch.inference_duration)
@@ -73,13 +75,32 @@ class RequestScheduler(ABC):
         metrics store.
         """
         started_at = time.time()
+        logger.debug("schedule stage=mirror_next_avail")
         next_avail = self.mirror.next_time_server_available()
+        logger.debug("schedule stage=mirror_in_flight_count")
         in_flight = self.mirror.in_flight_batches_count
+        logger.debug(
+            "schedule stage=mirror_schedulable latest_requests=%d", len(self._latest_requests)
+        )
         candidates = self.mirror.schedulable_requests(self._latest_requests, min_ex=self._min_ex)
         candidate_ids = [r.robot_id for r in candidates]
+        logger.debug("schedule stage=mirror_deadlines robots=%d", len(self.mirror.robots))
         deadlines = self.mirror.deadlines() if self.mirror.robots else {}
 
+        logger.debug(
+            "schedule stage=enter candidates=%d in_flight=%d slack=%+.3fs latest_requests=%d",
+            len(candidates),
+            in_flight,
+            next_avail - started_at,
+            len(self._latest_requests),
+        )
+
         batches, notes = self.get_next_batches(candidates)
+        logger.debug(
+            "schedule stage=get_next_batches_done batches=%d mode=%s",
+            len(batches),
+            notes.get("mode") if isinstance(notes, dict) else None,
+        )
 
         decisions: list[SchedulerDecision] = []
         for batch in batches:
@@ -91,6 +112,12 @@ class RequestScheduler(ABC):
                     chunk_ids=[chunk.chunk_id for chunk in chunks],
                     batch_id=batch_id,
                 )
+            )
+            logger.debug(
+                "schedule stage=dispatched batch_id=%d size=%d robots=%s",
+                batch_id,
+                len(batch),
+                [slot.robot_id for slot in batch],
             )
             decisions.append(
                 SchedulerDecision(

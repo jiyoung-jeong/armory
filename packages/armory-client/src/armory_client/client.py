@@ -1,7 +1,6 @@
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import asdict
 
 import numpy as np
 import requests
@@ -91,9 +90,7 @@ class BidirectionalWebsocket:
     def _handshake(self, control_hz: float) -> None:
         """Send ConnectRequest with robot_id, wait for server acknowledgment."""
         self._ws.send(
-            msgpack_numpy.packb(
-                asdict(ConnectRequest(robot_id=self._robot_id, control_hz=control_hz))
-            )
+            msgpack_numpy.packb(ConnectRequest(robot_id=self._robot_id, control_hz=control_hz))
         )
         msgpack_numpy.unpackb(self._ws.recv())  # ConnectResponse ack
         logger.info("Connected as robot_id=%s", self._robot_id)
@@ -102,10 +99,10 @@ class BidirectionalWebsocket:
         """Perform num_warmup ping/pong round trips to seed server LatencyTracker."""
         for _ in range(NUM_WARMUP):
             ping = WarmupPing(client_timestamp=time.time(), payload=bytes(WARMUP_OBS_BYTES))
-            self._ws.send(msgpack_numpy.packb(asdict(ping)))
+            self._ws.send(msgpack_numpy.packb(ping))
             pong = WarmupPong(**msgpack_numpy.unpackb(self._ws.recv()))
             ack = WarmupAck(server_send_time=pong.server_send_time, client_receive_time=time.time())
-            self._ws.send(msgpack_numpy.packb(asdict(ack)))
+            self._ws.send(msgpack_numpy.packb(ack))
 
     def _connect_ws(self) -> websockets.sync.client.ClientConnection:
         headers = {"Authorization": f"Api-Key {self._api_key}"} if self._api_key else None
@@ -132,20 +129,18 @@ class BidirectionalWebsocket:
             self._pre_send_hook()
 
         request_timestamp = time.time()
-        # Build the wire payload once so we do not deep-copy image observations multiple times.
         data = msgpack_numpy.packb(
-            {
-                "type": "infer",
-                "robot_id": self._robot_id,
-                "observation": vars(obs),
-                "observation_step": obs.step,
-                "action_index_start": action_index_start,
-                "request_timestamp": request_timestamp,
-                "deadline": deadline,
-                "execution_horizon": execution_horizon,
-                "infer_type": infer_type.value,
-                "noise": noise,
-            }
+            messages.InferRequest(
+                robot_id=self._robot_id,
+                observation=obs,  # type: ignore[arg-type]
+                observation_step=obs.step,
+                action_index_start=action_index_start,
+                request_timestamp=request_timestamp,
+                deadline=deadline,
+                execution_horizon=execution_horizon,
+                infer_type=infer_type,
+                noise=noise,
+            )
         )
         self._ws.send(data)  # type: ignore
 
@@ -165,21 +160,27 @@ class BidirectionalWebsocket:
         self,
         request_id: int,
         chunk_id: int,
+        observation_step: int,
         receive_time: float,
+        action_index_start: int,
+        execution_horizon: int,
         execution_start_step: int,
         first_executed_index: int = 0,
     ) -> None:
         ack = messages.ResponseAck(
             request_id=request_id,
             chunk_id=chunk_id,
+            observation_step=observation_step,
             receive_time=receive_time,
+            action_index_start=action_index_start,
+            execution_horizon=execution_horizon,
             execution_start_step=execution_start_step,
             first_executed_index=first_executed_index,
         )
-        self._ws.send(msgpack_numpy.packb(asdict(ack)))
+        self._ws.send(msgpack_numpy.packb(ack))
 
     def reset(self) -> None:
-        data = msgpack_numpy.packb(asdict(messages.ResetRequest(robot_id=self._robot_id)))
+        data = msgpack_numpy.packb(messages.ResetRequest(robot_id=self._robot_id))
         self._ws.send(data)
 
     def send_episode_start(
@@ -197,11 +198,11 @@ class BidirectionalWebsocket:
             max_episode_steps=max_episode_steps,
             task_language=task_language,
         )
-        self._ws.send(msgpack_numpy.packb(asdict(payload)))
+        self._ws.send(msgpack_numpy.packb(payload))
 
     def send_episode_step(self) -> None:
         payload = messages.EpisodeStep(client_timestamp=time.time())
-        self._ws.send(msgpack_numpy.packb(asdict(payload)))
+        self._ws.send(msgpack_numpy.packb(payload))
 
     def send_episode_end(
         self,
@@ -220,4 +221,4 @@ class BidirectionalWebsocket:
             duration_s=duration_s,
             steps_taken=steps_taken,
         )
-        self._ws.send(msgpack_numpy.packb(asdict(payload)))
+        self._ws.send(msgpack_numpy.packb(payload))

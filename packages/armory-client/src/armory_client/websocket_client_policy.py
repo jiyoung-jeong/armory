@@ -77,16 +77,18 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
             infer_type = messages.InferType.INFERENCE_TIME_RTC
             params = messages.RTCParams(s_param=s_param, d_param=d_param)  # type: ignore
         request = messages.InferRequest(
-            request_timestamp=time.time(),
-            observation_step=obs.step,
             robot_id=self._robot_id,
-            observation=asdict(obs),
-            deadline=deadline,
+            observation=obs,  # type: ignore[arg-type]
+            observation_step=obs.step,
+            action_index_start=0,
+            request_timestamp=time.time(),
+            deadline=deadline if deadline is not None else 0.0,
+            execution_horizon=self._server_metadata.action_horizon,
             infer_type=infer_type,
             params=params,
             noise=noise,
         )
-        data = msgpack_numpy.packb(asdict(request))
+        data = msgpack_numpy.packb(request)
 
         # Use lock to ensure thread-safe WebSocket communication
         with self._ws_lock:
@@ -99,9 +101,17 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
 
         result = msgpack_numpy.unpackb(response)
         receive_time = time.time()
-        ack = messages.ResponseAck(request_id=result["request_id"], receive_time=receive_time)
+        ack = messages.ResponseAck(
+            request_id=result["request_id"],
+            chunk_id=result["chunk_id"],
+            observation_step=result["observation_step"],
+            receive_time=receive_time,
+            action_index_start=result["action_index_start"],
+            execution_horizon=result["execution_horizon"],
+            execution_start_step=obs.step,
+        )
         with self._ws_lock:
-            self._ws.send(msgpack_numpy.packb(asdict(ack)))
+            self._ws.send(msgpack_numpy.packb(ack))
         return result
 
 
