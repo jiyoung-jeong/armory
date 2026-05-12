@@ -17,6 +17,7 @@ import dataclasses
 import datetime as dt
 import json
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -97,6 +98,36 @@ def _run_subprocess(
         )
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, args)
+
+
+def _write_command_manifest(
+    run_dir: pathlib.Path, *, server_cmd: list[str], client_cmd: list[str]
+) -> None:
+    commands = {
+        "cwd": str(REMOTE_ROOT),
+        "env": {"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"},
+        "server": {"argv": server_cmd, "shell": shlex.join(server_cmd)},
+        "client": {"argv": client_cmd, "shell": shlex.join(client_cmd)},
+    }
+    (run_dir / "commands.json").write_text(json.dumps(commands, indent=2))
+    (run_dir / "commands.sh").write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f"cd {shlex.quote(str(REMOTE_ROOT))}",
+                f"export PYTHONPATH={shlex.quote(PYTHONPATH)}",
+                "export MPLBACKEND=Agg",
+                "",
+                "# Start this first, then run the client command in another shell.",
+                f"SERVER_CMD={shlex.quote(shlex.join(server_cmd))}",
+                f"CLIENT_CMD={shlex.quote(shlex.join(client_cmd))}",
+                'printf "server: %s\\n" "$SERVER_CMD"',
+                'printf "client: %s\\n" "$CLIENT_CMD"',
+            ]
+        )
+        + "\n"
+    )
 
 
 def _copy_run_dir(src_root: pathlib.Path, dest_root: pathlib.Path) -> None:
@@ -326,6 +357,7 @@ def run_case(
         experiment_config_path=saved_exp_config,
         max_steps=max_steps,
     )
+    _write_command_manifest(run_dir, server_cmd=server_cmd, client_cmd=client_cmd)
 
     server_log = log_dir / "server.log"
     with server_log.open("w") as log_file:
