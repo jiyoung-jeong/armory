@@ -54,6 +54,7 @@ SLOW_HORIZON = 10
 DEFAULT_MAX_STEPS = 200
 DEFAULT_TRIALS_PER_ROBOT = 1
 
+
 BASELINE_SCHEDULERS = ("fixed-max-batch", "greedy-deadline", "round-robin")
 DYNAMIC_SCHEDULER = "dynamic-action"
 
@@ -329,6 +330,9 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase, horizons: list[int
             summary["mean_starvation"] = float(sum(rates) / len(rates))
             summary["max_starvation"] = float(max(rates))
             summary["min_starvation"] = float(min(rates))
+            # α=∞ welfare: max-min freshness, equivalently 1 - max(starvation).
+            # Asymmetric: only the worst-off robot's freshness shows up.
+            summary["min_freshness"] = 1.0 - float(max(rates))
 
     # Pull cross-robot starvation variance from the same source as the
     # starvation_variance_over_time plot so the sweep summary matches its
@@ -435,92 +439,135 @@ def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({key: row.get(key, "") for key in keys})
 
 
+def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
+    """Scatter (mean_starvation, y_col) onto ``ax`` with baselines + dynamic-action curve.
+
+    Returns the dynamic-action scatter handle (for a shared colorbar) or None.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    handle = None
+    for sched in BASELINE_SCHEDULERS:
+        sub_b = sub[sub["scheduler"] == sched].dropna(subset=["mean_starvation", y_col])
+        if sub_b.empty:
+            continue
+        x = float(sub_b["mean_starvation"].mean())
+        y = float(sub_b[y_col].mean())
+        xerr = float(sub_b["mean_starvation"].std(ddof=0)) if len(sub_b) > 1 else 0.0
+        yerr = float(sub_b[y_col].std(ddof=0)) if len(sub_b) > 1 else 0.0
+        style = BASELINE_STYLE[sched]
+        ax.errorbar(
+            x, y, xerr=xerr, yerr=yerr,
+            marker=style["marker"], markersize=11, color=style["color"],
+            linestyle="none", capsize=3, label=sched, zorder=4,
+        )
+
+    sub_d = sub[sub["scheduler"] == DYNAMIC_SCHEDULER].dropna(subset=["mean_starvation", y_col])
+    if not sub_d.empty:
+        agg = (
+            sub_d.groupby("alpha_requested")
+            .agg(
+                mean_starvation=("mean_starvation", "mean"),
+                y_mean=(y_col, "mean"),
+                starvation_std=("mean_starvation", "std"),
+                y_std=(y_col, "std"),
+                count=("seed", "count"),
+            )
+            .reset_index()
+            .sort_values("alpha_requested")
+        )
+        xs = agg["mean_starvation"].to_numpy()
+        ys = agg["y_mean"].to_numpy()
+        alphas = agg["alpha_requested"].to_numpy()
+        ax.plot(xs, ys, "-", color="0.5", linewidth=1.2, alpha=0.7, zorder=2)
+        handle = ax.scatter(
+            xs, ys, c=alphas, cmap=DYNAMIC_CMAP, s=70,
+            edgecolors="black", linewidths=0.6, zorder=3,
+            label=f"{DYNAMIC_SCHEDULER} (alpha sweep)",
+            vmin=0.0, vmax=1.0,
+        )
+        n_seeds = int(agg["count"].max()) if not agg.empty else 1
+        if n_seeds > 1:
+            xerr = (agg["starvation_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
+            yerr = (agg["y_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
+            ax.errorbar(
+                xs, ys, xerr=xerr, yerr=yerr,
+                fmt="none", ecolor="0.6", capsize=2, alpha=0.6, zorder=2,
+            )
+
+    ax.set_xlabel("Mean starvation rate (lower is better)", fontsize=11)
+    ax.set_ylabel(y_label, fontsize=11)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best", fontsize=8, frameon=False)
+    return handle
+
+
+def _autoscale_with_pad(ax, sub, y_col: str, pad_frac: float = 0.12) -> None:
+    """Tighten x/y limits to the data range with a fractional padding."""
+    s = sub.dropna(subset=["mean_starvation", y_col])
+    if s.empty:
+        return
+    xs = s["mean_starvation"].to_numpy(dtype=float)
+    ys = s[y_col].to_numpy(dtype=float)
+    x_lo, x_hi = float(xs.min()), float(xs.max())
+    y_lo, y_hi = float(ys.min()), float(ys.max())
+    x_pad = max((x_hi - x_lo) * pad_frac, 1e-6)
+    y_pad = max((y_hi - y_lo) * pad_frac, 1e-6)
+    ax.set_xlim(x_lo - x_pad, x_hi + x_pad)
+    ax.set_ylim(y_lo - y_pad, y_hi + y_pad)
+
+
 def _plot_starvation_vs_fairness(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
+    """One PNG per (scenario, model) with two panels: variance and min-freshness."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    import numpy as np
     import pandas as pd
 
     df = pd.read_csv(results_csv)
     if df.empty:
         return
     df = df[df.get("status", "ok") == "ok"]
-    needed = {"starvation_variance", "mean_starvation", "scheduler", "model", "scenario_id"}
+    needed = {
+        "mean_starvation", "starvation_variance", "min_freshness",
+        "scheduler", "model", "scenario_id",
+    }
     if not needed.issubset(df.columns):
         return
-    df = df.dropna(subset=["starvation_variance", "mean_starvation"])
+    df = df.dropna(subset=["mean_starvation"])
 
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     for (scenario_id, model), sub in df.groupby(["scenario_id", "model"]):
-        fig, ax = plt.subplots(figsize=(8, 6))
+        fig, (ax_var, ax_min) = plt.subplots(1, 2, figsize=(13, 5.5))
 
-        # Baselines: aggregate across seeds → one point per scheduler
-        for sched in BASELINE_SCHEDULERS:
-            sub_b = sub[sub["scheduler"] == sched]
-            if sub_b.empty:
-                continue
-            x = float(sub_b["mean_starvation"].mean())
-            y = float(sub_b["starvation_variance"].mean())
-            xerr = float(sub_b["mean_starvation"].std(ddof=0)) if len(sub_b) > 1 else 0.0
-            yerr = float(sub_b["starvation_variance"].std(ddof=0)) if len(sub_b) > 1 else 0.0
-            style = BASELINE_STYLE[sched]
-            ax.errorbar(
-                x, y, xerr=xerr, yerr=yerr,
-                marker=style["marker"], markersize=11, color=style["color"],
-                linestyle="none", capsize=3, label=sched, zorder=4,
-            )
+        _plot_one_yaxis(
+            ax_var, sub,
+            y_col="starvation_variance",
+            y_label="Cross-robot starvation variance (lower is fairer)",
+            title="Mean starvation vs variance",
+        )
+        ax_var.set_ylim(bottom=0.0)
+        ax_var.set_xlim(left=0.0)
 
-        # Dynamic-action: one curve, points sorted by alpha, colored on a gradient
-        sub_d = sub[sub["scheduler"] == DYNAMIC_SCHEDULER]
-        if not sub_d.empty:
-            agg = (
-                sub_d.groupby("alpha_requested")
-                .agg(
-                    mean_starvation=("mean_starvation", "mean"),
-                    starvation_variance=("starvation_variance", "mean"),
-                    starvation_std=("mean_starvation", "std"),
-                    variance_std=("starvation_variance", "std"),
-                    count=("seed", "count"),
-                )
-                .reset_index()
-                .sort_values("alpha_requested")
-            )
-            xs = agg["mean_starvation"].to_numpy()
-            ys = agg["starvation_variance"].to_numpy()
-            alphas = agg["alpha_requested"].to_numpy()
-            ax.plot(xs, ys, "-", color="0.5", linewidth=1.2, alpha=0.7, zorder=2)
-            sc = ax.scatter(
-                xs, ys, c=alphas, cmap=DYNAMIC_CMAP, s=70,
-                edgecolors="black", linewidths=0.6, zorder=3,
-                label=f"{DYNAMIC_SCHEDULER} (alpha sweep)",
-                vmin=0.0, vmax=1.0,
-            )
-            cbar = fig.colorbar(sc, ax=ax, pad=0.02)
-            cbar.set_label("alpha", fontsize=10)
-            n_seeds = int(agg["count"].max()) if not agg.empty else 1
-            if n_seeds > 1:
-                xerr = (agg["starvation_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
-                yerr = (agg["variance_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
-                ax.errorbar(
-                    xs, ys, xerr=xerr, yerr=yerr,
-                    fmt="none", ecolor="0.6", capsize=2, alpha=0.6, zorder=2,
-                )
+        handle = _plot_one_yaxis(
+            ax_min, sub,
+            y_col="min_freshness",
+            y_label="Min freshness  =  1 − max(starvation)   (higher is fairer)",
+            title="Mean starvation vs min freshness (α=∞ welfare)",
+        )
+        _autoscale_with_pad(ax_min, sub, "min_freshness")
 
-        ax.set_xlabel("Mean starvation rate (lower is better)", fontsize=12)
-        ax.set_ylabel("Cross-robot starvation variance (lower is fairer)", fontsize=12)
-        ax.set_title(
+        if handle is not None:
+            cbar = fig.colorbar(handle, ax=[ax_var, ax_min], pad=0.02, fraction=0.03)
+            cbar.set_label("scheduler alpha", fontsize=10)
+
+        fig.suptitle(
             f"Starvation vs fairness — scenario={scenario_id}, model={model}",
             fontsize=13, fontweight="bold",
         )
-        ax.set_ylim(bottom=0.0)
-        ax.set_xlim(left=0.0)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right", fontsize=9, frameon=False)
-        plt.tight_layout()
-
         safe_model = model.replace(".", "_").replace("/", "_")
         out = plots_dir / f"starvation_vs_fairness__{scenario_id}__{safe_model}.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
@@ -600,11 +647,11 @@ def main(
                 tar.extractall(run_dir)
             result["artifact_path"] = str(run_dir)
         rows.append(result)
-        var = result.get("starvation_variance", "")
+        mf = result.get("min_freshness", "")
         starv = result.get("mean_starvation", "")
         print(
             f"{result['status']}: {result['run_id']} "
-            f"starvation_variance={var if var == '' else f'{float(var):.4f}'} "
+            f"min_freshness={mf if mf == '' else f'{float(mf):.4f}'} "
             f"mean_starvation={starv if starv == '' else f'{float(starv):.4f}'}"
         )
 
