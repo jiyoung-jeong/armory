@@ -210,18 +210,18 @@ class Robot:
 
         step = self.steps[-1]
         while step.next_action_step <= self.max_overall_action_step:
-            # If no chunk covers next_action_step, advance_step can never
-            # increment it (action_is_available stays False forever) and the
-            # loop spins indefinitely. Treat the gap as the stall point and
-            # return the current step time.
-            # NOTE Rohan: hack from Claude. fix properly
-            if not any(
-                chunk.action_index_start
-                <= step.next_action_step
-                <= chunk.action_index_start + chunk.execution_horizon - 1
-                for chunk in self.chunks
-            ):
-                return step.time
+            # # If no chunk covers next_action_step, advance_step can never
+            # # increment it (action_is_available stays False forever) and the
+            # # loop spins indefinitely. Treat the gap as the stall point and
+            # # return the current step time.
+            # # NOTE Rohan: hack from Claude. fix properly
+            # if not any(
+            #     chunk.action_index_start
+            #     <= step.next_action_step
+            #     <= chunk.action_index_start + chunk.execution_horizon - 1
+            #     for chunk in self.chunks
+            # ):
+            #     return step.time
             step = self.advance_step(step)
 
         return step.time
