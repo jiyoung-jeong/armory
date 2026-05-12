@@ -14,10 +14,12 @@ app = modal.App("armory-serve")
 
 GPU = "h100"
 REGION = "us-east"
-ENV_MODE = "REAL_SORT_LEGOS"
+ENV_MODE = "LIBERO"
 MAX_BATCH_SIZE = 4
 PORT = 8080
 MODEL = "PI05"
+SCHEDULING_ALGORITHM = "greedy-deadline"
+ALPHA = 1.0
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 
@@ -99,9 +101,10 @@ image = (
         }
     )
     .add_local_python_source(
-        "armory", "armory_client", "openpi", "openpi_client", "libero", "gr00t"
+        "armory", "armory_client", "openpi", "openpi_client", "libero", "gr00t", "openpi_adapter", "gr00t_adapter"
     )
     .add_local_dir(str(REPO_ROOT / "scripts"), remote_path="/root/scripts")
+    .add_local_dir(str(REPO_ROOT / "configs"), remote_path="/root/configs")
 )
 
 
@@ -133,6 +136,10 @@ class ModalPolicyServer:
             str(MAX_BATCH_SIZE),
             "--port",
             str(PORT),
+            "--scheduling-algorithm",
+            SCHEDULING_ALGORITHM,
+            "--alpha",
+            str(ALPHA),
         ]
 
         def _stream_logs(proc: subprocess.Popen) -> None:

@@ -1137,14 +1137,20 @@ def generate_starvation_tail_metrics_plot(output_path: pathlib.Path) -> None:
     logger.info(f"Saved {plots_dir / 'starvation_tail_metrics.png'}")
 
 
-def generate_starvation_variance_plot(
+def compute_starvation_variance_series(
     output_path: pathlib.Path, control_hz: float | None = None
-) -> None:
-    """Plot cumulative starvation rate per robot and its cross-robot variance."""
+) -> dict | None:
+    """Cross-robot variance of cumulative starvation rate over wall-clock time.
+
+    Starvation here matches the ``actions_left <= 0`` definition used by the
+    starvation_variance_over_time plot (queue depth at the control step),
+    aligned onto a shared wall-clock canvas via ``_build_actions_left_matrix``.
+
+    Returns ``None`` when no per-robot actions_left data is available.
+    """
     robots, matrix, _, control_hz, _ = _build_actions_left_matrix(output_path, control_hz)
     if matrix.size == 0:
-        logger.warning("No actions_left.npy data found for starvation variance plot")
-        return
+        return None
 
     valid_mask = ~np.isnan(matrix)
     starved_mask = valid_mask & (matrix <= 0)
@@ -1158,6 +1164,31 @@ def generate_starvation_variance_plot(
     )
     starvation_variance = np.nanvar(cumulative_rates, axis=0)
     time_seconds = np.arange(matrix.shape[1], dtype=float) / max(control_hz, 1.0)
+    final_variance = float(starvation_variance[-1]) if starvation_variance.size else float("nan")
+    return {
+        "robots": robots,
+        "cumulative_rates": cumulative_rates,
+        "cumulative_starved": cumulative_starved,
+        "cumulative_observed": cumulative_observed,
+        "starvation_variance": starvation_variance,
+        "time_seconds": time_seconds,
+        "control_hz": float(control_hz),
+        "final_starvation_variance": final_variance,
+    }
+
+
+def generate_starvation_variance_plot(
+    output_path: pathlib.Path, control_hz: float | None = None
+) -> None:
+    """Plot cumulative starvation rate per robot and its cross-robot variance."""
+    series = compute_starvation_variance_series(output_path, control_hz)
+    if series is None:
+        logger.warning("No actions_left.npy data found for starvation variance plot")
+        return
+    robots = series["robots"]
+    cumulative_rates = series["cumulative_rates"]
+    starvation_variance = series["starvation_variance"]
+    time_seconds = series["time_seconds"]
 
     fig, (ax_rates, ax_var) = plt.subplots(
         2,
@@ -1221,6 +1252,137 @@ def generate_starvation_variance_plot(
     )
     plt.close(fig)
     logger.info(f"Saved {plots_dir / 'starvation_variance_over_time.png'}")
+
+
+def generate_per_robot_starvation_rate_gif(
+    output_path: pathlib.Path,
+    control_hz: float | None = None,
+    fps: int = 15,
+    max_frames: int = 150,
+) -> None:
+    """Animate per-robot cumulative starvation rate as stacked line + bar chart.
+
+    Top panel: per-robot lines revealed over wall-clock time (same data as the
+    top panel of starvation_variance_over_time.png).
+    Bottom panel: per-robot bar chart whose heights track each robot's
+    cumulative starvation rate at the current frame, with an overall
+    weighted-average reference line that updates per frame.
+    """
+    series = compute_starvation_variance_series(output_path, control_hz)
+    if series is None:
+        logger.warning("No actions_left.npy data found for per-robot starvation GIF")
+        return
+    import matplotlib.animation as animation  # noqa: PLC0415
+
+    robots = series["robots"]
+    cumulative_rates = series["cumulative_rates"]
+    cumulative_starved = series["cumulative_starved"]
+    cumulative_observed = series["cumulative_observed"]
+    time_seconds = series["time_seconds"]
+    n_cols = cumulative_rates.shape[1]
+    if n_cols < 2:
+        logger.warning("Not enough timesteps for per-robot starvation GIF")
+        return
+
+    # Downsample frame indices: include t=0 and the final frame, evenly spaced.
+    n_frames = min(max_frames, n_cols)
+    frame_indices = np.unique(np.linspace(0, n_cols - 1, n_frames).astype(int))
+
+    plot_order = np.argsort([int(robot) for robot in robots])
+    colors = plt.cm.tab20(np.linspace(0, 1, max(len(robots), 2)))
+    ordered_robots = [robots[i] for i in plot_order]
+    bar_labels = [str(r) for r in ordered_robots]
+
+    fig, (ax_line, ax_bar) = plt.subplots(
+        2, 1, figsize=(max(8, 1.2 * len(robots)), 8), gridspec_kw={"height_ratios": [2, 1.5]}
+    )
+
+    lines = []
+    for color_idx, row_idx in enumerate(plot_order):
+        robot = robots[row_idx]
+        (line,) = ax_line.plot(
+            [],
+            [],
+            linewidth=1.5,
+            color=colors[color_idx % len(colors)],
+            label=f"robot_{robot}",
+        )
+        lines.append((row_idx, line))
+    ax_line.set_xlim(0, time_seconds[-1])
+    ax_line.set_ylim(0, 1)
+    ax_line.set_xlabel("Wall-clock time (s)", fontsize=12)
+    ax_line.set_ylabel("Cumulative starvation rate", fontsize=12)
+    ax_line.grid(True, alpha=0.3)
+    ax_line.legend(
+        loc="upper right",
+        ncol=min(max(1, len(robots)), 5),
+        fontsize=8,
+        frameon=False,
+    )
+    title = ax_line.set_title("", fontsize=13, fontweight="bold")
+    time_marker = ax_line.axvline(0.0, color="black", linewidth=1.0, alpha=0.5)
+
+    bar_colors = [colors[i % len(colors)] for i in range(len(plot_order))]
+    bars = ax_bar.bar(
+        bar_labels,
+        np.zeros(len(plot_order)),
+        color=bar_colors,
+        edgecolor="black",
+        alpha=0.85,
+    )
+    bar_texts = [
+        ax_bar.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            0.0,
+            "0.0%",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+        for bar in bars
+    ]
+    overall_line = ax_bar.axhline(
+        0.0, color="red", linestyle="--", linewidth=2, label="Overall: 0.0%"
+    )
+    overall_legend = ax_bar.legend(loc="upper right", fontsize=9)
+    ax_bar.set_xlabel("Robot index", fontsize=12)
+    ax_bar.set_ylabel("Cumulative starvation rate", fontsize=12)
+    ax_bar.set_ylim(0, 1.0)
+    ax_bar.grid(axis="y", alpha=0.3)
+
+    def update(frame_col: int):
+        upto = frame_col + 1
+        for row_idx, line in lines:
+            line.set_data(time_seconds[:upto], cumulative_rates[row_idx, :upto])
+        t_now = time_seconds[frame_col]
+        time_marker.set_xdata([t_now, t_now])
+        title.set_text(f"Per-robot cumulative starvation rate — t = {t_now:.1f}s")
+
+        col_rates = cumulative_rates[:, frame_col]
+        ordered_rates = col_rates[plot_order]
+        for bar, text, rate in zip(bars, bar_texts, ordered_rates):
+            height = float(rate) if np.isfinite(rate) else 0.0
+            bar.set_height(height)
+            text.set_y(height + 0.01)
+            text.set_text("--" if not np.isfinite(rate) else f"{height * 100:.1f}%")
+
+        total_starved = float(np.nansum(cumulative_starved[:, frame_col]))
+        total_observed = float(np.nansum(cumulative_observed[:, frame_col]))
+        overall = total_starved / total_observed if total_observed > 0 else 0.0
+        overall_line.set_ydata([overall, overall])
+        overall_legend.get_texts()[0].set_text(f"Overall: {overall * 100:.1f}%")
+        return [ln for _, ln in lines] + list(bars) + bar_texts + [overall_line, title, time_marker]
+
+    anim = animation.FuncAnimation(
+        fig, update, frames=frame_indices.tolist(), interval=1000 / max(fps, 1), blit=False
+    )
+    fig.tight_layout()
+    plots_dir = output_path / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    out = plots_dir / "per_robot_starvation_rate.gif"
+    anim.save(out, writer=animation.PillowWriter(fps=fps))
+    plt.close(fig)
+    logger.info(f"Saved {out}")
 
 
 def generate_jains_starvation_over_time_plot(
@@ -1891,6 +2053,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
         generate_starvation_plot,
         generate_starvation_tail_metrics_plot,
         generate_starvation_variance_plot,
+        generate_per_robot_starvation_rate_gif,  # slow (~5-10s per run); run manually if needed
         generate_jains_starvation_over_time_plot,
         generate_staleness_plot,
         generate_batch_size_plot,

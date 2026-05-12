@@ -254,7 +254,7 @@ def _start_backend(
             socket_addresses["gpu_out_ep"],
             gpu_ready,
             log_queue,
-            min_ex=metadata.min_ex,
+            min_execution_horizon=metadata.min_execution_horizon,
         ).run,
         daemon=True,
     )
@@ -270,7 +270,7 @@ def _start_backend(
             scheduler_kwargs,
             sched_ready,
             log_queue,
-            min_ex=metadata.min_ex,
+            min_execution_horizon=metadata.min_execution_horizon,
         ).run,
         daemon=True,
     )

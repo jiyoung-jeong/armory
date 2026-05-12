@@ -20,22 +20,24 @@ import pathlib
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 
 import imageio
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 from typing_extensions import override
 
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.runtime import subscriber as _subscriber
+from armory_client.runtime.saver_utils import (
+    EpisodeSaveData,
+    Result,
+    plot_cost_history,
+    save_action_chunks,
+    save_actions_left,
+    save_cost_history_npy,
+    save_timestamps,
+)
 from armory_client.schemas import (
     Action,
-    ActionChunk,
-    JSONDataclass,
     Observation,
     Timestamp,
 )
@@ -53,33 +55,6 @@ def _robot_idx_from_id(robot_id: str) -> int:
     """
     match = _ROBOT_IDX_RE.search(robot_id)
     return int(match.group(1)) if match else 0
-
-
-@dataclass(frozen=True)
-class Result(JSONDataclass):
-    """Per-episode metadata. Schema matches sims.libero.subscribers.saver.Result."""
-
-    robot_idx: int
-    success: bool
-    steps_taken: int
-    task_suite_name: str
-    task_id: int
-    task_language: str
-    episode_idx: int
-
-
-@dataclass
-class _EpisodeSaveData:
-    """Snapshot of one episode's data, safe to hand off to a background thread."""
-
-    timestamps: list[Timestamp]
-    observations_buffer: dict[int, Observation]
-    action_chunks: list[ActionChunk]
-    actions_left_snapshot: list[int]
-    cost_history: list[float]
-    success: bool
-    episode_idx: int
-    initial_state: np.ndarray | None
 
 
 class RealSaver(_subscriber.Subscriber):
@@ -167,7 +142,7 @@ class RealSaver(_subscriber.Subscriber):
 
     @override
     def on_episode_end(self) -> None:
-        data = _EpisodeSaveData(
+        data = EpisodeSaveData(
             timestamps=self._timestamps,
             observations_buffer=self._observations_buffer,
             action_chunks=list(self._action_chunk_broker.action_chunks),
@@ -186,21 +161,21 @@ class RealSaver(_subscriber.Subscriber):
 
     # ── disk writes (same names + formats as sim Saver) ─────────
 
-    def _save_all(self, data: _EpisodeSaveData) -> None:
+    def _save_all(self, data: EpisodeSaveData) -> None:
         out_folder = self._get_out_folder(data)
         try:
             self._save_metadata(out_folder, data)
-            self._save_timestamps(out_folder, data)
-            self._save_action_chunks(out_folder, data)
+            save_timestamps(data.timestamps, out_folder)
+            save_action_chunks(data.action_chunks, out_folder)
             if self._save_video_enabled:
                 self._save_video(out_folder, data)
             self._save_debug_data(out_folder, data)
-            self._save_actions_left(out_folder, data)
+            save_actions_left(data.actions_left_snapshot, out_folder)
             self._save_cost_history(out_folder, data)
         except Exception:
             logger.exception("RealSaver: error writing episode %s", out_folder)
 
-    def _get_out_folder(self, data: _EpisodeSaveData) -> pathlib.Path:
+    def _get_out_folder(self, data: EpisodeSaveData) -> pathlib.Path:
         # Use the snapshot's episode_idx (assigned at on_episode_end time) so
         # concurrent flushes don't collide on a disk-scan.
         robot_folder = self._out_dir / str(self._robot_idx)
@@ -213,7 +188,7 @@ class RealSaver(_subscriber.Subscriber):
         out_folder.mkdir(parents=True, exist_ok=True)
         return out_folder
 
-    def _save_metadata(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
+    def _save_metadata(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         result = Result(
             success=data.success,
             robot_idx=self._robot_idx,
@@ -225,13 +200,7 @@ class RealSaver(_subscriber.Subscriber):
         )
         result.to_json(out_folder / "metadata.json")
 
-    def _save_timestamps(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        Timestamp.to_csv(data.timestamps, out_folder / "timestamps.csv")
-
-    def _save_action_chunks(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        ActionChunk.to_parquet(data.action_chunks, out_folder / "action_chunks.parquet")
-
-    def _save_video(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
+    def _save_video(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         images = [
             obs.image
             for obs in data.observations_buffer.values()
@@ -245,7 +214,7 @@ class RealSaver(_subscriber.Subscriber):
             fps=self._control_hz,
         )
 
-    def _save_debug_data(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
+    def _save_debug_data(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         has_noise = any(
             getattr(chunk, "noise", None) is not None for chunk in data.action_chunks
         )
@@ -278,29 +247,14 @@ class RealSaver(_subscriber.Subscriber):
 
         np.savez_compressed(debug_data_file, **data_to_save)
 
-    def _save_actions_left(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        np.save(
-            out_folder / "actions_left.npy",
-            np.array(data.actions_left_snapshot, dtype=np.int32),
-        )
-
-    def _save_cost_history(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        costs = np.array(data.cost_history, dtype=np.float64)
-        np.save(out_folder / "cost_history.npy", costs)
-
+    def _save_cost_history(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
+        costs = save_cost_history_npy(data.cost_history, out_folder)
         if costs.size == 0:
             return
-
-        steps = np.arange(len(costs))
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(steps, costs, linewidth=0.8, color="steelblue")
-        ax.set_xlabel("Environment step")
-        ax.set_ylabel("Cost (s)")
-        ax.set_title(
-            f"Cost per step — robot {self._robot_idx} | "
-            f"{self._task_suite_name} task {self._task_id}"
+        plot_cost_history(
+            costs,
+            out_folder,
+            robot_idx=self._robot_idx,
+            task_suite_name=self._task_suite_name,
+            task_id=self._task_id,
         )
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(out_folder / "cost_history.png", dpi=150)
-        plt.close(fig)

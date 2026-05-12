@@ -158,6 +158,18 @@ class Robot:
         step = self.steps[-1]
 
         while step.next_action_step <= self.max_overall_action_step:
+            # If no chunk covers next_action_step, advance_step can never
+            # increment it (action_is_available stays False forever) and the
+            # loop spins indefinitely. Treat the gap as the stall point and
+            # return the current step time.
+            # NOTE Rohan: hack from Claude. fix properly
+            if not any(
+                chunk.action_index_start
+                <= step.next_action_step
+                <= chunk.action_index_start + chunk.execution_horizon - 1
+                for chunk in self.chunks
+            ):
+                return step.time
             step = self.advance_step(step)
 
         return step.time
@@ -340,9 +352,9 @@ class Mirror:
     def schedulable_requests(
         self,
         requests: dict[RobotID, SlotRequest],
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
     ) -> list[SlotRequest]:
-        """Filter requests whose next-chunk start is at least ``min_ex`` past
+        """Filter requests whose next-chunk start is at least ``min_execution_horizon`` past
         the last queued chunk. Mirrors the engine's _should_serve gate so the
         scheduler doesn't emit batches the engine will drop.
         """
@@ -367,11 +379,11 @@ class Mirror:
             if robot.get_latest_control_step_before(obs_cutoff) is None:
                 continue
             #
-            
+
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
             if (
                 len(robot.chunks) == 0
-                or action_index_start > robot.chunks[-1].action_index_start + min_ex
+                or action_index_start > robot.chunks[-1].action_index_start + min_execution_horizon
             ):
                 schedulable_requests.append(request)
             # else:
