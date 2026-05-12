@@ -15,14 +15,14 @@ class LookaheadScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
         *,
         horizon_ms: int = 1000,
         timestep_ms: int = 50,
         action_horizon_steps: int = 10,
         control_hz: int = 20,
     ) -> None:
-        super().__init__(batch_queue, max_batch_size, min_ex=min_ex)
+        super().__init__(batch_queue, max_batch_size, min_execution_horizon=min_execution_horizon)
         assert timestep_ms > 0, "timestep_ms must be positive"
         assert horizon_ms > 0, "horizon_ms must be positive"
         assert action_horizon_steps > 0, "action_horizon_steps must be positive"

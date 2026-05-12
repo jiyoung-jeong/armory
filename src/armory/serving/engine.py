@@ -57,7 +57,7 @@ class GpuWorker:
         gpu_out_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
-        min_ex: int = 10,
+        min_execution_horizon: int = 10,
     ) -> None:
         self.policy_factory = policy_factory
         self.max_batch_size = max_batch_size
@@ -67,7 +67,7 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
-        self._min_ex = min_ex
+        self._min_ex = min_execution_horizon
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -165,7 +165,9 @@ class GpuWorker:
                 for sd, action_dict, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
-            self._update_state(slot_requests, slot_datas, actions) # NOTE from Rohan: this was originally slot_reqs
+            self._update_state(
+                slot_requests, slot_datas, actions
+            )  # NOTE from Rohan: this was originally slot_reqs
 
             # Send responses directly to WS — not via scheduler
             result_sock.send_pyobj(

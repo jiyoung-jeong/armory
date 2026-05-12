@@ -352,9 +352,9 @@ class Mirror:
     def schedulable_requests(
         self,
         requests: dict[RobotID, SlotRequest],
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
     ) -> list[SlotRequest]:
-        """Filter requests whose next-chunk start is at least ``min_ex`` past
+        """Filter requests whose next-chunk start is at least ``min_execution_horizon`` past
         the last queued chunk. Mirrors the engine's _should_serve gate so the
         scheduler doesn't emit batches the engine will drop.
         """
@@ -379,11 +379,11 @@ class Mirror:
             if robot.get_latest_control_step_before(obs_cutoff) is None:
                 continue
             #
-            
+
             _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
             if (
                 len(robot.chunks) == 0
-                or action_index_start > robot.chunks[-1].action_index_start + min_ex
+                or action_index_start > robot.chunks[-1].action_index_start + min_execution_horizon
             ):
                 schedulable_requests.append(request)
             # else:

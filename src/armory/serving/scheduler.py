@@ -61,7 +61,7 @@ class SchedulerWorker:
         scheduler_kwargs: dict | None,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
     ) -> None:
         self.sched_in_ep = sched_in_ep
         self.result_ep = result_ep
@@ -72,7 +72,7 @@ class SchedulerWorker:
         self.scheduler_kwargs = scheduler_kwargs
         self.ready_event = ready_event
         self.log_queue = log_queue
-        self.min_ex = min_ex
+        self.min_execution_horizon = min_execution_horizon
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -104,7 +104,7 @@ class SchedulerWorker:
         scheduler = cls(
             self.batch_queue,
             max_batch_size=self.max_batch_size,
-            min_ex=self.min_ex,
+            min_execution_horizon=self.min_execution_horizon,
             **extra_kwargs,
         )
 

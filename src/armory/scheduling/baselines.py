@@ -130,9 +130,9 @@ class RoundRobinScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
     ):
-        super().__init__(batch_queue, max_batch_size, min_ex=min_ex)
+        super().__init__(batch_queue, max_batch_size, min_execution_horizon=min_execution_horizon)
         self._rr_index: int = 0
         self._rr_robot_order: list[str] = []
 

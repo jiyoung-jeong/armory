@@ -11,11 +11,11 @@ class DynamicActionScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_ex: int = 0,
+        min_execution_horizon: int = 0,
         *,
         alpha: float = 0.0,
     ):
-        super().__init__(batch_queue, max_batch_size, min_ex=min_ex)
+        super().__init__(batch_queue, max_batch_size, min_execution_horizon=min_execution_horizon)
         self._alpha = max(0.0, alpha)
         self._service_debt: dict[str, float] = {}
         self._demand_rate: dict[str, float] = {}
@@ -86,9 +86,7 @@ class DynamicActionScheduler(RequestScheduler):
             return
         # advance the debts for each robot based on the demand rate
         for robot_id, rate in self._demand_rate.items():
-            self._service_debt[robot_id] = (
-                self._service_debt.get(robot_id, 0.0) + elapsed * rate
-            )
+            self._service_debt[robot_id] = self._service_debt.get(robot_id, 0.0) + elapsed * rate
         self._last_advance = now
 
     def _infer_deadline(self, request: SlotRequest, deadlines: dict[str, float]) -> float:
