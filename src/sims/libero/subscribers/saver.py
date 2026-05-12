@@ -3,26 +3,27 @@ from __future__ import annotations
 import logging
 import pathlib
 import time
-
-import imageio
-import matplotlib
-
-matplotlib.use("Agg")
-import dataclasses
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
+import dataclasses
+import imageio
 import numpy as np
 from typing_extensions import override
 
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.runtime import subscriber as _subscriber
+from armory_client.runtime.saver_utils import (
+    EpisodeSaveData,
+    Result,
+    plot_cost_history,
+    save_action_chunks,
+    save_actions_left,
+    save_cost_history_npy,
+    save_timestamps,
+)
 from armory_client.schemas import (
     Action,
-    ActionChunk,
-    JSONDataclass,
     Observation,
     Timestamp,
 )
@@ -33,31 +34,6 @@ if TYPE_CHECKING:
     from sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class Result(JSONDataclass):
-    robot_idx: int
-    success: bool
-    steps_taken: int
-    task_suite_name: str
-    task_id: int
-    task_language: str
-    episode_idx: int
-
-
-@dataclass
-class _EpisodeSaveData:
-    """Snapshot of all data needed to persist one episode, safe to hand off to a thread."""
-
-    timestamps: list[Timestamp]
-    observations_buffer: dict[int, Observation]
-    action_chunks: list[ActionChunk]
-    actions_left_snapshot: list[int]
-    cost_history: list[float]
-    current_success: bool
-    episode_idx: int
-    initial_state: np.ndarray | None
 
 
 class Saver(_subscriber.Subscriber):
@@ -127,14 +103,14 @@ class Saver(_subscriber.Subscriber):
 
     @override
     def on_episode_end(self) -> None:
-        data = _EpisodeSaveData(
+        data = EpisodeSaveData(
             timestamps=self._timestamps,
             observations_buffer=self._observations_buffer,
             # Shallow-copy the broker list in case it gets reset between episodes.
             action_chunks=list(self._action_chunk_broker.action_chunks),
             actions_left_snapshot=self._actions_left_snapshot,
             cost_history=self._cost_history,
-            current_success=self._environment.current_success,
+            success=self._environment.current_success,
             episode_idx=self._environment.episode_idx,
             initial_state=self._environment.current_initial_state,
         )
@@ -144,35 +120,39 @@ class Saver(_subscriber.Subscriber):
     def close(self) -> None:
         self._executor.shutdown(wait=True)
 
-    def _save_all(self, data: _EpisodeSaveData) -> None:
+    def _save_all(self, data: EpisodeSaveData) -> None:
         out_folder, dir_episode_idx = self._get_out_folder(data)
         data = dataclasses.replace(data, episode_idx=dir_episode_idx)
         self._save_metadata(out_folder, data)
-        self._save_timestamps(out_folder, data)
-        self._save_action_chunks(out_folder, data)
+        logger.info(f"Saving timestamps to {out_folder / 'timestamps.csv'}")
+        save_timestamps(data.timestamps, out_folder)
+        logger.info(f"Saving action chunks to {out_folder}")
+        save_action_chunks(data.action_chunks, out_folder)
         if self._save_video_enabled:
             self._save_video(out_folder, data)
         self._save_debug_data(out_folder, data)
-        self._save_actions_left(out_folder, data)
+        path = out_folder / "actions_left.npy"
+        save_actions_left(data.actions_left_snapshot, out_folder)
+        logger.info(f"Saved actions_left to {path}")
         self._save_cost_history(out_folder, data)
 
-    def _get_out_folder(self, data: _EpisodeSaveData) -> tuple[pathlib.Path, int]:
+    def _get_out_folder(self, data: EpisodeSaveData) -> tuple[pathlib.Path, int]:
         robot_folder = self._out_dir / str(self._robot_idx)
         pathlib.Path(robot_folder).mkdir(parents=True, exist_ok=True)
 
         existing = list(robot_folder.iterdir())
         next_idx = max([int(p.name.split("_")[0]) for p in existing if p.is_dir()], default=-1) + 1
-        success_str = "success" if data.current_success else "failure"
+        success_str = "success" if data.success else "failure"
         out_folder = (
             robot_folder / f"{next_idx}_{self._task_suite_name}_{self._task_id}_{success_str}"
         )
         pathlib.Path(out_folder).mkdir(parents=True, exist_ok=True)
         return pathlib.Path(out_folder), next_idx
 
-    def _save_metadata(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
+    def _save_metadata(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         logger.info(f"Saving metadata to {out_folder / 'metadata.json'}")
         result = Result(
-            success=data.current_success,
+            success=data.success,
             robot_idx=self._robot_idx,
             steps_taken=len(data.timestamps),
             task_suite_name=self._task_suite_name,
@@ -182,15 +162,7 @@ class Saver(_subscriber.Subscriber):
         )
         result.to_json(out_folder / "metadata.json")
 
-    def _save_timestamps(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        logger.info(f"Saving timestamps to {out_folder / 'timestamps.csv'}")
-        Timestamp.to_csv(data.timestamps, out_folder / "timestamps.csv")
-
-    def _save_action_chunks(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        logger.info(f"Saving action chunks to {out_folder}")
-        ActionChunk.to_parquet(data.action_chunks, out_folder / "action_chunks.parquet")
-
-    def _save_video(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
+    def _save_video(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         logger.info(f"Saving video to {out_folder / 'out.mp4'}")
         images = [obs.image for obs in data.observations_buffer.values()]
         imageio.mimwrite(
@@ -199,7 +171,7 @@ class Saver(_subscriber.Subscriber):
             fps=self._control_hz,  # NOTE: saving in control hz fps for now
         )
 
-    def _save_debug_data(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
+    def _save_debug_data(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         """Save debug data as a single .npz file with observations, noise, and actions."""
         # Check if we have noise data
         has_noise = any(chunk.noise is not None for chunk in data.action_chunks)
@@ -249,29 +221,17 @@ class Saver(_subscriber.Subscriber):
         np.savez_compressed(debug_data_file, **data_to_save)
         logger.info(f"Saved {len(data.action_chunks)} chunks to {debug_data_file}")
 
-    def _save_actions_left(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        path = out_folder / "actions_left.npy"
-        np.save(path, np.array(data.actions_left_snapshot, dtype=np.int32))
-        logger.info(f"Saved actions_left to {path}")
-
-    def _save_cost_history(self, out_folder: pathlib.Path, data: _EpisodeSaveData) -> None:
-        costs = np.array(data.cost_history, dtype=np.float64)
+    def _save_cost_history(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
         npy_path = out_folder / "cost_history.npy"
-        np.save(npy_path, costs)
+        costs = save_cost_history_npy(data.cost_history, out_folder)
         logger.info(f"Saved cost_history to {npy_path}")
 
         plot_path = out_folder / "cost_history.png"
-        steps = np.arange(len(costs))
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(steps, costs, linewidth=0.8, color="steelblue")
-        ax.set_xlabel("Environment step")
-        ax.set_ylabel("Cost (s)")
-        ax.set_title(
-            f"Cost per step — robot {self._robot_idx} | "
-            f"{self._task_suite_name} task {self._task_id}"
+        plot_cost_history(
+            costs,
+            out_folder,
+            robot_idx=self._robot_idx,
+            task_suite_name=self._task_suite_name,
+            task_id=self._task_id,
         )
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(plot_path, dpi=150)
-        plt.close(fig)
         logger.info(f"Saved cost_history plot to {plot_path}")

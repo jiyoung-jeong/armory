@@ -557,7 +557,7 @@ def _plot_starvation_vs_fairness(results_csv: pathlib.Path, plots_dir: pathlib.P
             ax_min, sub,
             y_col="min_freshness",
             y_label="Min freshness  =  1 − max(starvation)   (higher is fairer)",
-            title="Mean starvation vs min freshness (α=∞ welfare)",
+            title="Mean starvation vs min freshness",
         )
         _autoscale_with_pad(ax_min, sub, "min_freshness")
 
