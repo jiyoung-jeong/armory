@@ -65,6 +65,15 @@ def _wilson_ci(p: float, n: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, center - half), min(1.0, center + half))
 
 
+STARVATION_METRICS = {
+    "starvation_rate",
+    "post_first_starvation_rate",
+    "robot_starvation_rate_max",
+    "robot_starvation_rate_std",
+    "robot_starvation_rate_cvar90",
+}
+
+
 def _plot_metric(
     df: pd.DataFrame,
     *,
@@ -72,12 +81,17 @@ def _plot_metric(
     x_col: str,
     line_col: str,
     output_dir: pathlib.Path,
+    reduce: str = "mean",
 ) -> pathlib.Path:
-    agg = df.groupby([line_col, x_col])[metric].agg(["mean", "count"]).reset_index()
-    agg.columns = [line_col, x_col, "value", "n"]
+    if reduce == "min":
+        agg = df.groupby([line_col, x_col])[metric].agg(["min", "count"]).reset_index()
+        agg.columns = [line_col, x_col, "value", "n"]
+    else:
+        agg = df.groupby([line_col, x_col])[metric].agg(["mean", "count"]).reset_index()
+        agg.columns = [line_col, x_col, "value", "n"]
     agg = agg.sort_values([line_col, x_col])
 
-    is_proportion = agg["value"].between(0.0, 1.0).all()
+    is_proportion = reduce == "mean" and agg["value"].between(0.0, 1.0).all()
     if is_proportion:
         ci = agg.apply(
             lambda r: pd.Series(_wilson_ci(r["value"], int(r["n"])), index=["lo", "hi"]), axis=1
@@ -98,14 +112,18 @@ def _plot_metric(
                 color=line.get_color(),
             )
 
+    title_suffix = " (best seed)" if reduce == "min" else ""
     ax.set_xlabel(x_col.replace("_", " ").title())
     ax.set_ylabel(_metric_label(metric))
-    ax.set_title(_metric_label(metric))
+    ax.set_title(_metric_label(metric) + title_suffix)
     ax.grid(True, axis="y", alpha=0.25)
     ax.legend(title=line_col.replace("_", " ").title())
     fig.tight_layout()
 
-    output_path = output_dir / f"{metric}_by_{x_col}.png"
+    filename = (
+        f"{metric}_by_{x_col}_min_seed.png" if reduce == "min" else f"{metric}_by_{x_col}.png"
+    )
+    output_path = output_dir / filename
     fig.savefig(output_path, dpi=160)
     plt.close(fig)
     return output_path
@@ -146,6 +164,11 @@ def plot_results(
     written = [
         _plot_metric(df, metric=metric, x_col=x, line_col=line, output_dir=output_dir)
         for metric in metrics
+    ]
+    written += [
+        _plot_metric(df, metric=metric, x_col=x, line_col=line, output_dir=output_dir, reduce="min")
+        for metric in metrics
+        if metric in STARVATION_METRICS
     ]
     print("Wrote plots:")
     for path in written:

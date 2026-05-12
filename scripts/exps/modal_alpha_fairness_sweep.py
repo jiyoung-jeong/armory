@@ -47,15 +47,15 @@ PYTHONPATH = ":".join(
 )
 
 CONTROL_HZ = 20
-# MAX_BATCH_SIZE = 4
-MAX_BATCH_SIZE = 20
+MAX_BATCH_SIZE = 5
+# MAX_BATCH_SIZE = 20
 FAST_HORIZON = 4
 SLOW_HORIZON = 10
 DEFAULT_MAX_STEPS = 200
 DEFAULT_TRIALS_PER_ROBOT = 1
 
 
-BASELINE_SCHEDULERS = ("fixed-max-batch", "greedy-deadline", "round-robin")
+BASELINE_SCHEDULERS = ("fixed-max-batch", "greedy-deadline", "round-robin", "lookahead-actions")
 DYNAMIC_SCHEDULER = "dynamic-action"
 
 MODEL_TO_PROFILE = {
@@ -72,6 +72,7 @@ BASELINE_STYLE = {
     "fixed-max-batch": {"marker": "s", "color": "#1f77b4"},
     "greedy-deadline": {"marker": "^", "color": "#2ca02c"},
     "round-robin": {"marker": "D", "color": "#d62728"},
+    "lookahead-actions": {"marker": "o", "color": "#9467bd"},
 }
 DYNAMIC_CMAP = "viridis"
 
@@ -578,12 +579,12 @@ def _plot_starvation_vs_fairness(results_csv: pathlib.Path, plots_dir: pathlib.P
 @app.local_entrypoint()
 def main(
     # models: str = "pi05,gr00t-n1.7",
-    models: str = "gr00t-n1.7",
+    models: str = "pi05",
     # scenarios: str = "1f9s,5f5s",
-    scenarios: str = "5f20s",
-    alpha_grid: str = "0.0,0.1,0.2,0.3,0.5,0.7,1.0",
+    scenarios: str = "1f9s",
+    alpha_grid: str = "0.0,0.25,0.5,0.75,1.0",
     seeds: str = "42",
-    output_dir: str = "experiments/sweeps/fairness_alpha_gr00t",
+    output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_1f9s",
     port: int = 8080,
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> None:

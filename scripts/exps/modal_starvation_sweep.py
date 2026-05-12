@@ -15,19 +15,21 @@ from __future__ import annotations
 import csv
 import dataclasses
 import datetime as dt
-import io
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
-import tarfile
 from typing import Any
 
 import modal
 
 APP_NAME = "armory-scheduler-sweep"
+ARTIFACTS_VOLUME_NAME = "armory-scheduler-sweep-artifacts"
 REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_sweep")
+REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
+ARTIFACT_SKIP_SUFFIXES = {".mp4", ".parquet", ".npz"}
 PYTHONPATH = ":".join(
     [
         str(REMOTE_ROOT / "src"),
@@ -55,6 +57,8 @@ image = (
 )
 
 app = modal.App(APP_NAME)
+
+artifacts_volume = modal.Volume.from_name(ARTIFACTS_VOLUME_NAME, create_if_missing=True)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -95,16 +99,14 @@ def _run_subprocess(
         raise subprocess.CalledProcessError(result.returncode, args)
 
 
-def _tar_directory(path: pathlib.Path) -> bytes:
-    def compact_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        if pathlib.Path(info.name).suffix in {".mp4", ".parquet", ".npz"}:
-            return None
-        return info
-
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        tar.add(path, arcname=path.name, filter=compact_filter)
-    return buffer.getvalue()
+def _copy_run_dir(src_root: pathlib.Path, dest_root: pathlib.Path) -> None:
+    """Copy run_dir into the mounted artifacts volume, skipping bulky binaries."""
+    for src in src_root.rglob("*"):
+        if src.is_dir() or src.suffix in ARTIFACT_SKIP_SUFFIXES:
+            continue
+        dst = dest_root / src.relative_to(src_root)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -136,14 +138,32 @@ def _build_server_cmd(srv_cfg: dict[str, Any], *, port: int, scheduler: str) -> 
 
 
 def _expand_experiment_config(exp_cfg: dict[str, Any], num_robots: int) -> dict[str, Any]:
-    """Return a copy of exp_cfg with robot_0's profile replicated to num_robots robots."""
+    """Return a copy of exp_cfg with robot profiles set for num_robots robots.
+
+    If the config already defines more than one robot explicitly, those profiles are used
+    as-is and num_robots is ignored (the config is authoritative).
+    Otherwise robot_0's profile is replicated to fill num_robots robots.
+    """
+    if len(exp_cfg["robots"]) > 1:
+        actual = len(exp_cfg["robots"])
+        return {**exp_cfg, "experiment": {**exp_cfg["experiment"], "num_robots": actual}}
     robot_template = exp_cfg["robots"]["robot_0"]
-    expanded = {
+    return {
         **exp_cfg,
         "experiment": {**exp_cfg["experiment"], "num_robots": num_robots},
         "robots": {f"robot_{i}": dict(robot_template) for i in range(num_robots)},
     }
-    return expanded
+
+
+def _config_num_robots(cfg_path: str, fallback: int) -> int:
+    """Read robot count from a local config file when robots are pre-defined, else fallback."""
+    try:
+        n = len(json.loads(pathlib.Path(cfg_path).read_text()).get("robots", {}))
+        if n > 1:
+            return n
+    except Exception:
+        pass
+    return fallback
 
 
 def _build_client_cmd(
@@ -260,12 +280,19 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
     return summary
 
 
-@app.function(image=image, timeout=60 * 60, cpu=4, memory=2048)
+@app.function(
+    image=image,
+    timeout=60 * 60,
+    cpu=4,
+    memory=8192,
+    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
+)
 def run_case(
     case: SweepCase,
     *,
     server_config: str,
     port: int,
+    stamp: str,
     max_batch_size_override: int | None = None,
     max_steps_override: int | None = None,
 ) -> dict[str, Any]:
@@ -335,7 +362,10 @@ def run_case(
             server_proc.kill()
             server_proc.wait(timeout=20)
 
-    summary["artifact_tgz"] = _tar_directory(run_dir)
+    dest = REMOTE_ARTIFACTS_ROOT / stamp / case.run_id
+    _copy_run_dir(run_dir, dest)
+    artifacts_volume.commit()
+    summary["artifact_remote_path"] = str(dest)
     return summary
 
 
@@ -344,7 +374,7 @@ def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
     keys: list[str] = []
     for row in rows:
         for key in row:
-            if key != "artifact_tgz" and key not in keys:
+            if key not in keys:
                 keys.append(key)
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=keys)
@@ -370,7 +400,12 @@ def main(
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     artifacts_dir = out / "artifacts"
     cases = [
-        SweepCase(scheduler=scheduler, experiment_config=cfg, num_robots=n, seed=seed)
+        SweepCase(
+            scheduler=scheduler,
+            experiment_config=cfg,
+            num_robots=_config_num_robots(cfg, n),
+            seed=seed,
+        )
         for scheduler in _parse_csv(schedulers)
         for cfg in _parse_csv(experiment_configs)
         for n in _parse_csv(num_robots, cast=int)
@@ -383,22 +418,34 @@ def main(
         kwargs={
             "server_config": server_config,
             "port": port,
+            "stamp": stamp,
             "max_batch_size_override": max_batch_size,
             "max_steps_override": max_steps,
         },
         order_outputs=False,
     ):
-        artifact_bytes = result.pop("artifact_tgz")
-        run_dir = artifacts_dir / result["run_id"]
-        run_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(fileobj=io.BytesIO(artifact_bytes), mode="r:gz") as tar:
-            tar.extractall(run_dir)
-        result["artifact_path"] = str(run_dir)
         rows.append(result)
         print(
             f"{result['status']}: {result['run_id']} "
             f"starvation={_safe_float(result.get('starvation_rate')):.3f} "
         )
+
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading artifacts from volume '{ARTIFACTS_VOLUME_NAME}/{stamp}' -> {artifacts_dir}")
+    subprocess.run(
+        [
+            "modal",
+            "volume",
+            "get",
+            ARTIFACTS_VOLUME_NAME,
+            stamp,
+            str(artifacts_dir),
+            "--force",
+        ],
+        check=True,
+    )
+    for row in rows:
+        row["artifact_path"] = str(artifacts_dir / stamp / row["run_id"])
 
     sweep_csv = out / f"sweep_results_{stamp}.csv"
     latest_csv = out / "sweep_results.csv"
