@@ -229,6 +229,27 @@ def test_mirror_checkpoint_drops_robots_added_after() -> None:
     assert "a" in mirror.robots
 
 
+def test_mirror_checkpoint_restores_divergent_branch_contents() -> None:
+    """Restore must recover branch contents, not just truncate lists to branch lengths."""
+    horizon = LONG_RUN.chunks[0].execution_horizon
+    mirror = Mirror()
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror.robots[ROBOT_ID].queue_chunk(LONG_RUN.chunks[0])
+    parent_ckpt = mirror.checkpoint()
+
+    branch_a_chunk = replace(LONG_RUN.chunks[1], chunk_id=101, action_index_start=5)
+    mirror.robots[ROBOT_ID].queue_chunk(branch_a_chunk)
+    branch_a_ckpt = mirror.checkpoint()
+
+    mirror.restore(parent_ckpt)
+    branch_b_chunk = replace(LONG_RUN.chunks[1], chunk_id=202, action_index_start=4)
+    mirror.robots[ROBOT_ID].queue_chunk(branch_b_chunk)
+
+    mirror.restore(branch_a_ckpt)
+
+    assert mirror.robots[ROBOT_ID].chunks == [LONG_RUN.chunks[0], branch_a_chunk]
+
+
 def test_mirror_update_completion_refines_arrival() -> None:
     """update_batch_completion sets arrival_time to completion + action_latency."""
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)

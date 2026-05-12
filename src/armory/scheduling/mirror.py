@@ -135,6 +135,13 @@ class Robot:
     def queue_chunk(self, chunk: ActionChunk) -> None:
         self.chunks.append(chunk)
 
+        # NOTE: chunk check
+        for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
+            if prev.action_index_start + prev.execution_horizon < curr.action_index_start:
+                raise ValueError(
+                    f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
+                )
+
     def update_chunk(
         self,
         new_chunk: ActionChunk,
@@ -262,9 +269,14 @@ class Batch:
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """Snapshot of a Mirror's append-only state. Restore resets lists and batch queue."""
+    """Snapshot of a Mirror's append-only state. Restore resets robot and batch state.
 
-    lengths: dict[RobotID, tuple[int, int]]  # (n_steps, n_chunks) per robot
+    Checkpoints must preserve the actual list contents, not only list lengths:
+    search restores divergent branches whose chunk/control-step prefixes may
+    have the same length but different values.
+    """
+
+    robot_states: dict[RobotID, tuple[tuple[ControlStep, ...], tuple[ActionChunk, ...]]]
     in_flight_batches: tuple[Batch, ...]
     last_batch_completed_time: float
 
@@ -474,25 +486,28 @@ class Mirror:
 
     def checkpoint(self) -> Checkpoint:
         return Checkpoint(
-            lengths={rid: (len(r.steps), len(r.chunks)) for rid, r in self.robots.items()},
+            robot_states={
+                rid: (tuple(robot.steps), tuple(robot.chunks)) for rid, robot in self.robots.items()
+            },
             in_flight_batches=tuple(self.in_flight_batches),
             last_batch_completed_time=self.last_batch_completed_time,
         )
 
     def restore(self, ckpt: Checkpoint) -> None:
         for rid in list(self.robots.keys()):
-            if rid not in ckpt.lengths:
+            if rid not in ckpt.robot_states:
                 del self.robots[rid]
                 continue
-            n_steps, n_chunks = ckpt.lengths[rid]
-            r = self.robots[rid]
-            del r.steps[n_steps:]
-            del r.chunks[n_chunks:]
+            steps, chunks = ckpt.robot_states[rid]
+            robot = self.robots[rid]
+            robot.steps = list(steps)
+            robot.chunks = list(chunks)
         self.in_flight_batches = deque(ckpt.in_flight_batches)
         self.last_batch_completed_time = ckpt.last_batch_completed_time
 
     def deadlines(self) -> dict[RobotID, float]:
-        return {rid: robot.deadline() for rid, robot in self.robots.items()}
+        deadlines = {rid: robot.deadline() for rid, robot in self.robots.items()}
+        return deadlines
 
     def to_dict(self) -> dict:
         now = time.time()
