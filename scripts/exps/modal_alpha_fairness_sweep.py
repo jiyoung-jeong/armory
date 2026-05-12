@@ -329,11 +329,11 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase, horizons: list[int
         rates = fairness["starvation_rate"]
         if rates:
             summary["mean_starvation"] = float(sum(rates) / len(rates))
+            # max_starvation = worst-off robot's starvation rate. Equivalently
+            # the α=∞ (Rawlsian) welfare endpoint: 1 - max_starvation is the
+            # min freshness. Asymmetric — only the worst-off robot moves it.
             summary["max_starvation"] = float(max(rates))
             summary["min_starvation"] = float(min(rates))
-            # α=∞ welfare: max-min freshness, equivalently 1 - max(starvation).
-            # Asymmetric: only the worst-off robot's freshness shows up.
-            summary["min_freshness"] = 1.0 - float(max(rates))
 
     # Pull cross-robot starvation variance from the same source as the
     # starvation_variance_over_time plot so the sweep summary matches its
@@ -519,8 +519,22 @@ def _autoscale_with_pad(ax, sub, y_col: str, pad_frac: float = 0.12) -> None:
     ax.set_ylim(y_lo - y_pad, y_hi + y_pad)
 
 
-def _plot_starvation_vs_fairness(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
-    """One PNG per (scenario, model) with two panels: variance and min-freshness."""
+def _save_single_panel_plot(
+    results_csv: pathlib.Path,
+    plots_dir: pathlib.Path,
+    *,
+    name_prefix: str,
+    y_col: str,
+    y_label: str,
+    panel_title: str,
+    pareto: bool,
+) -> None:
+    """Render one PNG per (scenario, model) for the given y_col.
+
+    ``pareto=True`` auto-scales axes to the data range with padding; otherwise
+    the axes are anchored at zero so a fixed-scale "lower is better" plot is
+    easy to compare across scenarios.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
@@ -531,49 +545,64 @@ def _plot_starvation_vs_fairness(results_csv: pathlib.Path, plots_dir: pathlib.P
     if df.empty:
         return
     df = df[df.get("status", "ok") == "ok"]
-    needed = {
-        "mean_starvation", "starvation_variance", "min_freshness",
-        "scheduler", "model", "scenario_id",
-    }
+    needed = {"mean_starvation", y_col, "scheduler", "model", "scenario_id"}
     if not needed.issubset(df.columns):
         return
-    df = df.dropna(subset=["mean_starvation"])
+    df = df.dropna(subset=["mean_starvation", y_col])
 
     plots_dir.mkdir(parents=True, exist_ok=True)
-
     for (scenario_id, model), sub in df.groupby(["scenario_id", "model"]):
-        fig, (ax_var, ax_min) = plt.subplots(1, 2, figsize=(13, 5.5))
-
-        _plot_one_yaxis(
-            ax_var, sub,
-            y_col="starvation_variance",
-            y_label="Cross-robot starvation variance (lower is fairer)",
-            title="Mean starvation vs variance",
-        )
-        ax_var.set_ylim(bottom=0.0)
-        ax_var.set_xlim(left=0.0)
-
+        fig, ax = plt.subplots(figsize=(8, 6))
         handle = _plot_one_yaxis(
-            ax_min, sub,
-            y_col="min_freshness",
-            y_label="Min freshness  =  1 − max(starvation)   (higher is fairer)",
-            title="Mean starvation vs min freshness",
+            ax, sub, y_col=y_col, y_label=y_label, title=panel_title,
         )
-        _autoscale_with_pad(ax_min, sub, "min_freshness")
-
+        if pareto:
+            _autoscale_with_pad(ax, sub, y_col)
+        else:
+            ax.set_ylim(bottom=0.0)
+            ax.set_xlim(left=0.0)
         if handle is not None:
-            cbar = fig.colorbar(handle, ax=[ax_var, ax_min], pad=0.02, fraction=0.03)
+            cbar = fig.colorbar(handle, ax=ax, pad=0.02)
             cbar.set_label("scheduler alpha", fontsize=10)
-
         fig.suptitle(
-            f"Starvation vs fairness — scenario={scenario_id}, model={model}",
+            f"scenario={scenario_id}, model={model}",
             fontsize=13, fontweight="bold",
         )
+        plt.tight_layout()
         safe_model = model.replace(".", "_").replace("/", "_")
-        out = plots_dir / f"starvation_vs_fairness__{scenario_id}__{safe_model}.png"
+        out = plots_dir / f"{name_prefix}__{scenario_id}__{safe_model}.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"Wrote {out}")
+
+
+def _plot_starvation_pareto(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
+    """Pareto plot: mean vs worst-robot (max) starvation. Bottom-left = best.
+
+    Baselines render as fixed points; dynamic-action sweeps a Pareto frontier
+    between utilitarian (low mean, high max) and Rawlsian (slightly higher
+    mean, low max).
+    """
+    _save_single_panel_plot(
+        results_csv, plots_dir,
+        name_prefix="starvation_pareto",
+        y_col="max_starvation",
+        y_label="Worst-robot starvation rate  (lower is fairer)",
+        panel_title="Pareto: mean vs worst-robot starvation",
+        pareto=True,
+    )
+
+
+def _plot_starvation_vs_variance(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
+    """Mean starvation vs cross-robot starvation variance. Bottom-left = best."""
+    _save_single_panel_plot(
+        results_csv, plots_dir,
+        name_prefix="starvation_vs_variance",
+        y_col="starvation_variance",
+        y_label="Cross-robot starvation variance (lower is fairer)",
+        panel_title="Mean starvation vs cross-robot variance",
+        pareto=False,
+    )
 
 
 @app.local_entrypoint()
@@ -581,10 +610,10 @@ def main(
     # models: str = "pi05,gr00t-n1.7",
     models: str = "pi05",
     # scenarios: str = "1f9s,5f5s",
-    scenarios: str = "1f9s",
+    scenarios: str = "5f5s",
     alpha_grid: str = "0.0,0.25,0.5,0.75,1.0",
     seeds: str = "42",
-    output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_1f9s",
+    output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_5f5s",
     port: int = 8080,
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> None:
@@ -648,11 +677,11 @@ def main(
                 tar.extractall(run_dir)
             result["artifact_path"] = str(run_dir)
         rows.append(result)
-        mf = result.get("min_freshness", "")
+        max_s = result.get("max_starvation", "")
         starv = result.get("mean_starvation", "")
         print(
             f"{result['status']}: {result['run_id']} "
-            f"min_freshness={mf if mf == '' else f'{float(mf):.4f}'} "
+            f"max_starvation={max_s if max_s == '' else f'{float(max_s):.4f}'} "
             f"mean_starvation={starv if starv == '' else f'{float(starv):.4f}'}"
         )
 
@@ -663,4 +692,5 @@ def main(
     print(f"Wrote {latest_csv}")
     print(f"Wrote {sweep_csv}")
 
-    _plot_starvation_vs_fairness(latest_csv, out / "plots")
+    _plot_starvation_pareto(latest_csv, out / "plots")
+    _plot_starvation_vs_variance(latest_csv, out / "plots")
