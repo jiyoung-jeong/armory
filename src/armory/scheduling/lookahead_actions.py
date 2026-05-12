@@ -5,13 +5,14 @@ import itertools
 import logging
 import multiprocessing as mp
 import time
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.latency import LatencyTracker
-from armory.scheduling.mirror import ActionChunk, Mirror, Robot
+from armory.scheduling.mirror import ActionChunk, Checkpoint, Mirror, Robot
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
@@ -51,10 +52,14 @@ class ScheduledBatch:
 
 
 class IncrementalSearch:
-    """Generator-based DFS over batches in ``[start_time, start_time + horizon]``.
+    """Frontier-based BFS over batches in ``[start_time, start_time + horizon]``.
 
-    The search yields after every node visited, so the caller can stop it
-    when slack runs out. ``best`` is safe to read at any point.
+    Each frontier entry carries a Mirror ``Checkpoint`` so we can resume from
+    any node. ``step`` pops the front node, restores its snapshot, expands
+    every candidate child, evaluates each, and pushes the child checkpoints
+    onto the back of the frontier. BFS gives anytime "best at fully-explored
+    depth" — the caller can stop whenever slack runs out. ``best`` is safe
+    to read at any point.
     """
 
     def __init__(
@@ -63,7 +68,7 @@ class IncrementalSearch:
         latency_tracker: LatencyTracker,
         start_time: float,
         horizon: float,
-        max_depth: int = 3,
+        max_depth: int = 5,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = start_time
@@ -81,20 +86,19 @@ class IncrementalSearch:
         self.best_schedule: list[ScheduledBatch] = []
         self.nodes_visited = 0
 
-        self._iter: Iterator[None] | None = self._dfs([], start_time, max_depth)
+        root_ckpt = self.snapshot.checkpoint()
+        self.frontier: deque[tuple[tuple[ScheduledBatch, ...], float, Checkpoint]] = deque(
+            [((), start_time, root_ckpt)]
+        )
 
     def is_done(self) -> bool:
-        return self._iter is None
+        return not self.frontier
 
     def step(self, budget_nodes: int = 32) -> None:
-        if self._iter is None:
-            return
-        for _ in range(budget_nodes):
-            try:
-                next(self._iter)
-            except StopIteration:
-                self._iter = None
-                return
+        visited = 0
+        while visited < budget_nodes and self.frontier:
+            schedule, end_time, ckpt = self.frontier.popleft()
+            visited += self._expand(schedule, end_time, ckpt)
 
     def best(self) -> list[ScheduledBatch]:
         return list(self.best_schedule)
@@ -107,28 +111,34 @@ class IncrementalSearch:
             tuple(sorted_ids[:i]) for i in range(1, min(self.max_batch_size, len(sorted_ids)) + 1)
         )
 
-    def _dfs(self, schedule: list[ScheduledBatch], now: float, depth: int) -> Iterator[None]:
-        if depth == 0:
-            return
+    def _expand(
+        self,
+        schedule: tuple[ScheduledBatch, ...],
+        end_time: float,
+        parent_ckpt: Checkpoint,
+    ) -> int:
+        self.snapshot.restore(parent_ckpt)
+        count = 0
         for batch in self._candidates():
-            next_time = now + self.latency_tracker.infer_latency(len(batch))
+            next_time = end_time + self.latency_tracker.infer_latency(len(batch))
             if next_time > self.end_time:
                 continue
 
-            ckpt = self.snapshot.checkpoint()
             chunks = tuple(self.snapshot.queue_batch(list(batch), next(self._search_batch_id)))
             self.snapshot.fast_forward(next_time)
 
-            new_schedule = schedule + [ScheduledBatch(batch, chunks)]
+            new_schedule = schedule + (ScheduledBatch(batch, chunks),)
             self.nodes_visited += 1
+            count += 1
             self._evaluate(new_schedule, next_time)
-            yield
 
-            yield from self._dfs(new_schedule, next_time, depth - 1)
+            if len(new_schedule) < self.max_depth:
+                self.frontier.append((new_schedule, next_time, self.snapshot.checkpoint()))
 
-            self.snapshot.restore(ckpt)
+            self.snapshot.restore(parent_ckpt)
+        return count
 
-    def _evaluate(self, schedule: list[ScheduledBatch], now: float) -> None:
+    def _evaluate(self, schedule: tuple[ScheduledBatch, ...], now: float) -> None:
         gpu_time = now - self.start_time
         if gpu_time <= 0:
             return
@@ -163,34 +173,39 @@ class LookaheadActionsScheduler(RequestScheduler):
         *,
         horizon: float = 1.0,
         max_depth: int = 5,
+        max_in_flight: int = 5,
         step_budget_nodes: int = 32,
         scheduling_buffer: float = 0.01,
     ) -> None:
         super().__init__(batch_queue, max_batch_size, min_ex=min_ex)
         self.horizon = horizon
         self.max_depth = max_depth
+        self.max_in_flight = max_in_flight
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
     ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
-        # The search plans far enough ahead that ``schedulable_requests`` filtering
-        # discards future batches it explicitly counted on (e.g. dispatching robot_X
-        # again at time t+infer_lat after its current chunk would be midway through).
-        # We trust the planner's whole schedule and dispatch every batch it returns,
-        # mapping robot_ids back through the most-recent SlotRequest the scheduler
-        # has on file.
+        # We plan up to ``max_depth`` batches ahead but only commit the first
+        # ``max_in_flight - in_flight`` of them — the rest are model-predictive
+        # context that informs the choice of the immediate dispatches and will
+        # be re-planned on the next tick. Robot IDs in the plan map back through
+        # the most-recent SlotRequest the scheduler has on file.
         if not self._latest_requests:
             return [], {"reason": "no_requests"}
 
         next_avail = self.mirror.next_time_server_available()
         slack = next_avail - time.time()
+        in_flight = self.mirror.in_flight_batches_count
+        dispatch_budget = max(0, self.max_in_flight - in_flight)
 
         logger.debug(
-            "search start: robots=%d slack=%+.3fs | %s",
+            "search start: robots=%d slack=%+.3fs in_flight=%d budget=%d | %s",
             len(self.mirror.robots),
             slack,
+            in_flight,
+            dispatch_budget,
             _mirror_summary(self.mirror, next_avail),
         )
 
@@ -198,12 +213,19 @@ class LookaheadActionsScheduler(RequestScheduler):
             "rule": "lookahead_actions",
             "horizon": self.horizon,
             "max_depth": self.max_depth,
+            "max_in_flight": self.max_in_flight,
             "step_budget_nodes": self.step_budget_nodes,
             "scheduling_buffer": self.scheduling_buffer,
             "slack_s": slack,
             "next_server_available": next_avail,
+            "in_flight": in_flight,
+            "dispatch_budget": dispatch_budget,
             "mirror_state": self.mirror.to_dict(),
         }
+
+        if dispatch_budget == 0:
+            notes["mode"] = "at_in_flight_cap"
+            return [], notes
 
         if slack < self.scheduling_buffer:
             notes["mode"] = "greedy_no_slack"
@@ -241,7 +263,7 @@ class LookaheadActionsScheduler(RequestScheduler):
 
         notes["mode"] = "search"
         batches: list[list[SlotRequest]] = []
-        for sb in best:
+        for sb in best[:dispatch_budget]:
             batch = [
                 self._latest_requests[rid] for rid in sb.robot_ids if rid in self._latest_requests
             ]
