@@ -67,7 +67,7 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
-        self._min_ex = min_execution_horizon
+        self._min_execution_horizon = min_execution_horizon
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -266,7 +266,7 @@ class GpuWorker:
         return (
             sr.is_padding
             or sd.robot_id not in self._last_served_action_index
-            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_ex
+            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_execution_horizon
         )
 
     def _update_state(

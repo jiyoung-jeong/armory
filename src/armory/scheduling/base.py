@@ -36,7 +36,7 @@ class RequestScheduler(ABC):
         # an empty ResponseBatch which still pops in_flight, freeing the
         # GreedyDeadline gate to emit again — a tight loop that buries the
         # GPU's batch_queue.
-        self._min_ex = min_execution_horizon
+        self._min_execution_horizon = min_execution_horizon
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)
@@ -82,7 +82,7 @@ class RequestScheduler(ABC):
         logger.debug(
             "schedule stage=mirror_schedulable latest_requests=%d", len(self._latest_requests)
         )
-        candidates = self.mirror.schedulable_requests(self._latest_requests, min_ex=self._min_ex)
+        candidates = self.mirror.schedulable_requests(self._latest_requests, min_execution_horizon=self._min_execution_horizon)
         candidate_ids = [r.robot_id for r in candidates]
         logger.debug("schedule stage=mirror_deadlines robots=%d", len(self.mirror.robots))
         deadlines = self.mirror.deadlines() if self.mirror.robots else {}
