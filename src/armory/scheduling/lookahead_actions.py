@@ -16,7 +16,6 @@ from armory.scheduling.mirror import ActionChunk, Checkpoint, Mirror, Robot
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 def _action_time(robot: Robot) -> float:

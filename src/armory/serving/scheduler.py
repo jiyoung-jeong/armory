@@ -30,7 +30,6 @@ from armory.utils import logging_config
 from armory_client.messages import ResetRequest
 
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
 
 SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "max-batch": MaxBatchScheduler,
