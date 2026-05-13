@@ -1,13 +1,14 @@
-"""Run server/client scheduler sweeps on Modal.
+"""Run server/client scheduler sweeps on Modal L40S GPUs (real PI05 + LIBERO).
+
+The mock-CPU version of this script lives at ``modal_starvation_sweep_mock.py``;
+this file is the GPU sibling and uses real weights + the LIBERO simulator.
 
 Example:
-    modal run scripts/modal_sweep.py \
-        --schedulers fixed-max-batch,greedy-deadline,round-robin \
-        --experiment-configs configs/experiments/mock/short.json \
-        --num-robots 1,2,3,4,5,6,7,8,9,10 \
-        --server-config configs/server/mock.json \
-        --seeds 7,42 \
-        --output-dir experiments/sweeps/big_mock
+    modal run scripts/experiments/modal_starvation_sweep.py \
+        --schedulers fixed-max-batch,greedy-deadline,lookahead-actions \
+        --num-robots 1,2,4,6,8,10 \
+        --seeds 7 \
+        --output-dir experiments/sweeps/l40s
 """
 
 from __future__ import annotations
@@ -25,41 +26,168 @@ from typing import Any
 
 import modal
 
-APP_NAME = "armory-scheduler-sweep"
-ARTIFACTS_VOLUME_NAME = "armory-scheduler-sweep-artifacts"
+APP_NAME = "armory-scheduler-sweep-l40s"
+ARTIFACTS_VOLUME_NAME = "armory-scheduler-sweep-l40s-artifacts"
+CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
+CHECKPOINT_VOLUME_PATH = "/checkpoints"
+GPU = "L40S"
+REGION = "us-east"
+
 REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_sweep")
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
 ARTIFACT_SKIP_SUFFIXES = {".mp4", ".parquet", ".npz"}
-PYTHONPATH = ":".join(
-    [
-        str(REMOTE_ROOT / "src"),
-        str(REMOTE_ROOT / "src/backends"),
-        str(REMOTE_ROOT / "packages/armory-client/src"),
+
+# Each case gets its own (server_port, client_port) pair off this base so two
+# accidentally-colocated cases can't bind the same port.
+BASE_PORT = 8000
+# Cold-start budget for the server subprocess: model download, JIT compile,
+# warmup, and per-batch-size profiling. Generous because the first time a
+# checkpoint is pulled it can take many minutes.
+SERVER_READY_TIMEOUT_S = 30 * 60
+# Modal 1.x can't vary cpu per spawn, so we bake a single count into the client
+# function. The sweep asserts max(num_robots) + 2 <= CLIENT_CPU. Bump this if
+# you're sweeping more than 10 robots; smaller cases overpay slightly.
+CLIENT_CPU = 16
+# LIBERO/mujoco does GPU rendering, so the client runs on a small GPU. Without
+# one the per-step time inflates well above the policy's control period.
+CLIENT_GPU = "A10G"
+# Modal's account-wide GPU cap is shared across server + client. Each case
+# consumes one L40S + one A10G simultaneously, so concurrent cases must be
+# capped at GPU_CAP // 2 — otherwise a sweep can deadlock with all GPUs held
+# by servers waiting for clients that can never be scheduled.
+GPU_CAP = 10
+MAX_CONCURRENT_CASES = GPU_CAP // 2
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+REQUIREMENTS_FILE = REPO_ROOT / "requirements-modal.txt"
+
+# Installed separately (CUDA wheels, workspace packages, or not on PyPI).
+_MODAL_EXCLUDE = [
+    "torch",
+    "jax",
+    "jaxlib",
+    "jax-cuda12-plugin",
+    "jax-cuda12-pjrt",
+    "openpi",
+    "openpi-client",
+    "gr00t",
+    "libero",
+    "av",
+]
+
+
+def generate_requirements() -> None:
+    """Export a flat requirements.txt for Modal (excludes packages installed separately)."""
+    cmd = [
+        "uv",
+        "export",
+        "--no-hashes",
+        "--no-dev",
+        "--no-emit-workspace",
+        *[arg for pkg in _MODAL_EXCLUDE for arg in ("--no-emit-package", pkg)],
+        "-o",
+        str(REQUIREMENTS_FILE),
+        "-q",
     ]
+    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
+    print(f"Wrote {REQUIREMENTS_FILE}")
+
+
+if modal.is_local():
+    generate_requirements()
+
+
+_base = (
+    # CUDA 12.2 devel base instead of debian-slim so that the nvidia EGL ICD
+    # is actually present — debian-slim's libegl1 only ships the mesa
+    # software path, which is why mujoco rendering was so slow even with
+    # MUJOCO_GL=egl set.
+    modal.Image.from_registry(
+        "nvidia/cuda:12.2.0-devel-ubuntu22.04",
+        add_python="3.11",
+    )
+    .apt_install(
+        "git",
+        "libgl1",
+        "libglib2.0-0",
+        "libglfw3",
+        "libosmesa6",
+        "libegl1",
+        "libegl1-mesa-dev",
+        "libgles2-mesa-dev",
+        "libglvnd-dev",
+        "build-essential",
+        # Modal's add_python ships a CPython compiled with clang, so pip uses
+        # clang to build C extensions (e.g. evdev). build-essential only
+        # provides gcc, so we add clang explicitly.
+        "clang",
+        "cmake",
+    )
+    .pip_install("torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cu124")
+    .pip_install(
+        "jax[cuda12]==0.5.3",
+        find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
+    )
 )
 
-
-def _ignore_modal_copy(path: pathlib.Path) -> bool:
-    parts = set(path.parts)
-    return bool(parts & {".git", ".venv", ".ruff_cache", ".pytest_cache", "__pycache__"})
-
-
 image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
-    .pip_install_from_requirements("requirements-modal-mock.txt")
+    _base.pip_install("av==17.0.0", "pytest==9.0.3")
+    .pip_install_from_requirements(str(REQUIREMENTS_FILE))
     .workdir(str(REMOTE_ROOT))
-    .env({"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"})
-    .add_local_dir("packages", str(REMOTE_ROOT / "packages"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("src", str(REMOTE_ROOT / "src"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("configs", str(REMOTE_ROOT / "configs"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("scripts", str(REMOTE_ROOT / "scripts"), copy=True, ignore=_ignore_modal_copy)
+    .env(
+        {
+            "MPLBACKEND": "Agg",
+            "OPENPI_DATA_HOME": CHECKPOINT_VOLUME_PATH,
+            "JAX_COMPILATION_CACHE_DIR": f"{CHECKPOINT_VOLUME_PATH}/.cache/jax_compilation",
+            "TORCHINDUCTOR_CACHE_DIR": f"{CHECKPOINT_VOLUME_PATH}/.cache/torch_inductor",
+            "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True --xla_gpu_enable_latency_hiding_scheduler=true",
+            "GCLOUD_ANONYMOUS_ACCESS": "True",
+            "JAX_PLATFORMS": "cuda",
+            "TF_CPP_MIN_LOG_LEVEL": "2",
+            "ABSL_FLAGS_VERBOSITY": "0",
+            # MuJoCo defaults to OSMesa software rendering, which is far too
+            # slow for the LIBERO sim — easily 100ms+ per step on the client.
+            # Force hardware EGL on the A10G; libegl1 is in apt_install above.
+            "MUJOCO_GL": "egl",
+            "PYOPENGL_PLATFORM": "egl",
+        }
+    )
+    .add_local_python_source(
+        "armory",
+        "armory_client",
+        "sims",
+        "openpi",
+        "openpi_client",
+        "libero",
+        "gr00t",
+        "openpi_adapter",
+        "gr00t_adapter",
+    )
+    # add_local_python_source ships only .py files, so the libero data dirs
+    # have to be mounted explicitly. Paths mirror the package layout inside
+    # /root/libero/libero, which is where libero auto-discovers them at
+    # import time via os.path.dirname(__file__).
+    .add_local_dir(
+        str(REPO_ROOT / "third_party/libero/libero/libero/bddl_files"),
+        remote_path="/root/libero/libero/bddl_files",
+    )
+    .add_local_dir(
+        str(REPO_ROOT / "third_party/libero/libero/libero/init_files"),
+        remote_path="/root/libero/libero/init_files",
+    )
+    .add_local_dir(
+        str(REPO_ROOT / "third_party/libero/libero/libero/assets"),
+        remote_path="/root/libero/libero/assets",
+    )
+    .add_local_dir(str(REPO_ROOT / "configs"), remote_path=str(REMOTE_ROOT / "configs"))
+    .add_local_dir(str(REPO_ROOT / "scripts"), remote_path=str(REMOTE_ROOT / "scripts"))
 )
 
 app = modal.App(APP_NAME)
 
 artifacts_volume = modal.Volume.from_name(ARTIFACTS_VOLUME_NAME, create_if_missing=True)
+checkpoint_volume = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_missing=True)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -77,57 +205,6 @@ class SweepCase:
 
 def _parse_csv(value: str, *, cast=str) -> list[Any]:
     return [cast(item.strip()) for item in value.split(",") if item.strip()]
-
-
-def _run_subprocess(
-    args: list[str], *, log_path: pathlib.Path, timeout_s: int | None = None
-) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w") as log_file:
-        result = subprocess.run(
-            args,
-            cwd=REMOTE_ROOT,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout_s,
-            env={
-                **{k: v for k, v in __import__("os").environ.items()},
-                **dict(PYTHONPATH=PYTHONPATH, MPLBACKEND="Agg"),
-            },
-        )
-    if result.returncode != 0:
-        raise subprocess.CalledProcessError(result.returncode, args)
-
-
-def _write_command_manifest(
-    run_dir: pathlib.Path, *, server_cmd: list[str], client_cmd: list[str]
-) -> None:
-    commands = {
-        "cwd": str(REMOTE_ROOT),
-        "env": {"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"},
-        "server": {"argv": server_cmd, "shell": shlex.join(server_cmd)},
-        "client": {"argv": client_cmd, "shell": shlex.join(client_cmd)},
-    }
-    (run_dir / "commands.json").write_text(json.dumps(commands, indent=2))
-    (run_dir / "commands.sh").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                f"cd {shlex.quote(str(REMOTE_ROOT))}",
-                f"export PYTHONPATH={shlex.quote(PYTHONPATH)}",
-                "export MPLBACKEND=Agg",
-                "",
-                "# Start this first, then run the client command in another shell.",
-                f"SERVER_CMD={shlex.quote(shlex.join(server_cmd))}",
-                f"CLIENT_CMD={shlex.quote(shlex.join(client_cmd))}",
-                'printf "server: %s\\n" "$SERVER_CMD"',
-                'printf "client: %s\\n" "$CLIENT_CMD"',
-            ]
-        )
-        + "\n"
-    )
 
 
 def _copy_run_dir(src_root: pathlib.Path, dest_root: pathlib.Path) -> None:
@@ -157,14 +234,16 @@ def _build_server_cmd(srv_cfg: dict[str, Any], *, port: int, scheduler: str) -> 
         str(port),
         "--env",
         srv_cfg.get("env", "LIBERO"),
+        "--model",
+        srv_cfg.get("model", "PI05"),
         "--max-batch-size",
         str(srv_cfg.get("max_batch_size", 1)),
         "--scheduling-algorithm",
         scheduler,
-        f"policy:{srv_cfg.get('policy_type', 'default')}",
+        "policy:default",
     ]
-    for k, v in srv_cfg.get("policy", {}).items():
-        cmd += [f"--policy.{k.replace('_', '-')}", str(v)]
+    if "num_steps" in srv_cfg:
+        cmd += ["--num-steps", str(srv_cfg["num_steps"])]
     return cmd
 
 
@@ -199,6 +278,7 @@ def _config_num_robots(cfg_path: str, fallback: int) -> int:
 
 def _build_client_cmd(
     *,
+    host: str,
     port: int,
     seed: int,
     output_dir: pathlib.Path,
@@ -209,11 +289,11 @@ def _build_client_cmd(
         sys.executable,
         "scripts/run_libero.py",
         "--host",
-        "127.0.0.1",
+        host,
         "--port",
         str(port),
         "--env",
-        "mock",
+        "libero",
         "--overwrite",
         "--progress-type",
         "logging",
@@ -311,94 +391,260 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase) -> dict[str, Any]:
     return summary
 
 
+def _spawn_subprocess_with_streaming(
+    cmd: list[str],
+    *,
+    log_path: pathlib.Path,
+    prefix: str,
+) -> subprocess.Popen:
+    """Popen a subprocess, tee-streaming its combined stdout to print() + a file.
+
+    Modal captures the Python ``print`` stream for its log UI, so subprocess
+    output has to flow through it to show up there. We also persist a copy on
+    the artifacts volume.
+    """
+    import threading  # noqa: PLC0415
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.Popen(
+        cmd,
+        cwd=REMOTE_ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    def _tee() -> None:
+        with log_path.open("w") as log_file:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                print(f"[{prefix}] {line}", end="", flush=True)
+                log_file.write(line)
+                log_file.flush()
+
+    threading.Thread(target=_tee, daemon=True).start()
+    return proc
+
+
+def _wait_for_server_ready(proc: subprocess.Popen, port: int, timeout_s: int) -> None:
+    """Poll the server's /metadata endpoint until it answers or the process dies."""
+    import time as _time
+
+    import requests  # noqa: PLC0415
+
+    start = _time.time()
+    deadline = start + timeout_s
+    last_print = 0.0
+    while _time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"server exited with code {proc.returncode} before becoming ready"
+            )
+        try:
+            requests.get(f"http://127.0.0.1:{port}/metadata", timeout=2).raise_for_status()
+            print(f"[ready-probe] /metadata responded after {_time.time() - start:.1f}s", flush=True)
+            return
+        except Exception:  # noqa: BLE001
+            now = _time.time()
+            if now - last_print > 30:
+                print(
+                    f"[ready-probe] still waiting for /metadata on :{port} "
+                    f"(elapsed {now - start:.0f}s / budget {timeout_s}s)",
+                    flush=True,
+                )
+                last_print = now
+            _time.sleep(2)
+    raise TimeoutError(f"server failed to respond on port {port} within {timeout_s}s")
+
+
+def _failure_summary(case: SweepCase, error: str) -> dict[str, Any]:
+    return {
+        "run_id": case.run_id,
+        "scheduler": case.scheduler,
+        "experiment_config": case.experiment_config,
+        "num_robots": case.num_robots,
+        "seed": case.seed,
+        "status": "failed",
+        "error": error,
+    }
+
+
 @app.function(
     image=image,
-    timeout=60 * 60,
+    timeout=2 * 60 * 60,
     cpu=4,
-    memory=8192,
-    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
+    memory=16384,
+    gpu=GPU,
+    region=REGION,
+    max_containers=MAX_CONCURRENT_CASES,
+    volumes={
+        str(REMOTE_ARTIFACTS_ROOT): artifacts_volume,
+        CHECKPOINT_VOLUME_PATH: checkpoint_volume,
+    },
 )
-def run_case(
+def run_server(
     case: SweepCase,
     *,
     server_config: str,
     port: int,
     stamp: str,
-    max_batch_size_override: int | None = None,
-    max_steps_override: int | None = None,
+    max_batch_size_override: int | None,
+    urls: modal.Dict,
+    shutdown: modal.Dict,
 ) -> dict[str, Any]:
-    exp_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / case.experiment_config).read_text())
-    srv_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / server_config).read_text())
+    """L40S container: start the policy server, forward its port, wait for client."""
+    import time as _time
 
+    print(f"[server {case.run_id}] container started, port={port}", flush=True)
+
+    srv_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / server_config).read_text())
     if max_batch_size_override is not None:
         srv_cfg["max_batch_size"] = max_batch_size_override
-    if max_steps_override is not None:
-        exp_cfg["experiment"]["max_steps"] = max_steps_override
-
-    exp_cfg = _expand_experiment_config(exp_cfg, case.num_robots)
-    max_steps = int(exp_cfg["experiment"]["max_steps"])
 
     run_dir = REMOTE_OUTPUT_ROOT / case.run_id
-    output_dir = run_dir / "output"
     log_dir = run_dir / "logs"
     run_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
-
-    saved_exp_config = run_dir / "experiment_config.json"
     (run_dir / "case.json").write_text(json.dumps(dataclasses.asdict(case), indent=2))
-    saved_exp_config.write_text(json.dumps(exp_cfg, indent=2))
     (run_dir / "server_config.json").write_text(json.dumps(srv_cfg, indent=2))
 
     server_cmd = _build_server_cmd(srv_cfg, port=port, scheduler=case.scheduler)
-    client_cmd = _build_client_cmd(
-        port=port,
-        seed=case.seed,
-        output_dir=output_dir,
-        experiment_config_path=saved_exp_config,
-        max_steps=max_steps,
+    (run_dir / "server_command.json").write_text(
+        json.dumps({"argv": server_cmd, "shell": shlex.join(server_cmd)}, indent=2)
     )
-    _write_command_manifest(run_dir, server_cmd=server_cmd, client_cmd=client_cmd)
+    print(f"[server {case.run_id}] launching: {shlex.join(server_cmd)}", flush=True)
 
-    server_log = log_dir / "server.log"
-    with server_log.open("w") as log_file:
-        server_proc = subprocess.Popen(
-            server_cmd,
-            cwd=REMOTE_ROOT,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env={
-                **{k: v for k, v in __import__("os").environ.items()},
-                **dict(PYTHONPATH=PYTHONPATH, MPLBACKEND="Agg"),
-            },
-        )
+    status = "ok"
+    error: str | None = None
+    proc: subprocess.Popen | None = None
     try:
-        _run_subprocess(client_cmd, log_path=log_dir / "client.log", timeout_s=60 * 45)
-        summary = _summarize_run(output_dir, case)
-        summary["status"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        summary = {
-            "run_id": case.run_id,
-            "scheduler": case.scheduler,
-            "experiment_config": case.experiment_config,
-            "num_robots": case.num_robots,
-            "seed": case.seed,
-            "status": "failed",
-            "error": repr(exc),
-        }
-    finally:
-        server_proc.terminate()
+        proc = _spawn_subprocess_with_streaming(
+            server_cmd, log_path=log_dir / "server.log", prefix=f"srv:{case.run_id}"
+        )
         try:
-            server_proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            server_proc.kill()
-            server_proc.wait(timeout=20)
+            _wait_for_server_ready(proc, port, SERVER_READY_TIMEOUT_S)
+            with modal.forward(port, unencrypted=True) as tunnel:
+                host, fport = tunnel.tcp_socket
+                print(
+                    f"[server {case.run_id}] tunnel up -> {host}:{fport}; "
+                    f"publishing URL and waiting for client",
+                    flush=True,
+                )
+                urls[case.run_id] = (host, fport)
+                # Block until the client signals it's done — or until the server
+                # dies under us.
+                while case.run_id not in shutdown:
+                    if proc.poll() is not None:
+                        error = f"server exited unexpectedly (code={proc.returncode})"
+                        status = "failed"
+                        print(f"[server {case.run_id}] {error}", flush=True)
+                        break
+                    _time.sleep(2)
+                else:
+                    print(f"[server {case.run_id}] shutdown signal received", flush=True)
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        error = repr(exc)
+        status = "failed"
+        print(f"[server {case.run_id}] FAILED: {error}", flush=True)
+        # Poison the URL slot so the client orchestrator doesn't hang.
+        urls[case.run_id] = ("", 0)
 
     dest = REMOTE_ARTIFACTS_ROOT / stamp / case.run_id
     _copy_run_dir(run_dir, dest)
     artifacts_volume.commit()
-    summary["artifact_remote_path"] = str(dest)
-    return summary
+    print(f"[server {case.run_id}] exiting (status={status})", flush=True)
+
+    return {"run_id": case.run_id, "status": status, "error": error}
+
+
+@app.function(
+    image=image,
+    timeout=2 * 60 * 60,
+    cpu=CLIENT_CPU,
+    memory=16384,
+    gpu=CLIENT_GPU,
+    region=REGION,
+    max_containers=MAX_CONCURRENT_CASES,
+    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
+)
+def run_client(
+    case: SweepCase,
+    *,
+    server_host: str,
+    server_port: int,
+    stamp: str,
+    max_steps_override: int | None,
+    shutdown: modal.Dict,
+) -> dict[str, Any]:
+    """CPU container: connect to the server tunnel, run the LIBERO client."""
+    print(
+        f"[client {case.run_id}] container started, "
+        f"connecting to {server_host}:{server_port}",
+        flush=True,
+    )
+    try:
+        exp_cfg: dict[str, Any] = json.loads(
+            (REMOTE_ROOT / case.experiment_config).read_text()
+        )
+        if max_steps_override is not None:
+            exp_cfg["experiment"]["max_steps"] = max_steps_override
+        exp_cfg = _expand_experiment_config(exp_cfg, case.num_robots)
+        max_steps = int(exp_cfg["experiment"]["max_steps"])
+
+        run_dir = REMOTE_OUTPUT_ROOT / case.run_id
+        output_dir = run_dir / "output"
+        log_dir = run_dir / "logs"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        saved_exp_config = run_dir / "experiment_config.json"
+        saved_exp_config.write_text(json.dumps(exp_cfg, indent=2))
+
+        client_cmd = _build_client_cmd(
+            host=server_host,
+            port=server_port,
+            seed=case.seed,
+            output_dir=output_dir,
+            experiment_config_path=saved_exp_config,
+            max_steps=max_steps,
+        )
+        (run_dir / "client_command.json").write_text(
+            json.dumps({"argv": client_cmd, "shell": shlex.join(client_cmd)}, indent=2)
+        )
+        print(f"[client {case.run_id}] launching: {shlex.join(client_cmd)}", flush=True)
+
+        try:
+            client_proc = _spawn_subprocess_with_streaming(
+                client_cmd,
+                log_path=log_dir / "client.log",
+                prefix=f"cli:{case.run_id}",
+            )
+            rc = client_proc.wait(timeout=60 * 75)
+            if rc != 0:
+                raise subprocess.CalledProcessError(rc, client_cmd)
+            summary = _summarize_run(output_dir, case)
+            summary["status"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            summary = _failure_summary(case, repr(exc))
+
+        dest = REMOTE_ARTIFACTS_ROOT / stamp / case.run_id
+        _copy_run_dir(run_dir, dest)
+        artifacts_volume.commit()
+        summary["artifact_remote_path"] = str(dest)
+        print(f"[client {case.run_id}] exiting (status={summary.get('status')})", flush=True)
+        return summary
+    finally:
+        # Always release the server, even if the client crashed.
+        shutdown[case.run_id] = True
 
 
 def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
@@ -417,17 +663,21 @@ def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
 
 @app.local_entrypoint()
 def main(
-    schedulers: str = "fixed-max-batch,greedy-deadline,round-robin",
+    # schedulers: str = "max-batch,greedy-deadline,lookahead-actions",
+    schedulers: str = "greedy-deadline",
     experiment_configs: str = "configs/experiments/mock/short.json",
-    num_robots: str = "2,4,6",
-    server_config: str = "configs/server/mock.json",
+    # num_robots: str = "1,2,3,4,5",
+    num_robots: str = "10",
+    server_config: str = "configs/server/l40s_libero_pi05.json",
     seeds: str = "7",
-    output_dir: str = "experiments/sweeps/mock",
-    port: int = 8080,
+    output_dir: str = "experiments/sweeps/l40s",
     max_batch_size: int | None = None,
-    max_steps: int | None = None,
+    max_steps: int | None = 150,
 ) -> None:
     """Run the Cartesian product of schedulers, experiment_configs, num_robots, and seeds."""
+    import time as _time  # noqa: PLC0415
+    from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+
     out = pathlib.Path(output_dir)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     artifacts_dir = out / "artifacts"
@@ -443,24 +693,129 @@ def main(
         for n in _parse_csv(num_robots, cast=int)
         for seed in _parse_csv(seeds, cast=int)
     ]
+    if not cases:
+        raise ValueError("sweep is empty (check schedulers/experiment_configs/num_robots/seeds)")
+
+    # Client CPU is fixed at module load (Modal 1.x can't vary cpu= per spawn).
+    # Bail out early if the sweep needs more cpus than CLIENT_CPU was sized for.
+    max_robots = max(case.num_robots for case in cases)
+    required_cpu = max_robots + 2
+    if required_cpu > CLIENT_CPU:
+        raise ValueError(
+            f"Sweep needs at least {required_cpu} client cpus "
+            f"(max num_robots={max_robots} + 2) but CLIENT_CPU={CLIENT_CPU}. "
+            "Bump CLIENT_CPU at the top of this script."
+        )
+    print(
+        f"Sweeping {len(cases)} cases | client cpu={CLIENT_CPU} "
+        f"(required >= {required_cpu})"
+    )
 
     rows: list[dict[str, Any]] = []
-    for result in run_case.map(
-        cases,
-        kwargs={
-            "server_config": server_config,
-            "port": port,
-            "stamp": stamp,
-            "max_batch_size_override": max_batch_size,
-            "max_steps_override": max_steps,
-        },
-        order_outputs=False,
-    ):
-        rows.append(result)
+    with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
+        # Stagger ports so two accidentally-colocated cases can't collide.
+        case_ports = {case.run_id: BASE_PORT + i for i, case in enumerate(cases)}
+        case_start_time: dict[str, float] = {}
+
+        server_handles = {}
+        for case in cases:
+            server_handles[case.run_id] = run_server.spawn(
+                case,
+                server_config=server_config,
+                port=case_ports[case.run_id],
+                stamp=stamp,
+                max_batch_size_override=max_batch_size,
+                urls=urls,
+                shutdown=shutdown,
+            )
+            case_start_time[case.run_id] = _time.time()
         print(
-            f"{result['status']}: {result['run_id']} "
-            f"starvation={_safe_float(result.get('starvation_rate')):.3f} "
+            f"Spawned {len(server_handles)} server functions; "
+            f"orchestrating clients as URLs land",
+            flush=True,
         )
+
+        def _orchestrate(case: SweepCase) -> dict[str, Any]:
+            handle = server_handles[case.run_id]
+            # No fixed deadline: with a 10-GPU concurrency cap a queued server
+            # may not start for tens of minutes. Instead, poll the server
+            # function handle so we can detect "function completed without
+            # publishing URL" and bail.
+            poll_interval = 5
+            print(f"[orch {case.run_id}] waiting for server tunnel URL", flush=True)
+            last_print = _time.time()
+            while case.run_id not in urls:
+                try:
+                    server_result = handle.get(timeout=0)
+                    # Server returned without publishing — treat as failure.
+                    return _failure_summary(
+                        case,
+                        f"server completed without URL: {server_result!r}",
+                    )
+                except TimeoutError:
+                    # Modal's poll_function raises builtin TimeoutError when the
+                    # call hasn't completed yet (queued or in flight) — keep waiting.
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    return _failure_summary(case, f"server function raised: {exc!r}")
+                now = _time.time()
+                if now - last_print > 60:
+                    print(
+                        f"[orch {case.run_id}] still waiting for URL "
+                        f"(elapsed {now - case_start_time[case.run_id]:.0f}s)",
+                        flush=True,
+                    )
+                    last_print = now
+                _time.sleep(poll_interval)
+
+            server_host, server_port = urls[case.run_id]
+            if not server_host:
+                shutdown[case.run_id] = True
+                return _failure_summary(case, "server failed to start (poison URL)")
+
+            print(
+                f"[orch {case.run_id}] server up at {server_host}:{server_port}; "
+                f"spawning client",
+                flush=True,
+            )
+            try:
+                return run_client.remote(
+                    case,
+                    server_host=server_host,
+                    server_port=server_port,
+                    stamp=stamp,
+                    max_steps_override=max_steps,
+                    shutdown=shutdown,
+                )
+            except Exception as exc:  # noqa: BLE001
+                shutdown[case.run_id] = True
+                return _failure_summary(case, f"client crashed: {exc!r}")
+
+        with ThreadPoolExecutor(max_workers=len(cases)) as ex:
+            futures = {ex.submit(_orchestrate, case): case for case in cases}
+            for fut in as_completed(futures):
+                result = fut.result()
+                rows.append(result)
+                msg = (
+                    f"{result['status']}: {result['run_id']} "
+                    f"starvation={_safe_float(result.get('starvation_rate')):.3f}"
+                )
+                if result.get("status") != "ok":
+                    msg += f" error={result.get('error')!r}"
+                print(msg, flush=True)
+
+        # Drain server handles. Shutdown signals were already posted; this just
+        # surfaces server-side exceptions if any.
+        for run_id, handle in server_handles.items():
+            try:
+                server_result = handle.get(timeout=300)
+                if server_result.get("status") != "ok":
+                    print(
+                        f"  server {run_id}: status={server_result.get('status')} "
+                        f"error={server_result.get('error')!r}"
+                    )
+            except Exception as exc:  # noqa: BLE001
+                print(f"  server {run_id} cleanup failed: {exc!r}")
 
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     print(f"Downloading artifacts from volume '{ARTIFACTS_VOLUME_NAME}/{stamp}' -> {artifacts_dir}")

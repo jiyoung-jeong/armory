@@ -48,7 +48,6 @@ PYTHONPATH = ":".join(
 
 CONTROL_HZ = 20
 MAX_BATCH_SIZE = 5
-# MAX_BATCH_SIZE = 20
 FAST_HORIZON = 4
 SLOW_HORIZON = 10
 DEFAULT_MAX_STEPS = 200
@@ -346,7 +345,7 @@ def _summarize_run(output_dir: pathlib.Path, case: SweepCase, horizons: list[int
 
 
 # @app.function(image=image, timeout=60 * 60, cpu=25, memory=16384)
-@app.function(image=image, timeout=60 * 60, cpu=25, memory=16384)
+@app.function(image=image, timeout=60 * 60, cpu=10, memory=16384)
 def run_case(case: SweepCase, *, port: int, max_steps: int) -> dict[str, Any]:
     horizons = [FAST_HORIZON] * case.n_fast + [SLOW_HORIZON] * case.n_slow
     exp_cfg = _build_experiment_config(horizons, max_steps)
@@ -607,13 +606,11 @@ def _plot_starvation_vs_variance(results_csv: pathlib.Path, plots_dir: pathlib.P
 
 @app.local_entrypoint()
 def main(
-    # models: str = "pi05,gr00t-n1.7",
     models: str = "pi05",
-    # scenarios: str = "1f9s,5f5s",
     scenarios: str = "1f9s,5f5s",
     alpha_grid: str = "0.0,0.25,0.5,0.75,1.0",
-    seeds: str = "42",
-    output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_5f5s",
+    seeds: str = "1",
+    output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_test",
     port: int = 8080,
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> None:
