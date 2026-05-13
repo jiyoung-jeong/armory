@@ -9,7 +9,6 @@ from armory.scheduling.base import RequestScheduler
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
 
 
 class MaxBatchScheduler(RequestScheduler):

@@ -21,7 +21,6 @@ from armory.serving.schemas import InternalRequest
 from armory_client.messages import InferType, RTCParams
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 def _recursive_stack(list_of_dicts: list[dict]) -> dict:

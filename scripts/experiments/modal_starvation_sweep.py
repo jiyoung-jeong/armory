@@ -493,7 +493,7 @@ def main(
             print(f"  {r['run_id']}: {r.get('timing_flags', '')}")
 
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
-    from plot_sweep import DEFAULT_METRICS, plot_results  # noqa: PLC0415
+    from plot_starvation_sweep import DEFAULT_METRICS, plot_results  # noqa: PLC0415
 
     timing_metrics = [
         "step_interval_p95_ms",
@@ -501,4 +501,7 @@ def main(
         "inbound_p95_ms",
         "outbound_p95_ms",
     ]
-    plot_results(latest_csv, out / "plots", metrics=list(DEFAULT_METRICS) + timing_metrics)
+    # Stamp parallels artifacts/<stamp>/ so a re-run never overwrites a prior
+    # plot set; the CSV next to it (sweep_results_<stamp>.csv) is the inputs.
+    plots_dir = out / "plots" / stamp
+    plot_results(latest_csv, plots_dir, metrics=list(DEFAULT_METRICS) + timing_metrics)
