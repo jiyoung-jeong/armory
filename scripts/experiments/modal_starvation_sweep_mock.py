@@ -25,37 +25,16 @@ from typing import Any
 
 import modal
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _images import REMOTE_ROOT, cpu_mock_image  # noqa: E402
+
 APP_NAME = "armory-scheduler-sweep"
 ARTIFACTS_VOLUME_NAME = "armory-scheduler-sweep-artifacts"
-REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_sweep")
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
 ARTIFACT_SKIP_SUFFIXES = {".mp4", ".parquet", ".npz"}
-PYTHONPATH = ":".join(
-    [
-        str(REMOTE_ROOT / "src"),
-        str(REMOTE_ROOT / "src/backends"),
-        str(REMOTE_ROOT / "packages/armory-client/src"),
-    ]
-)
 
-
-def _ignore_modal_copy(path: pathlib.Path) -> bool:
-    parts = set(path.parts)
-    return bool(parts & {".git", ".venv", ".ruff_cache", ".pytest_cache", "__pycache__"})
-
-
-image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
-    .pip_install_from_requirements("requirements-modal-mock.txt")
-    .workdir(str(REMOTE_ROOT))
-    .env({"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"})
-    .add_local_dir("packages", str(REMOTE_ROOT / "packages"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("src", str(REMOTE_ROOT / "src"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("configs", str(REMOTE_ROOT / "configs"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("scripts", str(REMOTE_ROOT / "scripts"), copy=True, ignore=_ignore_modal_copy)
-)
+image = cpu_mock_image
 
 app = modal.App(APP_NAME)
 
@@ -93,7 +72,7 @@ def _run_subprocess(
             timeout=timeout_s,
             env={
                 **{k: v for k, v in __import__("os").environ.items()},
-                **dict(PYTHONPATH=PYTHONPATH, MPLBACKEND="Agg"),
+                "MPLBACKEND": "Agg",
             },
         )
     if result.returncode != 0:
@@ -105,7 +84,7 @@ def _write_command_manifest(
 ) -> None:
     commands = {
         "cwd": str(REMOTE_ROOT),
-        "env": {"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"},
+        "env": {"MPLBACKEND": "Agg"},
         "server": {"argv": server_cmd, "shell": shlex.join(server_cmd)},
         "client": {"argv": client_cmd, "shell": shlex.join(client_cmd)},
     }
@@ -116,7 +95,6 @@ def _write_command_manifest(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 f"cd {shlex.quote(str(REMOTE_ROOT))}",
-                f"export PYTHONPATH={shlex.quote(PYTHONPATH)}",
                 "export MPLBACKEND=Agg",
                 "",
                 "# Start this first, then run the client command in another shell.",
@@ -369,7 +347,7 @@ def run_case(
             text=True,
             env={
                 **{k: v for k, v in __import__("os").environ.items()},
-                **dict(PYTHONPATH=PYTHONPATH, MPLBACKEND="Agg"),
+                "MPLBACKEND": "Agg",
             },
         )
     try:

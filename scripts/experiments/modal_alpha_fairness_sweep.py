@@ -35,16 +35,11 @@ from typing import Any
 
 import modal
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _images import REMOTE_ROOT, cpu_mock_image  # noqa: E402
+
 APP_NAME = "armory-fairness-alpha-sweep"
-REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_fairness_alpha_sweep")
-PYTHONPATH = ":".join(
-    [
-        str(REMOTE_ROOT / "src"),
-        str(REMOTE_ROOT / "src/backends"),
-        str(REMOTE_ROOT / "packages/armory-client/src"),
-    ]
-)
 
 CONTROL_HZ = 20
 MAX_BATCH_SIZE = 5
@@ -76,22 +71,7 @@ BASELINE_STYLE = {
 DYNAMIC_CMAP = "viridis"
 
 
-def _ignore_modal_copy(path: pathlib.Path) -> bool:
-    parts = set(path.parts)
-    return bool(parts & {".git", ".venv", ".ruff_cache", ".pytest_cache", "__pycache__"})
-
-
-image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
-    .pip_install_from_requirements("requirements-modal-mock.txt")
-    .workdir(str(REMOTE_ROOT))
-    .env({"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"})
-    .add_local_dir("packages", str(REMOTE_ROOT / "packages"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("src", str(REMOTE_ROOT / "src"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("configs", str(REMOTE_ROOT / "configs"), copy=True, ignore=_ignore_modal_copy)
-    .add_local_dir("scripts", str(REMOTE_ROOT / "scripts"), copy=True, ignore=_ignore_modal_copy)
-)
+image = cpu_mock_image
 
 app = modal.App(APP_NAME)
 
@@ -176,9 +156,7 @@ def _build_experiment_config(horizons: list[int], max_steps: int) -> dict[str, A
     }
 
 
-def _build_server_cmd(
-    *, model: str, scheduler: str, port: int, alpha: float | None
-) -> list[str]:
+def _build_server_cmd(*, model: str, scheduler: str, port: int, alpha: float | None) -> list[str]:
     profile = MODEL_TO_PROFILE[model]
     pre_policy = [
         sys.executable,
@@ -267,7 +245,7 @@ def _run_subprocess(
         bufsize=1,
         env={
             **{k: v for k, v in __import__("os").environ.items()},
-            **dict(PYTHONPATH=PYTHONPATH, MPLBACKEND="Agg"),
+            "MPLBACKEND": "Agg",
         },
     )
     reader = threading.Thread(
@@ -302,7 +280,9 @@ def _tar_directory(path: pathlib.Path) -> bytes:
     return buffer.getvalue()
 
 
-def _summarize_run(output_dir: pathlib.Path, case: SweepCase, horizons: list[int]) -> dict[str, Any]:
+def _summarize_run(
+    output_dir: pathlib.Path, case: SweepCase, horizons: list[int]
+) -> dict[str, Any]:
     from sims.libero.metrics import (  # noqa: PLC0415
         compute_fairness_metrics,
         compute_starvation_variance_series,
@@ -378,7 +358,7 @@ def run_case(case: SweepCase, *, port: int, max_steps: int) -> dict[str, Any]:
         bufsize=1,
         env={
             **{k: v for k, v in __import__("os").environ.items()},
-            **dict(PYTHONPATH=PYTHONPATH, MPLBACKEND="Agg"),
+            "MPLBACKEND": "Agg",
         },
     )
     server_reader = threading.Thread(
@@ -457,9 +437,17 @@ def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
         yerr = float(sub_b[y_col].std(ddof=0)) if len(sub_b) > 1 else 0.0
         style = BASELINE_STYLE[sched]
         ax.errorbar(
-            x, y, xerr=xerr, yerr=yerr,
-            marker=style["marker"], markersize=11, color=style["color"],
-            linestyle="none", capsize=3, label=sched, zorder=4,
+            x,
+            y,
+            xerr=xerr,
+            yerr=yerr,
+            marker=style["marker"],
+            markersize=11,
+            color=style["color"],
+            linestyle="none",
+            capsize=3,
+            label=sched,
+            zorder=4,
         )
 
     sub_d = sub[sub["scheduler"] == DYNAMIC_SCHEDULER].dropna(subset=["mean_starvation", y_col])
@@ -481,18 +469,32 @@ def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
         alphas = agg["alpha_requested"].to_numpy()
         ax.plot(xs, ys, "-", color="0.5", linewidth=1.2, alpha=0.7, zorder=2)
         handle = ax.scatter(
-            xs, ys, c=alphas, cmap=DYNAMIC_CMAP, s=70,
-            edgecolors="black", linewidths=0.6, zorder=3,
+            xs,
+            ys,
+            c=alphas,
+            cmap=DYNAMIC_CMAP,
+            s=70,
+            edgecolors="black",
+            linewidths=0.6,
+            zorder=3,
             label=f"{DYNAMIC_SCHEDULER} (alpha sweep)",
-            vmin=0.0, vmax=1.0,
+            vmin=0.0,
+            vmax=1.0,
         )
         n_seeds = int(agg["count"].max()) if not agg.empty else 1
         if n_seeds > 1:
             xerr = (agg["starvation_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
             yerr = (agg["y_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
             ax.errorbar(
-                xs, ys, xerr=xerr, yerr=yerr,
-                fmt="none", ecolor="0.6", capsize=2, alpha=0.6, zorder=2,
+                xs,
+                ys,
+                xerr=xerr,
+                yerr=yerr,
+                fmt="none",
+                ecolor="0.6",
+                capsize=2,
+                alpha=0.6,
+                zorder=2,
             )
 
     ax.set_xlabel("Mean starvation rate (lower is better)", fontsize=11)
@@ -553,7 +555,11 @@ def _save_single_panel_plot(
     for (scenario_id, model), sub in df.groupby(["scenario_id", "model"]):
         fig, ax = plt.subplots(figsize=(8, 6))
         handle = _plot_one_yaxis(
-            ax, sub, y_col=y_col, y_label=y_label, title=panel_title,
+            ax,
+            sub,
+            y_col=y_col,
+            y_label=y_label,
+            title=panel_title,
         )
         if pareto:
             _autoscale_with_pad(ax, sub, y_col)
@@ -565,7 +571,8 @@ def _save_single_panel_plot(
             cbar.set_label("scheduler alpha", fontsize=10)
         fig.suptitle(
             f"scenario={scenario_id}, model={model}",
-            fontsize=13, fontweight="bold",
+            fontsize=13,
+            fontweight="bold",
         )
         plt.tight_layout()
         safe_model = model.replace(".", "_").replace("/", "_")
@@ -583,7 +590,8 @@ def _plot_starvation_pareto(results_csv: pathlib.Path, plots_dir: pathlib.Path) 
     mean, low max).
     """
     _save_single_panel_plot(
-        results_csv, plots_dir,
+        results_csv,
+        plots_dir,
         name_prefix="starvation_pareto",
         y_col="max_starvation",
         y_label="Worst-robot starvation rate  (lower is fairer)",
@@ -595,7 +603,8 @@ def _plot_starvation_pareto(results_csv: pathlib.Path, plots_dir: pathlib.Path) 
 def _plot_starvation_vs_variance(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
     """Mean starvation vs cross-robot starvation variance. Bottom-left = best."""
     _save_single_panel_plot(
-        results_csv, plots_dir,
+        results_csv,
+        plots_dir,
         name_prefix="starvation_vs_variance",
         y_col="starvation_variance",
         y_label="Cross-robot starvation variance (lower is fairer)",

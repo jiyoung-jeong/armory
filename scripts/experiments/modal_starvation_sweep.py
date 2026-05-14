@@ -26,14 +26,20 @@ from typing import Any
 
 import modal
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _images import (  # noqa: E402
+    CHECKPOINT_VOLUME_PATH,
+    REMOTE_ROOT,
+    gpu_libero_client_image,
+    gpu_server_image,
+)
+
 APP_NAME = "armory-scheduler-sweep-l40s"
 ARTIFACTS_VOLUME_NAME = "armory-scheduler-sweep-l40s-artifacts"
 CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
-CHECKPOINT_VOLUME_PATH = "/checkpoints"
 GPU = "L40S"
 REGION = "us-east"
 
-REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_sweep")
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
 ARTIFACT_SKIP_SUFFIXES = {".mp4", ".parquet", ".npz"}
@@ -58,131 +64,6 @@ CLIENT_GPU = "A10G"
 # by servers waiting for clients that can never be scheduled.
 GPU_CAP = 10
 MAX_CONCURRENT_CASES = GPU_CAP // 2
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-REQUIREMENTS_FILE = REPO_ROOT / "requirements-modal.txt"
-
-# Installed separately (CUDA wheels, workspace packages, or not on PyPI).
-_MODAL_EXCLUDE = [
-    "torch",
-    "jax",
-    "jaxlib",
-    "jax-cuda12-plugin",
-    "jax-cuda12-pjrt",
-    "openpi",
-    "openpi-client",
-    "gr00t",
-    "libero",
-    "av",
-]
-
-
-def generate_requirements() -> None:
-    """Export a flat requirements.txt for Modal (excludes packages installed separately)."""
-    cmd = [
-        "uv",
-        "export",
-        "--no-hashes",
-        "--no-dev",
-        "--no-emit-workspace",
-        *[arg for pkg in _MODAL_EXCLUDE for arg in ("--no-emit-package", pkg)],
-        "-o",
-        str(REQUIREMENTS_FILE),
-        "-q",
-    ]
-    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
-    print(f"Wrote {REQUIREMENTS_FILE}")
-
-
-if modal.is_local():
-    generate_requirements()
-
-
-_base = (
-    # CUDA 12.2 devel base instead of debian-slim so that the nvidia EGL ICD
-    # is actually present — debian-slim's libegl1 only ships the mesa
-    # software path, which is why mujoco rendering was so slow even with
-    # MUJOCO_GL=egl set.
-    modal.Image.from_registry(
-        "nvidia/cuda:12.2.0-devel-ubuntu22.04",
-        add_python="3.11",
-    )
-    .apt_install(
-        "git",
-        "libgl1",
-        "libglib2.0-0",
-        "libglfw3",
-        "libosmesa6",
-        "libegl1",
-        "libegl1-mesa-dev",
-        "libgles2-mesa-dev",
-        "libglvnd-dev",
-        "build-essential",
-        # Modal's add_python ships a CPython compiled with clang, so pip uses
-        # clang to build C extensions (e.g. evdev). build-essential only
-        # provides gcc, so we add clang explicitly.
-        "clang",
-        "cmake",
-    )
-    .pip_install("torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cu124")
-    .pip_install(
-        "jax[cuda12]==0.5.3",
-        find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
-    )
-)
-
-image = (
-    _base.pip_install("av==17.0.0", "pytest==9.0.3")
-    .pip_install_from_requirements(str(REQUIREMENTS_FILE))
-    .workdir(str(REMOTE_ROOT))
-    .env(
-        {
-            "MPLBACKEND": "Agg",
-            "OPENPI_DATA_HOME": CHECKPOINT_VOLUME_PATH,
-            "JAX_COMPILATION_CACHE_DIR": f"{CHECKPOINT_VOLUME_PATH}/.cache/jax_compilation",
-            "TORCHINDUCTOR_CACHE_DIR": f"{CHECKPOINT_VOLUME_PATH}/.cache/torch_inductor",
-            "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True --xla_gpu_enable_latency_hiding_scheduler=true",
-            "GCLOUD_ANONYMOUS_ACCESS": "True",
-            "JAX_PLATFORMS": "cuda",
-            "TF_CPP_MIN_LOG_LEVEL": "2",
-            "ABSL_FLAGS_VERBOSITY": "0",
-            # MuJoCo defaults to OSMesa software rendering, which is far too
-            # slow for the LIBERO sim — easily 100ms+ per step on the client.
-            # Force hardware EGL on the A10G; libegl1 is in apt_install above.
-            "MUJOCO_GL": "egl",
-            "PYOPENGL_PLATFORM": "egl",
-        }
-    )
-    .add_local_python_source(
-        "armory",
-        "armory_client",
-        "sims",
-        "openpi",
-        "openpi_client",
-        "libero",
-        "gr00t",
-        "openpi_adapter",
-        "gr00t_adapter",
-    )
-    # add_local_python_source ships only .py files, so the libero data dirs
-    # have to be mounted explicitly. Paths mirror the package layout inside
-    # /root/libero/libero, which is where libero auto-discovers them at
-    # import time via os.path.dirname(__file__).
-    .add_local_dir(
-        str(REPO_ROOT / "third_party/libero/libero/libero/bddl_files"),
-        remote_path="/root/libero/libero/bddl_files",
-    )
-    .add_local_dir(
-        str(REPO_ROOT / "third_party/libero/libero/libero/init_files"),
-        remote_path="/root/libero/libero/init_files",
-    )
-    .add_local_dir(
-        str(REPO_ROOT / "third_party/libero/libero/libero/assets"),
-        remote_path="/root/libero/libero/assets",
-    )
-    .add_local_dir(str(REPO_ROOT / "configs"), remote_path=str(REMOTE_ROOT / "configs"))
-    .add_local_dir(str(REPO_ROOT / "scripts"), remote_path=str(REMOTE_ROOT / "scripts"))
-)
 
 app = modal.App(APP_NAME)
 
@@ -438,12 +319,12 @@ def _wait_for_server_ready(proc: subprocess.Popen, port: int, timeout_s: int) ->
     last_print = 0.0
     while _time.time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(
-                f"server exited with code {proc.returncode} before becoming ready"
-            )
+            raise RuntimeError(f"server exited with code {proc.returncode} before becoming ready")
         try:
             requests.get(f"http://127.0.0.1:{port}/metadata", timeout=2).raise_for_status()
-            print(f"[ready-probe] /metadata responded after {_time.time() - start:.1f}s", flush=True)
+            print(
+                f"[ready-probe] /metadata responded after {_time.time() - start:.1f}s", flush=True
+            )
             return
         except Exception:  # noqa: BLE001
             now = _time.time()
@@ -471,7 +352,7 @@ def _failure_summary(case: SweepCase, error: str) -> dict[str, Any]:
 
 
 @app.function(
-    image=image,
+    image=gpu_server_image,
     timeout=2 * 60 * 60,
     cpu=4,
     memory=16384,
@@ -567,7 +448,7 @@ def run_server(
 
 
 @app.function(
-    image=image,
+    image=gpu_libero_client_image,
     timeout=2 * 60 * 60,
     cpu=CLIENT_CPU,
     memory=16384,
@@ -587,14 +468,11 @@ def run_client(
 ) -> dict[str, Any]:
     """CPU container: connect to the server tunnel, run the LIBERO client."""
     print(
-        f"[client {case.run_id}] container started, "
-        f"connecting to {server_host}:{server_port}",
+        f"[client {case.run_id}] container started, connecting to {server_host}:{server_port}",
         flush=True,
     )
     try:
-        exp_cfg: dict[str, Any] = json.loads(
-            (REMOTE_ROOT / case.experiment_config).read_text()
-        )
+        exp_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / case.experiment_config).read_text())
         if max_steps_override is not None:
             exp_cfg["experiment"]["max_steps"] = max_steps_override
         exp_cfg = _expand_experiment_config(exp_cfg, case.num_robots)
@@ -706,10 +584,7 @@ def main(
             f"(max num_robots={max_robots} + 2) but CLIENT_CPU={CLIENT_CPU}. "
             "Bump CLIENT_CPU at the top of this script."
         )
-    print(
-        f"Sweeping {len(cases)} cases | client cpu={CLIENT_CPU} "
-        f"(required >= {required_cpu})"
-    )
+    print(f"Sweeping {len(cases)} cases | client cpu={CLIENT_CPU} (required >= {required_cpu})")
 
     rows: list[dict[str, Any]] = []
     with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
@@ -730,8 +605,7 @@ def main(
             )
             case_start_time[case.run_id] = _time.time()
         print(
-            f"Spawned {len(server_handles)} server functions; "
-            f"orchestrating clients as URLs land",
+            f"Spawned {len(server_handles)} server functions; orchestrating clients as URLs land",
             flush=True,
         )
 
@@ -774,8 +648,7 @@ def main(
                 return _failure_summary(case, "server failed to start (poison URL)")
 
             print(
-                f"[orch {case.run_id}] server up at {server_host}:{server_port}; "
-                f"spawning client",
+                f"[orch {case.run_id}] server up at {server_host}:{server_port}; spawning client",
                 flush=True,
             )
             try:
