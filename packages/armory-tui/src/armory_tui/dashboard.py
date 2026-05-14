@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import curses
-import pathlib
 import threading
 import time
 from collections import deque
@@ -43,18 +42,13 @@ CORE_COMMANDS = [
 RUNTIME_COMMANDS = [
     ("L", "Listener"),
     ("C", "Client"),
-    ("N", "Trial"),
+    ("W", "Webcam"),
     ("5", "Connect"),
     ("1", "Enable"),
     ("2", "Disable"),
     ("3", "Goto Init"),
     ("4", "Goto Zero"),
 ]
-
-# Defaults for the [N] Trial key (use scripts/run_real.py for full control).
-TRIAL_DURATION_SEC = 60.0
-TRIAL_GRACE_SEC = 5.0
-TRIAL_OUTPUT_ROOT = "data/real"
 
 RUNTIME_KEYS = {key for key, _ in RUNTIME_COMMANDS}
 
@@ -182,8 +176,12 @@ class Dashboard:
                 self.dispatcher.kill_client,
                 process_key="client",
             )
-        elif ch == "N":
-            self._do_run_trial()
+        elif ch == "W":
+            self._open_process_menu(
+                "Webcam",
+                self.dispatcher.start_webcam,
+                self.dispatcher.kill_webcam,
+            )
         elif ch == "1":
             self._broadcast_with_confirm("Enable", self.dispatcher.enable)
         elif ch == "2":
@@ -264,55 +262,6 @@ class Dashboard:
             self._log("Boot complete.")
 
         self.dispatcher.boot(targets, callback=on_done)
-
-    def _do_run_trial(self):
-        """Run a bounded RealSaver trial and SFTP results back.
-
-        Uses fixed defaults (60s, data/real/trial_<ts>, no video). For other
-        durations / output dirs / per-trial knobs, use scripts/run_real.py.
-        """
-        targets = self._eligible_targets("runtime", self._command_targets())
-        if not targets:
-            self._set_notice("Trial needs booted or online targets.")
-            self._log("No eligible robot(s) for trial.")
-            return
-        if not self._confirm(
-            f"Run a {TRIAL_DURATION_SEC:.0f}s trial on {self._target_label(targets)}?"
-        ):
-            self._log("Trial cancelled.")
-            return
-
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        out_dir = pathlib.Path(TRIAL_OUTPUT_ROOT) / f"trial_{ts}"
-
-        self._busy = True
-        self._log(
-            f"Trial: {TRIAL_DURATION_SEC:.0f}s on {self._target_label(targets)} "
-            f"-> {out_dir}"
-        )
-
-        def on_done(summary=None):
-            with self._lock:
-                self._busy = False
-            if summary is None:
-                self._log("Trial: no summary returned.")
-                self._announce_runtime_state()
-                return
-            for stage in ("start", "kill", "fetch"):
-                results = summary.get(stage, {})
-                if isinstance(results, dict):
-                    for rid, msg in results.items():
-                        self._log(f"  {stage} WS-{rid}: {str(msg)[:80]}")
-            self._log(f"Trial complete: {summary.get('output_dir', out_dir)}")
-            self._announce_runtime_state()
-
-        self.dispatcher.run_trial(
-            targets,
-            duration_sec=TRIAL_DURATION_SEC,
-            output_dir=out_dir,
-            grace_sec=TRIAL_GRACE_SEC,
-            callback=on_done,
-        )
 
     def _do_shutdown(self):
         """Disable, kill tunnels, then shutdown selected/all active robots."""

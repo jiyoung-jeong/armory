@@ -72,6 +72,14 @@ class FleetDispatcher:
         """Kill SSH tunnels on selected workstations, outside Docker."""
         return self.fleet.kill_tunnels(robots, callback)
 
+    def start_webcam(self, robots: list[Robot], callback: Callable | None = None):
+        """Start the Logitech webcam RTSP stream on each workstation host."""
+        return self.fleet.start_webcam_streams(robots, callback)
+
+    def kill_webcam(self, robots: list[Robot], callback: Callable | None = None):
+        """Stop the Logitech webcam RTSP stream on each workstation host."""
+        return self.fleet.kill_webcam_streams(robots, callback)
+
     def start_listener(self, robots: list[Robot], callback: Callable | None = None):
         """Start the local data collection listener inside Docker."""
         return self.fleet.start_data_listeners(robots, callback)

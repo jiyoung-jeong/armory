@@ -132,6 +132,22 @@ class FleetController:
         """Kill workstation-level SSH tunnels outside Docker."""
         return self.submit(self._kill_tunnels(robots, callback))
 
+    def start_webcam_streams(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Start the Logitech webcam RTSP stream on each workstation host."""
+        return self.submit(self._start_webcam_streams(robots, callback))
+
+    def kill_webcam_streams(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        """Stop the Logitech webcam RTSP stream on each workstation host."""
+        return self.submit(self._kill_webcam_streams(robots, callback))
+
     def start_data_listeners(
         self,
         robots: list[Robot],
@@ -562,6 +578,142 @@ class FleetController:
         except Exception as e:
             logger.error("Tunnel kill failed: %s", e)
             self._emit(f"WS-{robot.id}: tunnel kill FAILED — {e}")
+            return f"ERROR: {e}"
+
+    async def _start_webcam_streams(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._start_webcam_single(r) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    async def _kill_webcam_streams(
+        self,
+        robots: list[Robot],
+        callback: Callable | None = None,
+    ):
+        results = {}
+        tasks = [self._kill_webcam_single(r) for r in robots]
+        outputs = await asyncio.gather(*tasks, return_exceptions=True)
+        for robot, out in zip(robots, outputs):
+            results[robot.id] = out
+        if callback:
+            callback(results)
+        return results
+
+    @staticmethod
+    def _webcam_rtsp_url(robot: Robot) -> str:
+        return f"rtsp://130.207.121.217:8554/workstation{robot.id}"
+
+    async def _start_webcam_single(self, robot: Robot) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            conn = await self._get_connection(robot)
+            # Runs INSIDE the piper_env container: that is where v4l2-ctl and
+            # ffmpeg are installed. /dev is bind-mounted so the C922 is visible.
+            # The PID file at /tmp/armory_webcam.pid lives inside the container
+            # and is what _kill_webcam_single uses to find the running stream.
+            rtsp_url = self._webcam_rtsp_url(robot)
+            inner = (
+                'device=$(v4l2-ctl --list-devices 2>/dev/null '
+                '| grep -A1 "C922.*usb-0000:80:14.0-7" '
+                '| grep /dev/video | head -1 | tr -d "[:space:]"); '
+                'if [ -z "$device" ]; then '
+                '  echo "No C922 webcam device found inside container" >&2; '
+                '  exit 1; '
+                'fi; '
+                'if [ -s /tmp/armory_webcam.pid ] '
+                '&& kill -0 "$(cat /tmp/armory_webcam.pid)" 2>/dev/null; then '
+                '  echo "Webcam stream already running on $device '
+                '(pid $(cat /tmp/armory_webcam.pid))"; exit 0; '
+                'fi; '
+                'rm -f /tmp/armory_webcam.pid; '
+                'mkdir -p /tmp/armory_webcam; '
+                'nohup ffmpeg -nostdin -hide_banner -loglevel error '
+                '-f v4l2 -input_format mjpeg -framerate 30 -video_size 1280x720 '
+                '-i "$device" '
+                '-c:v h264_nvenc -preset p1 -tune ull -profile baseline '
+                '-rc cbr -b:v 2M '
+                '-g 15 -bf 0 '
+                '-fflags nobuffer -flags low_delay -avioflags direct '
+                '-rtsp_transport udp '
+                f'-f rtsp {rtsp_url} '
+                '>> /tmp/armory_webcam/stream.log 2>&1 & '
+                'pid=$!; '
+                'disown "$pid" 2>/dev/null || true; '
+                'echo "$pid" > /tmp/armory_webcam.pid; '
+                'sleep 0.5; '
+                'if kill -0 "$pid" 2>/dev/null; then '
+                f'  echo "Webcam stream started on $device -> {rtsp_url} (pid $pid)"; '
+                'else '
+                '  rm -f /tmp/armory_webcam.pid; '
+                '  echo "Webcam stream exited immediately; '
+                'check container:/tmp/armory_webcam/stream.log" >&2; '
+                '  exit 1; '
+                'fi'
+            )
+            docker_cmd = (
+                f"docker exec {DOCKER_CONTAINER} bash -lc {shlex.quote(inner)}"
+            )
+            cmd = self._bash_command(docker_cmd)
+            logger.info("Starting webcam stream: %s", cmd)
+            self._emit(f"WS-{robot.id}: starting webcam stream -> {rtsp_url}")
+            result = await conn.run(cmd, timeout=15)
+            return self._format_process_result(robot, result, "webcam", "start")
+        except Exception as e:
+            logger.error("Webcam start failed: %s", e)
+            self._emit(f"WS-{robot.id}: webcam start FAILED — {e}")
+            return f"ERROR: {e}"
+
+    async def _kill_webcam_single(self, robot: Robot) -> str:
+        logger = self._loggers[robot.id]
+        try:
+            conn = await self._get_connection(robot)
+            # SIGTERM → grace → SIGKILL on the PID inside the container; pkill
+            # is a fallback in case the PID file is stale but an ffmpeg with
+            # our per-robot RTSP URL is still up. The pattern is anchored to
+            # this robot's URL so it won't touch other workstations' streams.
+            rtsp_url = self._webcam_rtsp_url(robot)
+            pattern = f"[f]fmpeg.*{re.escape(rtsp_url)}"
+            inner = (
+                'killed=0; '
+                'if [ -s /tmp/armory_webcam.pid ]; then '
+                '  pid=$(cat /tmp/armory_webcam.pid); '
+                '  if kill -0 "$pid" 2>/dev/null; then '
+                '    kill -TERM "$pid" 2>/dev/null || true; '
+                '    for i in 1 2 3 4 5 6 7 8 9 10; do '
+                '      kill -0 "$pid" 2>/dev/null || break; sleep 0.2; '
+                '    done; '
+                '    kill -KILL "$pid" 2>/dev/null || true; '
+                '    killed=1; '
+                '  fi; '
+                '  rm -f /tmp/armory_webcam.pid; '
+                'fi; '
+                f'pkill -f {shlex.quote(pattern)} >/dev/null 2>&1 || true; '
+                'if [ "$killed" = "1" ]; then '
+                '  echo "Webcam stream stopped"; '
+                'else '
+                '  echo "Webcam stream not running"; '
+                'fi'
+            )
+            docker_cmd = (
+                f"docker exec {DOCKER_CONTAINER} bash -lc {shlex.quote(inner)}"
+            )
+            cmd = self._bash_command(docker_cmd)
+            logger.info("Stopping webcam stream: %s", cmd)
+            self._emit(f"WS-{robot.id}: stopping webcam stream")
+            result = await conn.run(cmd, timeout=15)
+            return self._format_process_result(robot, result, "webcam", "stop")
+        except Exception as e:
+            logger.error("Webcam stop failed: %s", e)
+            self._emit(f"WS-{robot.id}: webcam stop FAILED — {e}")
             return f"ERROR: {e}"
 
     async def _start_data_listeners(
