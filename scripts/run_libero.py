@@ -5,6 +5,7 @@ import multiprocessing
 import pathlib
 import queue
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import (
@@ -29,6 +30,10 @@ from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
 from armory_client.schemas import RuntimeMetadata, ServerMetadata
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from utils import JsonArgs  # noqa: E402
+
 from sims.libero import logging_config
 from sims.libero.episodes import Episode, create_episodes, create_mock_episodes
 from sims.libero.metrics import calculate_metrics, generate_all_plots
@@ -43,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Args:
+class Args(JsonArgs):
     #################################################################################################################
     # Model server parameters
     #################################################################################################################
@@ -93,6 +98,42 @@ class Args:
     @property
     def http_base(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    def _serialize(self) -> dict:
+        return {
+            "host": self.host,
+            "port": self.port,
+            "resize_size": self.resize_size,
+            "action_chunk_broker_type": self.action_chunk_broker_type.value,
+            "execution_horizon": self.execution_horizon,
+            "env": self.env,
+            "task_suite_name": self.task_suite_name,
+            "num_trials_per_task": self.num_trials_per_task,
+            "max_steps": self.max_steps,
+            "num_robots": self.num_robots,
+            "control_hz": self.control_hz,
+            "experiment_config": self.experiment_config,
+            "toxiproxy_server_bin": self.toxiproxy_server_bin,
+            "seed": self.seed,
+            "output_dir": str(self.output_dir),
+            "overwrite": self.overwrite,
+            "progress_type": self.progress_type,
+            "log_dir": str(self.log_dir) if self.log_dir is not None else None,
+            "debug": self.debug,
+        }
+
+    @classmethod
+    def _deserialize(cls, data: dict) -> "Args":
+        kwargs = dict(data)
+        if "action_chunk_broker_type" in kwargs:
+            kwargs["action_chunk_broker_type"] = ActionChunkBrokerType.from_string(
+                kwargs["action_chunk_broker_type"]
+            )
+        if "output_dir" in kwargs:
+            kwargs["output_dir"] = pathlib.Path(kwargs["output_dir"])
+        if "log_dir" in kwargs and kwargs["log_dir"] is not None:
+            kwargs["log_dir"] = pathlib.Path(kwargs["log_dir"])
+        return cls(**kwargs)
 
 
 def _apply_experiment_config(args: Args, experiment_config: dict[str, object]) -> None:

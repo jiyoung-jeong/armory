@@ -15,7 +15,7 @@ from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import resolve_policy  # noqa: E402
+from utils import JsonArgs, resolve_policy  # noqa: E402
 
 
 class ModelFamily(str, enum.Enum):
@@ -42,11 +42,12 @@ class Mock:
 
     action_horizon: int = 50
     action_dim: int = 14
-    profile: str = "l40s_pi05"
+    model: str = "pi05"
+    gpu: str = "l40s"
 
 
 @dataclasses.dataclass
-class Args:
+class Args(JsonArgs):
     env: EnvMode = EnvMode.LIBERO
 
     # options are PI05, GROOT_N17
@@ -75,6 +76,59 @@ class Args:
     lookahead_control_hz: int = 20
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    def _serialize(self) -> dict:
+        if isinstance(self.policy, Mock):
+            policy_data: dict = {"type": "mock", **dataclasses.asdict(self.policy)}
+        elif isinstance(self.policy, Checkpoint):
+            policy_data = {"type": "checkpoint", **dataclasses.asdict(self.policy)}
+        else:
+            policy_data = {"type": "default"}
+        return {
+            "env": self.env.value,
+            "model": self.model.value,
+            "default_prompt": self.default_prompt,
+            "port": self.port,
+            "policy": policy_data,
+            "max_batch_size": self.max_batch_size,
+            "num_steps": self.num_steps,
+            "log_dir": self.log_dir,
+            "scheduling_algorithm": self.scheduling_algorithm,
+            "alpha": self.alpha,
+            "min_execution_horizon": self.min_execution_horizon,
+            "lookahead_horizon_ms": self.lookahead_horizon_ms,
+            "lookahead_timestep_ms": self.lookahead_timestep_ms,
+            "lookahead_control_hz": self.lookahead_control_hz,
+            "log_level": self.log_level,
+        }
+
+    @classmethod
+    def _deserialize(cls, data: dict) -> "Args":
+        policy_data = dict(data.get("policy", {"type": "default"}))
+        policy_type = policy_data.pop("type", "default")
+        if policy_type == "mock":
+            policy: Checkpoint | Default | Mock = Mock(**policy_data)
+        elif policy_type == "checkpoint":
+            policy = Checkpoint(**policy_data)
+        else:
+            policy = Default()
+        return cls(
+            env=EnvMode(data.get("env", EnvMode.LIBERO.value)),
+            model=ModelFamily(data.get("model", ModelFamily.PI05.value)),
+            default_prompt=data.get("default_prompt"),
+            port=data.get("port", 8080),
+            policy=policy,
+            max_batch_size=data.get("max_batch_size", 1),
+            num_steps=data.get("num_steps", 10),
+            log_dir=data.get("log_dir", "logs/server"),
+            scheduling_algorithm=data.get("scheduling_algorithm", "greedy-deadline"),
+            alpha=data.get("alpha", 1.0),
+            min_execution_horizon=data.get("min_execution_horizon", 0),
+            lookahead_horizon_ms=data.get("lookahead_horizon_ms", 500),
+            lookahead_timestep_ms=data.get("lookahead_timestep_ms", 50),
+            lookahead_control_hz=data.get("lookahead_control_hz", 20),
+            log_level=data.get("log_level", "INFO"),
+        )
 
 
 def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
