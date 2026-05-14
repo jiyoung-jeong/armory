@@ -36,6 +36,10 @@ from typing import Any
 import modal
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# Modal may import this module as /root/_setups.py for class services while the
+# repo's scripts directory is mounted separately in the image at /app/scripts.
+sys.path.insert(0, "/app/scripts")
+sys.path.insert(0, "/app/scripts/experiments")
 from _images import (  # noqa: E402
     CHECKPOINT_VOLUME_PATH,
     REMOTE_ROOT,
@@ -44,6 +48,7 @@ from _images import (  # noqa: E402
     gpu_libero_client_image,
     gpu_server_image,
 )
+from utils import summarize  # noqa: E402
 
 APP_NAME = "armory-experiments"
 
@@ -136,98 +141,6 @@ def _ship(case: Case, stamp: str) -> str:
         shutil.copy2(src, dst)
     artifacts_volume.commit()
     return str(dest)
-
-
-def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
-    """Compute every available metric for a finished run; skip what isn't present.
-
-    Shared by all three sweeps — the starvation and fairness experiments just read
-    different columns out of the union.
-    """
-    import csv  # noqa: PLC0415
-    import statistics  # noqa: PLC0415
-
-    def _f(value: Any, default: float = 0.0) -> float:
-        try:
-            return default if value is None else float(value)
-        except (TypeError, ValueError):
-            return default
-
-    out: dict[str, Any] = {}
-
-    summary_path = output_dir / "summary.csv"
-    if summary_path.exists():
-        with summary_path.open() as f:
-            rows = list(csv.DictReader(f))
-        if rows:
-            out["success_rate"] = sum(_f(r.get("success")) for r in rows) / len(rows)
-            observed = sum(_f(r.get("observed_steps")) for r in rows)
-            starved = sum(_f(r.get("starvation_steps")) for r in rows)
-            out["starvation_rate"] = starved / observed if observed else 0.0
-            pf_observed = sum(_f(r.get("post_first_observed_steps")) for r in rows)
-            pf_starved = sum(_f(r.get("post_first_starvation_steps")) for r in rows)
-            out["post_first_starvation_rate"] = pf_starved / pf_observed if pf_observed else 0.0
-
-    results_path = output_dir / "results.csv"
-    if results_path.exists():
-        by_robot: dict[str, dict[str, float]] = {}
-        with results_path.open() as f:
-            for row in csv.DictReader(f):
-                robot = str(row.get("robot_idx", "unknown"))
-                stats = by_robot.setdefault(robot, {"starved": 0.0, "observed": 0.0})
-                stats["starved"] += _f(row.get("starvation_steps"))
-                stats["observed"] += _f(row.get("observed_steps"))
-        rates = sorted(s["starved"] / s["observed"] for s in by_robot.values() if s["observed"] > 0)
-        if rates:
-            out["robot_starvation_rate_max"] = max(rates)
-            out["robot_starvation_rate_std"] = statistics.pstdev(rates) if len(rates) > 1 else 0.0
-            tail = max(1, int(len(rates) * 0.1))
-            out["robot_starvation_rate_cvar90"] = sum(rates[-tail:]) / tail
-
-    runtime_path = output_dir / "runtime_metadata.json"
-    if runtime_path.exists():
-        runtime = json.loads(runtime_path.read_text())
-        out["max_steps"] = runtime.get("max_steps", "")
-        out["num_trials_per_task"] = runtime.get("num_trials_per_task", "")
-    server_path = output_dir / "server_metadata.json"
-    if server_path.exists():
-        server = json.loads(server_path.read_text())
-        out["max_batch_size"] = server.get("max_batch_size", "")
-        out["action_horizon"] = server.get("action_horizon", "")
-
-    try:
-        from sims.libero.metrics import compute_server_timing_health  # noqa: PLC0415
-
-        health = compute_server_timing_health(output_dir)
-        if health:
-            out.update(health)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from sims.libero.metrics import compute_fairness_metrics  # noqa: PLC0415
-
-        fairness = compute_fairness_metrics(output_dir)
-        if fairness is not None:
-            out["alpha_observed"] = fairness.get("alpha")
-            out["jain_freshness"] = fairness.get("jain_freshness")
-            out["jain_starvation"] = fairness.get("jain_starvation")
-            rates = fairness.get("starvation_rate") or []
-            if rates:
-                out["mean_starvation"] = float(sum(rates) / len(rates))
-                out["max_starvation"] = float(max(rates))
-                out["min_starvation"] = float(min(rates))
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from sims.libero.metrics import compute_starvation_variance_series  # noqa: PLC0415
-
-        series = compute_starvation_variance_series(output_dir)
-        if series is not None:
-            out["starvation_variance"] = series["final_starvation_variance"]
-    except Exception:  # noqa: BLE001
-        pass
-
-    return out
 
 
 # --------------------------------------------------------------------------
@@ -386,6 +299,7 @@ class CpuLiberoClient:
 class MockSetup:
     """One container per case, server + client colocated. Parallelized via .map()."""
 
+    # FIXME: shouldn't use map here
     def run(
         self,
         cases: list[Case],
@@ -406,6 +320,9 @@ class MockSetup:
         yield from runner.run.map(cases, kwargs={"stamp": stamp}, order_outputs=False)
 
 
+# TODO: shouldn't handle multiple cases, just one case
+
+
 class SplitSetup:
     """Server and client on separate containers, bridged by a forwarded tunnel.
 
@@ -424,11 +341,6 @@ class SplitSetup:
         *,
         stamp: str,
         max_concurrent: int = 5,
-        server_cpu: int = 4,
-        server_memory: int = 16384,
-        client_cpu: int = 16,
-        client_memory: int = 16384,
-        client_gpu: str | None = None,
     ) -> Iterator[dict[str, Any]]:
         from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
 
@@ -436,17 +348,9 @@ class SplitSetup:
         if not cases:
             return
 
-        server = GpuServer.with_options(
-            cpu=server_cpu, memory=server_memory, max_containers=max_concurrent
-        )()
-        client_opts: dict[str, Any] = {
-            "cpu": client_cpu,
-            "memory": client_memory,
-            "max_containers": max_concurrent,
-        }
-        if client_gpu is not None:
-            client_opts["gpu"] = client_gpu
-        client = self.client_cls.with_options(**client_opts)()
+        # TODO: automatically determine server and client resources
+        server = GpuServer.with_options(cpu=4, memory=16384, max_containers=max_concurrent)()
+        client = self.client_cls.with_options(cpu=16, memory=16384, max_containers=max_concurrent)()
 
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
             handles = {
