@@ -1,4 +1,7 @@
-"""Sweep alpha for dynamic-action vs three baselines, on a list of (n_fast, n_slow) scenarios.
+"""Sweep alpha for dynamic-action vs baselines, on a list of (n_fast, n_slow) scenarios.
+
+Uses the MOCK setup: mock policy server + mock client colocated in one CPU
+container per case.
 
 For each (scenario, model):
     - fixed-max-batch, greedy-deadline, round-robin: single point each (seeds averaged)
@@ -23,31 +26,26 @@ from __future__ import annotations
 import csv
 import dataclasses
 import datetime as dt
-import io
 import json
 import pathlib
 import re
 import subprocess
 import sys
-import tarfile
-import threading
 from typing import Any
 
-import modal
+_HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(_HERE))  # _setups
+sys.path.insert(0, str(_HERE.parent))  # serve, run_libero
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _images import REMOTE_ROOT, cpu_mock_image  # noqa: E402
+import run_libero  # noqa: E402
+import serve  # noqa: E402
+from _setups import ARTIFACTS_VOLUME_NAME, MOCK, Case, app  # noqa: E402
 
-APP_NAME = "armory-fairness-alpha-sweep"
-REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_fairness_alpha_sweep")
-
-CONTROL_HZ = 20
 MAX_BATCH_SIZE = 5
 FAST_HORIZON = 4
 SLOW_HORIZON = 10
 DEFAULT_MAX_STEPS = 200
 DEFAULT_TRIALS_PER_ROBOT = 1
-
 
 BASELINE_SCHEDULERS = ("fixed-max-batch", "greedy-deadline", "round-robin", "lookahead-actions")
 DYNAMIC_SCHEDULER = "dynamic-action"
@@ -56,7 +54,7 @@ MODEL_TO_PROFILE = {
     "pi05": "l40s_pi05",
     "gr00t-n1.7": "l40s_gr00t",
 }
-
+# serve.ModelFamily member names keyed by the sweep's model token.
 MODEL_TO_ENUM_NAME = {
     "pi05": "PI05",
     "gr00t-n1.7": "GROOT_N17",
@@ -71,21 +69,12 @@ BASELINE_STYLE = {
 DYNAMIC_CMAP = "viridis"
 
 
-image = cpu_mock_image
-
-app = modal.App(APP_NAME)
-
-
 @dataclasses.dataclass(frozen=True)
 class Scenario:
     """A heterogeneity scenario: n_fast fast robots + n_slow slow robots."""
 
     n_fast: int
     n_slow: int
-
-    @property
-    def n_total(self) -> int:
-        return self.n_fast + self.n_slow
 
     @property
     def scenario_id(self) -> str:
@@ -103,7 +92,7 @@ class SweepCase:
     n_fast: int
     n_slow: int
     seed: int
-    # alpha is only meaningful for dynamic-action; None for the three baselines
+    # alpha is only meaningful for dynamic-action; None for the baselines.
     alpha: float | None
 
     @property
@@ -113,6 +102,9 @@ class SweepCase:
             f"model={self.model}__scheduler={self.scheduler}"
             f"__scenario={self.scenario_id}{alpha_part}__seed={self.seed}"
         )
+
+    def horizons(self) -> list[int]:
+        return [FAST_HORIZON] * self.n_fast + [SLOW_HORIZON] * self.n_slow
 
 
 def _parse_csv(value: str, *, cast=str) -> list[Any]:
@@ -156,253 +148,36 @@ def _build_experiment_config(horizons: list[int], max_steps: int) -> dict[str, A
     }
 
 
-def _build_server_cmd(*, model: str, scheduler: str, port: int, alpha: float | None) -> list[str]:
-    profile = MODEL_TO_PROFILE[model]
-    pre_policy = [
-        sys.executable,
-        "scripts/serve.py",
-        "--port",
-        str(port),
-        "--env",
-        "LIBERO",
-        "--model",
-        MODEL_TO_ENUM_NAME[model],
-        "--max-batch-size",
-        str(MAX_BATCH_SIZE),
-        "--scheduling-algorithm",
-        scheduler,
-    ]
-    if scheduler == DYNAMIC_SCHEDULER:
-        if alpha is None:
-            raise ValueError("dynamic-action requires alpha")
-        pre_policy += ["--alpha", str(alpha)]
-    post_policy = [
-        "policy:mock",
-        "--policy.action-horizon",
-        "10",
-        "--policy.action-dim",
-        "7",
-        "--policy.profile",
-        profile,
-    ]
-    return pre_policy + post_policy
-
-
-def _build_client_cmd(
-    *, port: int, seed: int, output_dir: pathlib.Path, experiment_config_path: pathlib.Path
-) -> list[str]:
-    return [
-        sys.executable,
-        "scripts/run_libero.py",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(port),
-        "--env",
-        "mock",
-        "--overwrite",
-        "--progress-type",
-        "logging",
-        "--seed",
-        str(seed),
-        "--output-dir",
-        str(output_dir),
-        "--experiment-config",
-        str(experiment_config_path),
-    ]
-
-
-def _stream_to_log_and_stdout(stream, log_file, prefix: str) -> None:
-    """Tee a subprocess text stream line-by-line to both ``log_file`` and ``sys.stdout``.
-
-    Routing subprocess output via this helper makes it visible in the Modal
-    container log (which only captures the function's own stdout/stderr) while
-    still preserving the per-run log files in the artifact tarball.
-    """
-    for raw in stream:
-        log_file.write(raw)
-        log_file.flush()
-        line = raw if raw.endswith("\n") else raw + "\n"
-        sys.stdout.write(f"[{prefix}] {line}")
-        sys.stdout.flush()
-
-
-def _run_subprocess(
-    args: list[str],
-    *,
-    log_path: pathlib.Path,
-    prefix: str,
-    timeout_s: int | None = None,
-) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = log_path.open("w")
-    proc = subprocess.Popen(
-        args,
-        cwd=REMOTE_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env={
-            **{k: v for k, v in __import__("os").environ.items()},
-            "MPLBACKEND": "Agg",
-        },
-    )
-    reader = threading.Thread(
-        target=_stream_to_log_and_stdout,
-        args=(proc.stdout, log_file, prefix),
-        daemon=True,
-    )
-    reader.start()
-    try:
-        rc = proc.wait(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-        reader.join(timeout=5)
-        log_file.close()
-        raise
-    reader.join(timeout=5)
-    log_file.close()
-    if rc != 0:
-        raise subprocess.CalledProcessError(rc, args)
-
-
-def _tar_directory(path: pathlib.Path) -> bytes:
-    def compact_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
-        if pathlib.Path(info.name).suffix in {".mp4", ".parquet", ".npz"}:
-            return None
-        return info
-
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        tar.add(path, arcname=path.name, filter=compact_filter)
-    return buffer.getvalue()
-
-
-def _summarize_run(
-    output_dir: pathlib.Path, case: SweepCase, horizons: list[int]
-) -> dict[str, Any]:
-    from sims.libero.metrics import (  # noqa: PLC0415
-        compute_fairness_metrics,
-        compute_starvation_variance_series,
-    )
-
-    fairness = compute_fairness_metrics(output_dir)
-    summary: dict[str, Any] = {
-        "run_id": case.run_id,
-        "model": case.model,
-        "scheduler": case.scheduler,
-        "scenario_id": case.scenario_id,
-        "n_fast": case.n_fast,
-        "n_slow": case.n_slow,
-        "n_total": case.n_fast + case.n_slow,
-        "alpha_requested": case.alpha,
-        "seed": case.seed,
-        "horizons": json.dumps(horizons),
-    }
-    if fairness is not None:
-        summary["alpha_observed"] = fairness.get("alpha")
-        summary["jain_freshness"] = fairness["jain_freshness"]
-        summary["jain_starvation"] = fairness["jain_starvation"]
-        rates = fairness["starvation_rate"]
-        if rates:
-            summary["mean_starvation"] = float(sum(rates) / len(rates))
-            # max_starvation = worst-off robot's starvation rate. Equivalently
-            # the α=∞ (Rawlsian) welfare endpoint: 1 - max_starvation is the
-            # min freshness. Asymmetric — only the worst-off robot moves it.
-            summary["max_starvation"] = float(max(rates))
-            summary["min_starvation"] = float(min(rates))
-
-    # Pull cross-robot starvation variance from the same source as the
-    # starvation_variance_over_time plot so the sweep summary matches its
-    # final value exactly (actions_left<=0 on a wall-clock canvas, not
-    # cost_history NaNs aggregated per episode).
-    series = compute_starvation_variance_series(output_dir)
-    if series is not None:
-        summary["starvation_variance"] = series["final_starvation_variance"]
-    return summary
-
-
-# @app.function(image=image, timeout=60 * 60, cpu=25, memory=16384)
-@app.function(image=image, timeout=60 * 60, cpu=10, memory=16384)
-def run_case(case: SweepCase, *, port: int, max_steps: int) -> dict[str, Any]:
-    horizons = [FAST_HORIZON] * case.n_fast + [SLOW_HORIZON] * case.n_slow
+def _build_case(case: SweepCase, *, output_dir: pathlib.Path, max_steps: int) -> Case:
+    """Resolve a SweepCase into the serve.Args + run_libero.Args the setup runs."""
+    horizons = case.horizons()
     exp_cfg = _build_experiment_config(horizons, max_steps)
+    run_dir = output_dir / "runs" / case.run_id
 
-    run_dir = REMOTE_OUTPUT_ROOT / case.run_id
-    output_dir = run_dir / "output"
-    log_dir = run_dir / "logs"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    saved_exp_config = run_dir / "experiment_config.json"
-    (run_dir / "case.json").write_text(json.dumps(dataclasses.asdict(case), indent=2))
-    saved_exp_config.write_text(json.dumps(exp_cfg, indent=2))
-
-    server_cmd = _build_server_cmd(
-        model=case.model, scheduler=case.scheduler, port=port, alpha=case.alpha
+    server_args = serve.Args(
+        model=serve.ModelFamily[MODEL_TO_ENUM_NAME[case.model]],
+        max_batch_size=MAX_BATCH_SIZE,
+        scheduling_algorithm=case.scheduler,
+        alpha=case.alpha if case.alpha is not None else serve.Args.alpha,
+        policy=serve.Mock(action_horizon=10, action_dim=7, profile=MODEL_TO_PROFILE[case.model]),
+        log_dir=str(run_dir / "server_logs"),
     )
-    client_cmd = _build_client_cmd(
-        port=port, seed=case.seed, output_dir=output_dir, experiment_config_path=saved_exp_config
+    client_args = run_libero.Args(
+        env="mock",
+        overwrite=True,
+        progress_type="logging",
+        max_steps=max_steps,
+        seed=case.seed,
+        output_dir=run_dir / "output",
+        log_dir=run_dir / "client_logs",
     )
-
-    server_log = log_dir / "server.log"
-    server_log_file = server_log.open("w")
-    server_proc = subprocess.Popen(
-        server_cmd,
-        cwd=REMOTE_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        env={
-            **{k: v for k, v in __import__("os").environ.items()},
-            "MPLBACKEND": "Agg",
-        },
+    return Case(
+        run_id=case.run_id,
+        run_dir=run_dir,
+        server_args=server_args,
+        client_args=client_args,
+        experiment_config=exp_cfg,
     )
-    server_reader = threading.Thread(
-        target=_stream_to_log_and_stdout,
-        args=(server_proc.stdout, server_log_file, "server"),
-        daemon=True,
-    )
-    server_reader.start()
-    try:
-        _run_subprocess(
-            client_cmd,
-            log_path=log_dir / "client.log",
-            prefix="client",
-            timeout_s=60 * 30,
-        )
-        summary = _summarize_run(output_dir, case, horizons)
-        summary["status"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        summary = {
-            "run_id": case.run_id,
-            "model": case.model,
-            "scheduler": case.scheduler,
-            "scenario_id": case.scenario_id,
-            "n_fast": case.n_fast,
-            "n_slow": case.n_slow,
-            "n_total": case.n_fast + case.n_slow,
-            "alpha_requested": case.alpha,
-            "seed": case.seed,
-            "horizons": json.dumps(horizons),
-            "status": "failed",
-            "error": repr(exc),
-        }
-    finally:
-        server_proc.terminate()
-        try:
-            server_proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            server_proc.kill()
-            server_proc.wait(timeout=20)
-        server_reader.join(timeout=5)
-        server_log_file.close()
-
-    summary["artifact_tgz"] = _tar_directory(run_dir)
-    return summary
 
 
 def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
@@ -410,7 +185,7 @@ def _write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
     keys: list[str] = []
     for row in rows:
         for key in row:
-            if key != "artifact_tgz" and key not in keys:
+            if key not in keys:
                 keys.append(key)
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=keys)
@@ -532,9 +307,9 @@ def _save_single_panel_plot(
 ) -> None:
     """Render one PNG per (scenario, model) for the given y_col.
 
-    ``pareto=True`` auto-scales axes to the data range with padding; otherwise
-    the axes are anchored at zero so a fixed-scale "lower is better" plot is
-    easy to compare across scenarios.
+    ``pareto=True`` auto-scales axes to the data range with padding; otherwise the
+    axes are anchored at zero so a fixed-scale "lower is better" plot is easy to
+    compare across scenarios.
     """
     import matplotlib
 
@@ -586,8 +361,8 @@ def _plot_starvation_pareto(results_csv: pathlib.Path, plots_dir: pathlib.Path) 
     """Pareto plot: mean vs worst-robot (max) starvation. Bottom-left = best.
 
     Baselines render as fixed points; dynamic-action sweeps a Pareto frontier
-    between utilitarian (low mean, high max) and Rawlsian (slightly higher
-    mean, low max).
+    between utilitarian (low mean, high max) and Rawlsian (slightly higher mean,
+    low max).
     """
     _save_single_panel_plot(
         results_csv,
@@ -620,12 +395,10 @@ def main(
     alpha_grid: str = "0.0,0.25,0.5,0.75,1.0",
     seeds: str = "1",
     output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_test",
-    port: int = 8080,
     max_steps: int = DEFAULT_MAX_STEPS,
 ) -> None:
     out = pathlib.Path(output_dir)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
-    artifacts_dir = out / "artifacts"
 
     model_list = _parse_csv(models)
     scenario_list = _parse_scenarios(scenarios)
@@ -636,7 +409,6 @@ def main(
     for scenario in scenario_list:
         for model in model_list:
             for seed in seed_list:
-                # baselines: one per scheduler
                 for sched in BASELINE_SCHEDULERS:
                     cases.append(
                         SweepCase(
@@ -649,7 +421,6 @@ def main(
                             alpha=None,
                         )
                     )
-                # dynamic-action: one per alpha
                 for alpha in alpha_list:
                     cases.append(
                         SweepCase(
@@ -669,27 +440,44 @@ def main(
         f"models={model_list} alphas={alpha_list} seeds={seed_list})"
     )
 
+    built = [_build_case(case, output_dir=out, max_steps=max_steps) for case in cases]
+    case_meta = {
+        case.run_id: {
+            "run_id": case.run_id,
+            "model": case.model,
+            "scheduler": case.scheduler,
+            "scenario_id": case.scenario_id,
+            "n_fast": case.n_fast,
+            "n_slow": case.n_slow,
+            "n_total": case.n_fast + case.n_slow,
+            "alpha_requested": case.alpha,
+            "seed": case.seed,
+            "horizons": json.dumps(case.horizons()),
+        }
+        for case in cases
+    }
+
     rows: list[dict[str, Any]] = []
-    for result in run_case.map(
-        cases,
-        kwargs={"port": port, "max_steps": max_steps},
-        order_outputs=False,
-    ):
-        artifact_bytes = result.pop("artifact_tgz", None)
-        if artifact_bytes is not None:
-            run_dir = artifacts_dir / result["run_id"]
-            run_dir.mkdir(parents=True, exist_ok=True)
-            with tarfile.open(fileobj=io.BytesIO(artifact_bytes), mode="r:gz") as tar:
-                tar.extractall(run_dir)
-            result["artifact_path"] = str(run_dir)
-        rows.append(result)
-        max_s = result.get("max_starvation", "")
-        starv = result.get("mean_starvation", "")
+    for result in MOCK.run(built, stamp=stamp, cpu=10, memory=16384):
+        row = {**case_meta[result["run_id"]], **result}
+        rows.append(row)
+        max_s = row.get("max_starvation", "")
+        mean_s = row.get("mean_starvation", "")
         print(
-            f"{result['status']}: {result['run_id']} "
+            f"{row['status']}: {row['run_id']} "
             f"max_starvation={max_s if max_s == '' else f'{float(max_s):.4f}'} "
-            f"mean_starvation={starv if starv == '' else f'{float(starv):.4f}'}"
+            f"mean_starvation={mean_s if mean_s == '' else f'{float(mean_s):.4f}'}"
         )
+
+    artifacts_dir = out / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading artifacts from volume '{ARTIFACTS_VOLUME_NAME}/{stamp}' -> {artifacts_dir}")
+    subprocess.run(
+        ["modal", "volume", "get", ARTIFACTS_VOLUME_NAME, stamp, str(artifacts_dir), "--force"],
+        check=True,
+    )
+    for row in rows:
+        row["artifact_path"] = str(artifacts_dir / stamp / row["run_id"])
 
     sweep_csv = out / f"sweep_results_{stamp}.csv"
     latest_csv = out / "sweep_results.csv"
