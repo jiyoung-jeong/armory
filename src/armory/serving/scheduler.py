@@ -119,12 +119,32 @@ class SchedulerWorker:
         self.ready_event.set()
         logger.info("Scheduler ready")
 
+        tick = 0
         while True:
-            poller.poll()
+            tick += 1
+            logger.debug("tick=%d stage=poll_wait", tick)
+            events = poller.poll()
+            ready = {
+                "req": any(s is req_sock for s, _ in events),
+                "result": any(s is result_sock for s, _ in events),
+            }
+            logger.debug("tick=%d stage=poll_done ready=%s", tick, ready)
+
+            logger.debug("tick=%d stage=process_engine", tick)
             self._process_engine_messages(scheduler, result_sock)
+
+            logger.debug("tick=%d stage=process_server", tick)
             self._process_server_messages(scheduler, req_sock)
+
+            logger.debug("tick=%d stage=schedule_begin", tick)
             decisions = scheduler.schedule()
-            self.scheduler_metrics_queue.put_nowait(decisions)
+            logger.debug("tick=%d stage=schedule_done decisions=%d", tick, len(decisions))
+
+            if self.scheduler_metrics_queue is not None:
+                try:
+                    self.scheduler_metrics_queue.put_nowait(decisions)
+                except Exception:
+                    logger.exception("tick=%d failed to enqueue scheduler decisions", tick)
 
     # ------------------------------------------------------------------
     # Helpers

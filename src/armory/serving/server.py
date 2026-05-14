@@ -146,7 +146,7 @@ async def _ws_handshake(
     state.response_queues[robot_id] = asyncio.Queue()
     state.robot_metadata[robot_id] = connect_req
 
-    await websocket.send_bytes(msgpack_numpy.packb(dataclasses.asdict(ConnectResponse())))
+    await websocket.send_bytes(msgpack_numpy.packb(ConnectResponse()))
     logger.info("Robot %s connected (control_hz=%.1f)", robot_id, connect_req.control_hz)
     return robot_id, slot_index, connect_req
 
@@ -175,7 +175,7 @@ async def _ws_warmup(
             server_send_time=server_send_time,
             payload=bytes(action_payload_size),
         )
-        await websocket.send_bytes(msgpack_numpy.packb(dataclasses.asdict(pong)))
+        await websocket.send_bytes(msgpack_numpy.packb(pong))
         obs_samples.append((server_receive_time, msg["client_timestamp"]))
 
         ack_raw = await websocket.receive_bytes()
@@ -409,7 +409,11 @@ def create_app(
                                     robot_id=robot_id,
                                     request_id=ack.request_id,
                                     chunk_id=ack.chunk_id,
-                                    observation_step=response.observation_step,
+                                    observation_step=ack.observation_step,
+                                    action_index_start=ack.action_index_start,
+                                    execution_horizon=ack.execution_horizon,
+                                    execution_start_step=ack.execution_start_step,
+                                    first_executed_index=ack.first_executed_index,
                                     receive_time=ack.receive_time,
                                     server_send_time=response.server_send_time,
                                 )
@@ -480,7 +484,7 @@ def create_app(
                 response: InferResponse = await response_queue.get()
                 stamped = dataclasses.replace(response, server_send_time=time.time())
                 pending_responses[response.request_id] = stamped
-                await websocket.send_bytes(msgpack_numpy.packb(asdict(stamped)))
+                await websocket.send_bytes(msgpack_numpy.packb(stamped))
                 logger.debug("Sent response: %s", stamped)
 
         recv_task = asyncio.create_task(recv())

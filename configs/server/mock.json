@@ -6,5 +6,5 @@
     "action_dim": 7,
     "profile": "l40s_pi05"
   },
-  "max_batch_size": 4
+  "max_batch_size": 5
 }

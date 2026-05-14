@@ -43,7 +43,7 @@ def _make_robot(scenario: Scenario) -> Robot:
     robot.step(_make_request(0, 0, 0.0, horizon))
     for chunk in scenario.chunks:
         robot.queue_chunk(chunk)
-        robot.update_chunk_arrival_time(chunk.chunk_id, chunk.arrival_time, arrived=True)
+        robot.update_chunk(replace(chunk, origin="confirmed"))
     return robot
 
 
@@ -57,7 +57,7 @@ def test_chunk_tracking(scenario: Scenario) -> None:
         assert actual.action_index_start == expected.action_index_start
         assert actual.execution_horizon == expected.execution_horizon
         assert actual.arrival_time == pytest.approx(expected.arrival_time)
-        assert actual.arrived is True
+        assert actual.origin == "confirmed"
 
     assert robot.max_overall_action_step == max(
         c.action_index_start + c.execution_horizon - 1 for c in scenario.chunks
@@ -229,8 +229,29 @@ def test_mirror_checkpoint_drops_robots_added_after() -> None:
     assert "a" in mirror.robots
 
 
+def test_mirror_checkpoint_restores_divergent_branch_contents() -> None:
+    """Restore must recover branch contents, not just truncate lists to branch lengths."""
+    horizon = LONG_RUN.chunks[0].execution_horizon
+    mirror = Mirror()
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror.robots[ROBOT_ID].queue_chunk(LONG_RUN.chunks[0])
+    parent_ckpt = mirror.checkpoint()
+
+    branch_a_chunk = replace(LONG_RUN.chunks[1], chunk_id=101, action_index_start=5)
+    mirror.robots[ROBOT_ID].queue_chunk(branch_a_chunk)
+    branch_a_ckpt = mirror.checkpoint()
+
+    mirror.restore(parent_ckpt)
+    branch_b_chunk = replace(LONG_RUN.chunks[1], chunk_id=202, action_index_start=4)
+    mirror.robots[ROBOT_ID].queue_chunk(branch_b_chunk)
+
+    mirror.restore(branch_a_ckpt)
+
+    assert mirror.robots[ROBOT_ID].chunks == [LONG_RUN.chunks[0], branch_a_chunk]
+
+
 def test_mirror_update_completion_refines_arrival() -> None:
-    """update_batch_completion sets arrival_time to completion + action_latency without flipping arrived."""
+    """update_batch_completion sets arrival_time to completion + action_latency."""
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
     mirror = Mirror(tracker)
     horizon = LONG_RUN.chunks[0].execution_horizon
@@ -266,11 +287,11 @@ def test_mirror_update_completion_refines_arrival() -> None:
 
     refined = mirror.robots[ROBOT_ID].chunks[0]
     assert refined.arrival_time == pytest.approx(10.02)
-    assert refined.arrived is False
+    assert refined.origin == "completed"
 
 
 def test_mirror_confirm_chunk_by_chunk_id() -> None:
-    """confirm_chunk matches by chunk_id, sets arrival_time=ack.receive_time and arrived=True."""
+    """confirm_chunk matches by chunk_id and sets arrival_time=ack.receive_time."""
     horizon = LONG_RUN.chunks[0].execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
@@ -283,14 +304,20 @@ def test_mirror_confirm_chunk_by_chunk_id() -> None:
         request_id=0,
         chunk_id=chunk.chunk_id,
         observation_step=chunk.observation_step,
+        action_index_start=chunk.action_index_start,
+        execution_horizon=chunk.execution_horizon,
+        execution_start_step=3,
+        first_executed_index=1,
         receive_time=42.0,
         server_send_time=0.0,
     )
     mirror.confirm_chunk(ack)
 
     confirmed = mirror.robots[ROBOT_ID].chunks[0]
-    assert confirmed.arrived is True
     assert confirmed.arrival_time == pytest.approx(42.0)
+    assert confirmed.origin == "confirmed"
+    assert confirmed.execution_start_step == 3
+    assert confirmed.first_executed_index == 1
 
 
 def test_mirror_get_chunks_basic() -> None:
@@ -312,7 +339,7 @@ def test_mirror_get_chunks_basic() -> None:
     [chunk] = chunks
     # arrival_time = dispatch + infer + action = 2.0 + 0.1 + 0.02
     assert chunk.arrival_time == pytest.approx(2.12)
-    assert chunk.arrived is False
+    assert chunk.origin == "queued"
     assert chunk.execution_horizon == horizon
     # observation_step: latest step before (dispatch_time - obs_latency) = 1.95;
     # steps tick at integer times, so the latest step before 1.95 is step 1.

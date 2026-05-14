@@ -13,10 +13,28 @@ that it falls back to pickle for object arrays.
 """
 
 import functools
+from dataclasses import fields, is_dataclass
 from enum import Enum
+from typing import Any
 
 import msgpack
 import numpy as np
+
+
+def _to_builtin(obj: Any) -> Any:
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return {field.name: _to_builtin(getattr(obj, field.name)) for field in fields(obj)}
+
+    if isinstance(obj, dict):
+        return {_to_builtin(key): _to_builtin(value) for key, value in obj.items()}
+
+    if isinstance(obj, tuple):
+        return tuple(_to_builtin(value) for value in obj)
+
+    if isinstance(obj, list):
+        return [_to_builtin(value) for value in obj]
+
+    return obj
 
 
 def pack_array(obj):
@@ -26,6 +44,9 @@ def pack_array(obj):
         "c",
     ):
         raise ValueError(f"Unsupported dtype: {obj.dtype}")
+
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return _to_builtin(obj)
 
     if isinstance(obj, np.ndarray):
         return {
