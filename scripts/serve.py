@@ -17,6 +17,8 @@ from openpi_adapter.serve_factory import EnvMode
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from utils import JsonArgs, resolve_policy  # noqa: E402
 
+from sims.libero.seeding import seed_everything  # noqa: E402
+
 
 class ModelFamily(str, enum.Enum):
     PI05 = "pi05"
@@ -75,6 +77,7 @@ class Args(JsonArgs):
     lookahead_timestep_ms: int = 50
     lookahead_control_hz: int = 20
 
+    seed: int = 7
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
     def _serialize(self) -> dict:
@@ -99,6 +102,7 @@ class Args(JsonArgs):
             "lookahead_horizon_ms": self.lookahead_horizon_ms,
             "lookahead_timestep_ms": self.lookahead_timestep_ms,
             "lookahead_control_hz": self.lookahead_control_hz,
+            "seed": self.seed,
             "log_level": self.log_level,
         }
 
@@ -127,6 +131,7 @@ class Args(JsonArgs):
             lookahead_horizon_ms=data.get("lookahead_horizon_ms", 500),
             lookahead_timestep_ms=data.get("lookahead_timestep_ms", 50),
             lookahead_control_hz=data.get("lookahead_control_hz", 20),
+            seed=data.get("seed", 7),
             log_level=data.get("log_level", "INFO"),
         )
 
@@ -147,6 +152,7 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
 
 
 def main(args: Args) -> None:
+    seed_everything(args.seed)
     log_path = (
         pathlib.Path(args.log_dir)
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
