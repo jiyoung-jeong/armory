@@ -34,7 +34,7 @@ import itertools
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import (
@@ -46,7 +46,6 @@ from armory.serving.schemas import (
 )
 
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG)
 
 
 @dataclass
@@ -76,7 +75,23 @@ class Robot:
         # Includes chunks that are in-transit.
         self.chunks: list[ActionChunk] = []
 
-    def step(self, request: SlotRequest) -> None:
+    def step(self, request: SlotRequest) -> bool:
+        """Apply ``request`` to the control-step history. Returns False if the
+        request is stale and was dropped.
+
+        ``request.action_index_start`` is the action the *robot* wants to execute
+        next — it does not advance until the robot actually consumes a chunk and
+        moves on. Across multiple observations while the robot waits, the same
+        ``action_index_start`` repeats. So this method just records the robot's
+        reported state; it does not infer execution from a "match" between the
+        request and the mirror's prediction. Simulated execution happens in
+        ``advance_step`` via ``fast_forward``, not here.
+
+        Drops fire when the request would either:
+        - revisit an already-seen ``observation_step`` (out-of-order delivery), or
+        - move ``next_action_step`` backward (a real regression; the robot
+          shouldn't ever ask for a lower action index than it last reported).
+        """
         if not self.steps:
             assert request.action_index_start == 0
             control_step = ControlStep(
@@ -86,28 +101,63 @@ class Robot:
                 next_action_step=0,
             )
         else:
-            executed_action_on_step = request.action_index_start == self.steps[-1].next_action_step
+            latest = self.steps[-1]
+            if request.observation_step <= latest.observation_step:
+                logger.warning(
+                    "Robot.step dropping out-of-order request: "
+                    "obs_step=%d <= latest=%d (action_index_start=%d, next_action_step=%d)",
+                    request.observation_step,
+                    latest.observation_step,
+                    request.action_index_start,
+                    latest.next_action_step,
+                )
+                return False
+            if request.action_index_start < latest.next_action_step:
+                logger.warning(
+                    "Robot.step dropping backward request: "
+                    "action_index_start=%d < next_action_step=%d (obs_step=%d)",
+                    request.action_index_start,
+                    latest.next_action_step,
+                    request.observation_step,
+                )
+                return False
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
-                action_step=request.action_index_start if executed_action_on_step else None,
-                next_action_step=request.action_index_start + 1
-                if executed_action_on_step
-                else request.action_index_start,
+                action_step=None,
+                next_action_step=request.action_index_start,
             )
 
         self.steps.append(control_step)
+        return True
 
     def queue_chunk(self, chunk: ActionChunk) -> None:
         self.chunks.append(chunk)
 
-    def update_chunk_arrival_time(
-        self, chunk_id: int, refined_arrival_time: float, *, arrived: bool = False
+        # NOTE: chunk check
+        for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
+            if prev.action_index_start + prev.execution_horizon < curr.action_index_start:
+                raise ValueError(
+                    f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
+                )
+
+    def update_chunk(
+        self,
+        new_chunk: ActionChunk,
     ) -> None:
         for i, chunk in enumerate(self.chunks):
-            if chunk.chunk_id == chunk_id:
-                self.chunks[i] = replace(chunk, arrival_time=refined_arrival_time, arrived=arrived)
+            if chunk.chunk_id == new_chunk.chunk_id:
+                self.chunks[i] = new_chunk
                 return
+
+        # NOTE: chunk check
+        for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
+            if prev.action_index_start + prev.execution_horizon < curr.action_index_start:
+                raise ValueError(
+                    f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
+                )
+
+        raise ValueError(f"chunk {new_chunk.chunk_id} not found")
 
     @property
     def max_overall_action_step(self) -> int:
@@ -136,6 +186,7 @@ class Robot:
         return False
 
     def advance_step(self, prev_step: ControlStep) -> ControlStep:
+        """Assumes there are no gaps in action steps of chunks."""
         next_time = prev_step.time + 1 / self.control_hz
         action_step = (
             prev_step.next_action_step
@@ -153,23 +204,23 @@ class Robot:
 
     def deadline(self) -> float:
         if not self.chunks:
+            # TODO: should be first step when robot ran out of actions
             return self.steps[-1].time
 
         step = self.steps[-1]
-
         while step.next_action_step <= self.max_overall_action_step:
-            # If no chunk covers next_action_step, advance_step can never
-            # increment it (action_is_available stays False forever) and the
-            # loop spins indefinitely. Treat the gap as the stall point and
-            # return the current step time.
-            # NOTE Rohan: hack from Claude. fix properly
-            if not any(
-                chunk.action_index_start
-                <= step.next_action_step
-                <= chunk.action_index_start + chunk.execution_horizon - 1
-                for chunk in self.chunks
-            ):
-                return step.time
+            # # If no chunk covers next_action_step, advance_step can never
+            # # increment it (action_is_available stays False forever) and the
+            # # loop spins indefinitely. Treat the gap as the stall point and
+            # # return the current step time.
+            # # NOTE Rohan: hack from Claude. fix properly
+            # if not any(
+            #     chunk.action_index_start
+            #     <= step.next_action_step
+            #     <= chunk.action_index_start + chunk.execution_horizon - 1
+            #     for chunk in self.chunks
+            # ):
+            #     return step.time
             step = self.advance_step(step)
 
         return step.time
@@ -229,9 +280,14 @@ class Batch:
 
 @dataclass(frozen=True)
 class Checkpoint:
-    """Snapshot of a Mirror's append-only state. Restore resets lists and batch queue."""
+    """Snapshot of a Mirror's append-only state. Restore resets robot and batch state.
 
-    lengths: dict[RobotID, tuple[int, int]]  # (n_steps, n_chunks) per robot
+    Checkpoints must preserve the actual list contents, not only list lengths:
+    search restores divergent branches whose chunk/control-step prefixes may
+    have the same length but different values.
+    """
+
+    robot_states: dict[RobotID, tuple[tuple[ControlStep, ...], tuple[ActionChunk, ...]]]
     in_flight_batches: tuple[Batch, ...]
     last_batch_completed_time: float
 
@@ -253,11 +309,12 @@ class Mirror:
     def reset_robot(self, robot_id: RobotID) -> None:
         self.robots.pop(robot_id, None)
 
-    def receive_request(self, request: SlotRequest, control_hz: float) -> None:
+    def receive_request(self, request: SlotRequest, control_hz: float) -> bool:
+        """Returns False if the request was dropped as stale by ``Robot.step``."""
         if request.robot_id not in self.robots:
             # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
             self.robots[request.robot_id] = Robot(control_hz, request.execution_horizon)
-        self.robots[request.robot_id].step(request)
+        return self.robots[request.robot_id].step(request)
 
     def _next_chunk_context(self, rid: RobotID, dispatch_time: float) -> tuple[ControlStep, int]:
         # Caller must fast-forward the mirror to at least ``dispatch_time`` first.
@@ -269,7 +326,9 @@ class Mirror:
         )
         return cs, robot.next_chunk_start(cs)
 
-    def queue_batch(self, batch: list[RobotID], batch_id: int) -> list[ActionChunk]:
+    def queue_batch(
+        self, batch: list[RobotID], batch_id: int, *, origin: str = "queued"
+    ) -> list[ActionChunk]:
         assert self.latency_tracker is not None
         dispatch_time = self.next_time_server_available()
         infer_lat = self.latency_tracker.infer_latency(len(batch))
@@ -288,6 +347,7 @@ class Mirror:
                 arrival_time=dispatch_time + infer_lat + self.latency_tracker.action_latency(rid),
                 action_index_start=action_index_start,
                 execution_horizon=robot.execution_horizon,
+                origin=origin,
             )
             chunks.append(chunk)
             robot.queue_chunk(chunk)
@@ -320,7 +380,10 @@ class Mirror:
         self.last_batch_completed_time = actual_completion
 
         served_chunk_ids = set([response.chunk_id for response in batch.responses])
-        for robot_id, chunk_id in zip(in_flight.robot_ids, in_flight.chunk_ids):
+        for (
+            robot_id,
+            chunk_id,
+        ) in zip(in_flight.robot_ids, in_flight.chunk_ids):
             robot = self.robots.get(robot_id)
             if robot is None:
                 logger.debug("Ignoring completion for unknown robot: %s", robot_id)
@@ -328,16 +391,37 @@ class Mirror:
             if chunk_id not in served_chunk_ids:
                 robot.remove_chunk(chunk_id)
             else:
-                robot.update_chunk_arrival_time(
-                    chunk_id, actual_completion + self.latency_tracker.action_latency(robot_id)
+                # kind ugly
+                infer_response = next(
+                    response for response in batch.responses if response.chunk_id == chunk_id
                 )
+                chunk = ActionChunk(
+                    chunk_id=chunk_id,
+                    observation_step=infer_response.observation_step,
+                    arrival_time=actual_completion + self.latency_tracker.action_latency(robot_id),
+                    action_index_start=infer_response.action_index_start,
+                    execution_horizon=infer_response.execution_horizon,
+                    execution_start_step=0,
+                    origin="completed",
+                )
+                robot.update_chunk(chunk)
 
     def confirm_chunk(self, ack: AckNotification) -> None:
         robot = self.robots.get(ack.robot_id)
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
             return
-        robot.update_chunk_arrival_time(ack.chunk_id, ack.receive_time, arrived=True)
+        chunk = ActionChunk(
+            chunk_id=ack.chunk_id,
+            observation_step=ack.observation_step,
+            arrival_time=ack.receive_time,
+            action_index_start=ack.action_index_start,
+            execution_horizon=ack.execution_horizon,
+            execution_start_step=ack.execution_start_step,
+            first_executed_index=ack.first_executed_index,
+            origin="confirmed",
+        )
+        robot.update_chunk(chunk)
 
     def next_time_server_available(self) -> float:
         if len(self.in_flight_batches) == 0:
@@ -413,25 +497,28 @@ class Mirror:
 
     def checkpoint(self) -> Checkpoint:
         return Checkpoint(
-            lengths={rid: (len(r.steps), len(r.chunks)) for rid, r in self.robots.items()},
+            robot_states={
+                rid: (tuple(robot.steps), tuple(robot.chunks)) for rid, robot in self.robots.items()
+            },
             in_flight_batches=tuple(self.in_flight_batches),
             last_batch_completed_time=self.last_batch_completed_time,
         )
 
     def restore(self, ckpt: Checkpoint) -> None:
         for rid in list(self.robots.keys()):
-            if rid not in ckpt.lengths:
+            if rid not in ckpt.robot_states:
                 del self.robots[rid]
                 continue
-            n_steps, n_chunks = ckpt.lengths[rid]
-            r = self.robots[rid]
-            del r.steps[n_steps:]
-            del r.chunks[n_chunks:]
+            steps, chunks = ckpt.robot_states[rid]
+            robot = self.robots[rid]
+            robot.steps = list(steps)
+            robot.chunks = list(chunks)
         self.in_flight_batches = deque(ckpt.in_flight_batches)
         self.last_batch_completed_time = ckpt.last_batch_completed_time
 
     def deadlines(self) -> dict[RobotID, float]:
-        return {rid: robot.deadline() for rid, robot in self.robots.items()}
+        deadlines = {rid: robot.deadline() for rid, robot in self.robots.items()}
+        return deadlines
 
     def to_dict(self) -> dict:
         now = time.time()

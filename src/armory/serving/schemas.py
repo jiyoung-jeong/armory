@@ -49,6 +49,11 @@ class AckNotification:
     request_id: int
     chunk_id: int
     observation_step: int
+    action_index_start: int
+    execution_horizon: int
+    execution_start_step: int
+    first_executed_index: int
+
     receive_time: float
     server_send_time: float
 
@@ -83,10 +88,17 @@ class ResetAll:
 class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
-    arrival_time: float  # estimated/actual time the chunk lands on the robot
     action_index_start: int  # action index of the first action in the chunk
     execution_horizon: int
-    arrived: bool = False
+    arrival_time: float  # estimated/actual time the chunk lands on the robot
+    execution_start_step: int = 0  # client step when new chunk became available
+    first_executed_index: int = 0  # index within chunk where actual execution started
+    # Provenance/lifecycle tag. Transitions:
+    #   "queued"    -> queued by production scheduler (arrival_time predicted)
+    #   "searched"  -> queued inside a lookahead search snapshot (never confirmed)
+    #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
+    #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
+    origin: str = "queued"
 
 
 class RequestBatch(NamedTuple):

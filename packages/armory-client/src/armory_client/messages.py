@@ -84,11 +84,33 @@ class InferResponse:
 @dataclass(frozen=True)
 class ResponseAck:
     request_id: int  # matches InferResponse.request_id
+
     chunk_id: int  # matches InferResponse.chunk_id
+    observation_step: int  # step when observation was captured
     receive_time: float  # time.time() on client at receipt
+    action_index_start: int  # action index of the first action in the chunk
+    execution_horizon: int
     execution_start_step: int  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
+
     type: Literal["ack"] = "ack"
+
+
+@dataclass(frozen=True)
+class ActionChunk:
+    chunk_id: int
+    observation_step: int  # step when observation was captured
+    action_index_start: int  # action index of the first action in the chunk
+    execution_horizon: int
+    arrival_time: float  # estimated/actual time the chunk lands on the robot
+    execution_start_step: int  # client step when new chunk became available
+    first_executed_index: int = 0  # index within chunk where actual execution started
+    # Provenance/lifecycle tag. Transitions:
+    #   "queued"    -> queued by production scheduler (arrival_time predicted)
+    #   "searched"  -> queued inside a lookahead search snapshot (never confirmed)
+    #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
+    #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
+    origin: str = "queued"
 
 
 @dataclass(frozen=True)

@@ -610,7 +610,7 @@ def main(
     # models: str = "pi05,gr00t-n1.7",
     models: str = "pi05",
     # scenarios: str = "1f9s,5f5s",
-    scenarios: str = "5f5s",
+    scenarios: str = "1f9s,5f5s",
     alpha_grid: str = "0.0,0.25,0.5,0.75,1.0",
     seeds: str = "42",
     output_dir: str = "experiments/sweeps/fairness_alpha_sweep_pi05_5f5s",

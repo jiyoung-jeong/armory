@@ -16,7 +16,6 @@ from armory.scheduling.mirror import ActionChunk, Checkpoint, Mirror, Robot
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 def _action_time(robot: Robot) -> float:
@@ -124,7 +123,11 @@ class IncrementalSearch:
             if next_time > self.end_time:
                 continue
 
-            chunks = tuple(self.snapshot.queue_batch(list(batch), next(self._search_batch_id)))
+            chunks = tuple(
+                self.snapshot.queue_batch(
+                    list(batch), next(self._search_batch_id), origin="searched"
+                )
+            )
             self.snapshot.fast_forward(next_time)
 
             new_schedule = schedule + (ScheduledBatch(batch, chunks),)
@@ -193,6 +196,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         # be re-planned on the next tick. Robot IDs in the plan map back through
         # the most-recent SlotRequest the scheduler has on file.
         if not self._latest_requests:
+            logger.debug("lookahead stage=exit reason=no_requests")
             return [], {"reason": "no_requests"}
 
         next_avail = self.mirror.next_time_server_available()
@@ -224,13 +228,26 @@ class LookaheadActionsScheduler(RequestScheduler):
         }
 
         if dispatch_budget == 0:
+            logger.debug(
+                "lookahead stage=exit reason=at_in_flight_cap in_flight=%d max=%d",
+                in_flight,
+                self.max_in_flight,
+            )
             notes["mode"] = "at_in_flight_cap"
             return [], notes
 
         if slack < self.scheduling_buffer:
+            logger.debug(
+                "lookahead stage=exit reason=greedy_no_slack slack=%+.3fs buffer=%.3fs",
+                slack,
+                self.scheduling_buffer,
+            )
             notes["mode"] = "greedy_no_slack"
             return [self._greedy()], notes
 
+        logger.debug(
+            "lookahead stage=search_init horizon=%.3fs max_depth=%d", self.horizon, self.max_depth
+        )
         search = IncrementalSearch(
             self.mirror,
             self.latency_tracker,
@@ -239,9 +256,19 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.max_depth,
         )
         search_started_at = time.time()
+        search_iters = 0
         while not search.is_done() and (next_avail - time.time()) > self.scheduling_buffer:
             search.step(self.step_budget_nodes)
+            search_iters += 1
         search_duration = time.time() - search_started_at
+        logger.debug(
+            "lookahead stage=search_done iters=%d nodes=%d duration=%.3fs done=%s remaining_slack=%+.3fs",
+            search_iters,
+            search.nodes_visited,
+            search_duration,
+            search.is_done(),
+            next_avail - time.time(),
+        )
 
         notes.update(
             {
@@ -258,6 +285,7 @@ class LookaheadActionsScheduler(RequestScheduler):
 
         best = search.best()
         if not best:
+            logger.debug("lookahead stage=exit reason=greedy_search_empty")
             notes["mode"] = "greedy_search_empty"
             return [self._greedy()], notes
 
@@ -269,6 +297,12 @@ class LookaheadActionsScheduler(RequestScheduler):
             ]
             if batch:
                 batches.append(batch)
+        logger.debug(
+            "lookahead stage=return mode=search batches=%d plan_depth=%d objective=%.4f",
+            len(batches),
+            len(best),
+            search.best_objective,
+        )
         return batches, notes
 
     def _greedy(self) -> list[SlotRequest]:

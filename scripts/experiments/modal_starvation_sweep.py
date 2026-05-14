@@ -7,6 +7,8 @@ Example:
         --num-robots 1,2,3,4,5,6,7,8,9,10 \
         --server-config configs/server/mock.json \
         --seeds 7,42 \
+        --max-batch-size 8 \
+        --sweep-max-batch-size \
         --output-dir experiments/sweeps/big_mock
 """
 
@@ -17,6 +19,7 @@ import dataclasses
 import datetime as dt
 import json
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -29,7 +32,8 @@ ARTIFACTS_VOLUME_NAME = "armory-scheduler-sweep-artifacts"
 REMOTE_ROOT = pathlib.Path("/app")
 REMOTE_OUTPUT_ROOT = pathlib.Path("/tmp/armory_sweep")
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
-ARTIFACT_SKIP_SUFFIXES = {".mp4", ".parquet", ".npz"}
+ARTIFACT_SKIP_SUFFIXES = {".mp4", ".npz"}
+ARTIFACT_KEEP_NAMES = {"action_chunks.parquet"}
 PYTHONPATH = ":".join(
     [
         str(REMOTE_ROOT / "src"),
@@ -37,6 +41,12 @@ PYTHONPATH = ":".join(
         str(REMOTE_ROOT / "packages/armory-client/src"),
     ]
 )
+MAX_BATCH_SWEEP_SCHEDULERS = {
+    "max-batch",
+    "fixed-max-batch",
+    "lookahead-actions",
+    "greedy-deadline",
+}
 
 
 def _ignore_modal_copy(path: pathlib.Path) -> bool:
@@ -67,11 +77,20 @@ class SweepCase:
     experiment_config: str  # path relative to repo root
     num_robots: int
     seed: int
+    max_batch_size: int | None = None
 
     @property
     def run_id(self) -> str:
         config_name = pathlib.Path(self.experiment_config).stem
-        return f"scheduler={self.scheduler}__config={config_name}__robots={self.num_robots}__seed={self.seed}"
+        parts = [
+            f"scheduler={self.scheduler}",
+            f"config={config_name}",
+            f"robots={self.num_robots}",
+            f"seed={self.seed}",
+        ]
+        if self.max_batch_size is not None:
+            parts.append(f"max_batch_size={self.max_batch_size}")
+        return "__".join(parts)
 
 
 def _parse_csv(value: str, *, cast=str) -> list[Any]:
@@ -99,10 +118,43 @@ def _run_subprocess(
         raise subprocess.CalledProcessError(result.returncode, args)
 
 
+def _write_command_manifest(
+    run_dir: pathlib.Path, *, server_cmd: list[str], client_cmd: list[str]
+) -> None:
+    commands = {
+        "cwd": str(REMOTE_ROOT),
+        "env": {"PYTHONPATH": PYTHONPATH, "MPLBACKEND": "Agg"},
+        "server": {"argv": server_cmd, "shell": shlex.join(server_cmd)},
+        "client": {"argv": client_cmd, "shell": shlex.join(client_cmd)},
+    }
+    (run_dir / "commands.json").write_text(json.dumps(commands, indent=2))
+    (run_dir / "commands.sh").write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f"cd {shlex.quote(str(REMOTE_ROOT))}",
+                f"export PYTHONPATH={shlex.quote(PYTHONPATH)}",
+                "export MPLBACKEND=Agg",
+                "",
+                "# Start this first, then run the client command in another shell.",
+                f"SERVER_CMD={shlex.quote(shlex.join(server_cmd))}",
+                f"CLIENT_CMD={shlex.quote(shlex.join(client_cmd))}",
+                'printf "server: %s\\n" "$SERVER_CMD"',
+                'printf "client: %s\\n" "$CLIENT_CMD"',
+            ]
+        )
+        + "\n"
+    )
+
+
 def _copy_run_dir(src_root: pathlib.Path, dest_root: pathlib.Path) -> None:
     """Copy run_dir into the mounted artifacts volume, skipping bulky binaries."""
     for src in src_root.rglob("*"):
-        if src.is_dir() or src.suffix in ARTIFACT_SKIP_SUFFIXES:
+        should_skip_file = (
+            src.suffix in ARTIFACT_SKIP_SUFFIXES and src.name not in ARTIFACT_KEEP_NAMES
+        )
+        if src.is_dir() or should_skip_file:
             continue
         dst = dest_root / src.relative_to(src_root)
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +216,31 @@ def _config_num_robots(cfg_path: str, fallback: int) -> int:
     except Exception:
         pass
     return fallback
+
+
+def _max_batch_size_limit(server_config: str, max_batch_size: int | None) -> int:
+    if max_batch_size is not None:
+        return max_batch_size
+    cfg = json.loads(pathlib.Path(server_config).read_text())
+    return int(cfg.get("max_batch_size", 1))
+
+
+def _max_batch_sizes_for_scheduler(
+    scheduler: str,
+    server_config: str,
+    *,
+    max_batch_size: int | None,
+    sweep_max_batch_size: bool,
+) -> list[int | None]:
+    if not sweep_max_batch_size:
+        return [max_batch_size]
+
+    batch_size_limit = _max_batch_size_limit(server_config, max_batch_size)
+    if batch_size_limit < 1:
+        raise ValueError(f"max_batch_size must be >= 1, got {batch_size_limit}")
+    if scheduler in MAX_BATCH_SWEEP_SCHEDULERS:
+        return list(range(1, batch_size_limit + 1))
+    return [batch_size_limit]
 
 
 def _build_client_cmd(
@@ -293,14 +370,13 @@ def run_case(
     server_config: str,
     port: int,
     stamp: str,
-    max_batch_size_override: int | None = None,
     max_steps_override: int | None = None,
 ) -> dict[str, Any]:
     exp_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / case.experiment_config).read_text())
     srv_cfg: dict[str, Any] = json.loads((REMOTE_ROOT / server_config).read_text())
 
-    if max_batch_size_override is not None:
-        srv_cfg["max_batch_size"] = max_batch_size_override
+    if case.max_batch_size is not None:
+        srv_cfg["max_batch_size"] = case.max_batch_size
     if max_steps_override is not None:
         exp_cfg["experiment"]["max_steps"] = max_steps_override
 
@@ -326,6 +402,7 @@ def run_case(
         experiment_config_path=saved_exp_config,
         max_steps=max_steps,
     )
+    _write_command_manifest(run_dir, server_cmd=server_cmd, client_cmd=client_cmd)
 
     server_log = log_dir / "server.log"
     with server_log.open("w") as log_file:
@@ -351,6 +428,7 @@ def run_case(
             "experiment_config": case.experiment_config,
             "num_robots": case.num_robots,
             "seed": case.seed,
+            "max_batch_size": case.max_batch_size or "",
             "status": "failed",
             "error": repr(exc),
         }
@@ -393,6 +471,7 @@ def main(
     output_dir: str = "experiments/sweeps/mock",
     port: int = 8080,
     max_batch_size: int | None = None,
+    sweep_max_batch_size: bool = False,
     max_steps: int | None = None,
 ) -> None:
     """Run the Cartesian product of schedulers, experiment_configs, num_robots, and seeds."""
@@ -405,11 +484,18 @@ def main(
             experiment_config=cfg,
             num_robots=_config_num_robots(cfg, n),
             seed=seed,
+            max_batch_size=batch_size,
         )
         for scheduler in _parse_csv(schedulers)
         for cfg in _parse_csv(experiment_configs)
         for n in _parse_csv(num_robots, cast=int)
         for seed in _parse_csv(seeds, cast=int)
+        for batch_size in _max_batch_sizes_for_scheduler(
+            scheduler,
+            server_config,
+            max_batch_size=max_batch_size,
+            sweep_max_batch_size=sweep_max_batch_size,
+        )
     ]
 
     rows: list[dict[str, Any]] = []
@@ -419,7 +505,6 @@ def main(
             "server_config": server_config,
             "port": port,
             "stamp": stamp,
-            "max_batch_size_override": max_batch_size,
             "max_steps_override": max_steps,
         },
         order_outputs=False,
@@ -461,7 +546,11 @@ def main(
             print(f"  {r['run_id']}: {r.get('timing_flags', '')}")
 
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
-    from plot_sweep import DEFAULT_METRICS, plot_results  # noqa: PLC0415
+    from plot_starvation_sweep import (  # noqa: PLC0415
+        DEFAULT_METRICS,
+        plot_action_fate_sweep,
+        plot_results,
+    )
 
     timing_metrics = [
         "step_interval_p95_ms",
@@ -469,4 +558,17 @@ def main(
         "inbound_p95_ms",
         "outbound_p95_ms",
     ]
-    plot_results(latest_csv, out / "plots", metrics=list(DEFAULT_METRICS) + timing_metrics)
+    # Stamp parallels artifacts/<stamp>/ so a re-run never overwrites a prior
+    # plot set; the CSV next to it (sweep_results_<stamp>.csv) is the inputs.
+    plots_dir = out / "plots" / stamp
+    plot_results(latest_csv, plots_dir, metrics=list(DEFAULT_METRICS) + timing_metrics)
+    action_fate_outputs = plot_action_fate_sweep(
+        latest_csv,
+        plots_dir,
+        x="num_robots",
+        line="scheduler",
+    )
+    if action_fate_outputs:
+        print("Wrote action fate plots:")
+        for path in action_fate_outputs:
+            print(path)
