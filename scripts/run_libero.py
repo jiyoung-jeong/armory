@@ -5,6 +5,7 @@ import multiprocessing
 import pathlib
 import queue
 import shutil
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import (
@@ -29,6 +30,10 @@ from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
 from armory_client.schemas import RuntimeMetadata, ServerMetadata
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from utils import JsonArgs  # noqa: E402
+
 from sims.libero import logging_config
 from sims.libero.episodes import Episode, create_episodes, create_mock_episodes
 from sims.libero.metrics import calculate_metrics, generate_all_plots
@@ -43,7 +48,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Args:
+class Args(JsonArgs):
+    json_path: pathlib.Path | None = None
     #################################################################################################################
     # Model server parameters
     #################################################################################################################
@@ -86,13 +92,49 @@ class Args:
     debug: bool = False  # Run in single process with immediate progress output
 
     def execution_horizon_for_robot(self, robot_idx: int) -> int:
-        if not self.execution_horizon:
-            return 10
+        if isinstance(self.execution_horizon, int):
+            return self.execution_horizon
         return int(self.execution_horizon[robot_idx])
 
     @property
     def http_base(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    def _serialize(self) -> dict:
+        return {
+            "host": self.host,
+            "port": self.port,
+            "resize_size": self.resize_size,
+            "action_chunk_broker_type": self.action_chunk_broker_type.value,
+            "execution_horizon": self.execution_horizon,
+            "env": self.env,
+            "task_suite_name": self.task_suite_name,
+            "num_trials_per_task": self.num_trials_per_task,
+            "max_steps": self.max_steps,
+            "num_robots": self.num_robots,
+            "control_hz": self.control_hz,
+            "experiment_config": self.experiment_config,
+            "toxiproxy_server_bin": self.toxiproxy_server_bin,
+            "seed": self.seed,
+            "output_dir": str(self.output_dir),
+            "overwrite": self.overwrite,
+            "progress_type": self.progress_type,
+            "log_dir": str(self.log_dir) if self.log_dir is not None else None,
+            "debug": self.debug,
+        }
+
+    @classmethod
+    def _deserialize(cls, data: dict) -> "Args":
+        kwargs = dict(data)
+        if "action_chunk_broker_type" in kwargs:
+            kwargs["action_chunk_broker_type"] = ActionChunkBrokerType.from_string(
+                kwargs["action_chunk_broker_type"]
+            )
+        if "output_dir" in kwargs:
+            kwargs["output_dir"] = pathlib.Path(kwargs["output_dir"])
+        if "log_dir" in kwargs and kwargs["log_dir"] is not None:
+            kwargs["log_dir"] = pathlib.Path(kwargs["log_dir"])
+        return cls(**kwargs)
 
 
 def _apply_experiment_config(args: Args, experiment_config: dict[str, object]) -> None:
@@ -467,7 +509,9 @@ def validate_args(args: Args) -> None:
     assert args.overwrite or not args.output_dir.exists(), (
         f"Output path {args.output_dir} already exists"
     )
-    assert not args.execution_horizon or len(args.execution_horizon) == args.num_robots, (
+    assert (
+        isinstance(args.execution_horizon, int) or len(args.execution_horizon) == args.num_robots
+    ), (
         f"execution_horizon must either be empty or have exactly {args.num_robots} values (one per robot), but got {len(args.execution_horizon)} values"
     )
     assert args.num_robots > 0, "num_robots must be positive"
@@ -478,6 +522,8 @@ def validate_args(args: Args) -> None:
 
 
 def main(args: Args) -> None:
+    if args.json_path is not None:
+        args = Args.from_json(args.json_path)
     experiment_config = None
     if args.experiment_config is not None:
         experiment_config = load_experiment_config(args.experiment_config)
@@ -508,7 +554,7 @@ def main(args: Args) -> None:
 
     seed_everything(args.seed)
     if args.env == "libero":
-        episodes = create_episodes(args.task_suite_name, args.num_trials_per_task)
+        episodes = create_episodes(args.task_suite_name, args.num_trials_per_task)[:1]
     else:
         episodes = create_mock_episodes(args.num_trials_per_task * args.num_robots)
 
