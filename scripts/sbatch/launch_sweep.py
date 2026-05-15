@@ -44,7 +44,8 @@ EXAMPLES = """examples:
       --max-batch-size 1,2,4 \\
       --partition overcap \\
       --server-gpu l40s \\
-      --client-gpu a40
+      --client-gpu a40 \\
+      --submit-collector
 
   # 3. Submit an alpha sweep for dynamic-action plus baselines.
   uv run python scripts/sbatch/launch_sweep.py \\
@@ -54,7 +55,8 @@ EXAMPLES = """examples:
       --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \\
       --num-robots 6,8,10 \\
       --seeds 7,42 \\
-      --alpha 0.0,0.25,0.5,0.75,1.0
+      --alpha 0.0,0.25,0.5,0.75,1.0 \\
+      --submit-collector
 
   # 4. Preserve the server config policy exactly, useful for mock/smoke tests.
   uv run python scripts/sbatch/launch_sweep.py \\
@@ -70,6 +72,13 @@ EXAMPLES = """examples:
   uv run python scripts/sbatch/collect_results.py \\
       --output-dir experiments/sweeps/slurm_libero \\
       --stamp 20260515_130000
+
+  # 6. Submit only the collector for an existing run, after specific jobs finish.
+  sbatch --parsable \\
+      --dependency=afterany:12345:12346:12347 \\
+      scripts/sbatch/collect_results.sh \\
+      experiments/sweeps/slurm_libero \\
+      20260515_130000
 """
 
 
@@ -278,6 +287,48 @@ def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
     return subprocess.check_output(cmd, cwd=REPO_ROOT, text=True).strip()
 
 
+def _job_id_for_dependency(job_id: str) -> str:
+    # `sbatch --parsable` may return "jobid" or "jobid;cluster".
+    return job_id.split(";", 1)[0]
+
+
+def _submit_collector(*, run_root: pathlib.Path, stamp: str, job_ids: list[str], args: argparse.Namespace) -> str:
+    dependency_ids = [_job_id_for_dependency(job_id) for job_id in job_ids if job_id]
+    if not dependency_ids:
+        raise RuntimeError("Cannot submit collector without case job ids.")
+
+    cmd = [
+        "sbatch",
+        "--parsable",
+        f"--dependency=afterany:{':'.join(dependency_ids)}",
+        f"--partition={args.collector_partition or args.partition}",
+        f"--time={args.collector_time}",
+        f"--cpus-per-task={args.collector_cpus}",
+        f"--mem={args.collector_mem}",
+        "--job-name=armory_collect",
+        "--output=logs/armory_collect_%j.out",
+        "--error=logs/armory_collect_%j.err",
+    ]
+    if args.exclude:
+        cmd.append(f"--exclude={args.exclude}")
+    for opt in args.collector_sbatch_option:
+        cmd.append(opt)
+    cmd += [str(SCRIPTS_DIR / "sbatch" / "collect_results.sh"), str(pathlib.Path(args.output_dir)), stamp]
+    collector_job_id = subprocess.check_output(cmd, cwd=REPO_ROOT, text=True).strip()
+
+    metadata = {
+        "stamp": stamp,
+        "run_root": str(run_root),
+        "collector_job_id": collector_job_id,
+        "dependency": "afterany:" + ":".join(dependency_ids),
+        "case_job_ids": job_ids,
+    }
+    collector_path = run_root / f"collector_{stamp}.json"
+    collector_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    print(f"Wrote {collector_path}")
+    return collector_job_id
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -306,6 +357,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--client-cpus", type=int, default=20)
     parser.add_argument("--exclude", default="")
     parser.add_argument("--sbatch-option", action="append", default=[])
+    parser.add_argument(
+        "--submit-collector",
+        action="store_true",
+        help="Submit a final collector Slurm job with afterany dependencies on all case jobs.",
+    )
+    parser.add_argument("--collector-partition", default="")
+    parser.add_argument("--collector-time", default="01:00:00")
+    parser.add_argument("--collector-cpus", type=int, default=2)
+    parser.add_argument("--collector-mem", default="8G")
+    parser.add_argument("--collector-sbatch-option", action="append", default=[])
     parser.add_argument("--stamp", default="")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -356,6 +417,20 @@ def main() -> None:
 
     jobs_csv = run_root / f"jobs_{stamp}.csv"
     write_rows(jobs_csv, rows)
+
+    if args.submit_collector:
+        if args.dry_run:
+            print("Skipping collector submission because --dry-run is set.")
+        else:
+            job_ids = [str(row["job_id"]) for row in rows if row.get("job_id")]
+            collector_job_id = _submit_collector(
+                run_root=run_root,
+                stamp=stamp,
+                job_ids=job_ids,
+                args=args,
+            )
+            print(f"Submitted collector {collector_job_id} after {len(job_ids)} case job(s).")
+
     print(f"Prepared {len(rows)} case(s) under {run_root}")
     if args.dry_run:
         print("Dry run only; no Slurm jobs submitted.")
