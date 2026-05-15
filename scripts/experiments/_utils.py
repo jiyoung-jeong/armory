@@ -1,8 +1,10 @@
+import csv
+import json
 import pathlib
 import subprocess
 from typing import Any
 
-from _setups import ARTIFACTS_VOLUME_NAME
+ARTIFACTS_VOLUME_NAME = "armory-experiment-artifacts"
 
 
 def download_artifacts(*, stamp: str, out: pathlib.Path, rows: list[dict[str, Any]]) -> None:
@@ -15,6 +17,22 @@ def download_artifacts(*, stamp: str, out: pathlib.Path, rows: list[dict[str, An
     )
     for row in rows:
         row["artifact_path"] = str(artifacts_dir / stamp / row["run_id"])
+
+
+def write_rows(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    keys: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in keys:
+                keys.append(key)
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in keys})
+
+    print(f"Wrote {path}")
 
 
 # FIXME: too complicated

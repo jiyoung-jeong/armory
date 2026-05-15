@@ -24,9 +24,8 @@ address, one for the client to signal it's done).
 from __future__ import annotations
 
 import dataclasses
-import json
 import pathlib
-import pickle
+import shutil
 import subprocess
 import sys
 import time
@@ -40,6 +39,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 # repo's scripts directory is mounted separately in the image at /app/scripts.
 sys.path.insert(0, "/app/scripts")
 sys.path.insert(0, "/app/scripts/experiments")
+import run_libero  # noqa: E402
+import serve  # noqa: E402
 from _images import (  # noqa: E402
     CHECKPOINT_VOLUME_PATH,
     REMOTE_ROOT,
@@ -48,15 +49,13 @@ from _images import (  # noqa: E402
     gpu_libero_client_image,
     gpu_server_image,
 )
-from utils import summarize  # noqa: E402
+from _utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
 
 APP_NAME = "armory-experiments"
 
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
 # Bulky binaries we never want in the downloaded artifact tree.
-ARTIFACT_SKIP_SUFFIXES = {".mp4", ".parquet", ".npz"}
 
-ARTIFACTS_VOLUME_NAME = "armory-experiment-artifacts"
 CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
 REGION = "us-east"
@@ -72,42 +71,40 @@ artifacts_volume = modal.Volume.from_name(ARTIFACTS_VOLUME_NAME, create_if_missi
 checkpoint_volume = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_missing=True)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Case:
-    """One sweep case: the two real argument dataclasses plus where it lives.
+    server_args: serve.Args
+    client_args: run_libero.Args
+    stamp: str
 
-    ``run_dir`` is the per-case directory the container ships to the artifacts
-    volume; the experiment script points ``server_args.log_dir``,
-    ``client_args.log_dir`` and ``client_args.output_dir`` underneath it.
-    ``experiment_config``, if set, is written to ``run_dir/experiment_config.json``
-    on the container and wired into ``client_args.experiment_config``.
-    """
+    def __post_init__(self) -> None:
+        self.server_args.output_dir = self.run_dir / "outputs"
+        self.client_args.output_dir = self.run_dir / "outputs"
 
-    run_id: str
-    run_dir: pathlib.Path
-    server_args: Any  # scripts/serve.py Args
-    client_args: Any  # scripts/run_libero.py Args
-    experiment_config: dict[str, Any] | None = None
+    @property
+    def run_id(self) -> str:
+        parts = [
+            f"scheduler={self.server_args.scheduling_algorithm}",
+            f"num_robots={self.client_args.num_robots}",
+            f"seed={self.client_args.seed}",
+            f"max_batch_size={self.server_args.max_batch_size}",
+            f"alpha={self.server_args.alpha}",
+        ]
+        return "__".join(parts)
+
+    # NOTE: run path is separate from artifact path because modal Volumes might not be good for lots of writes
+    @property
+    def run_dir(self) -> pathlib.Path:
+        return REMOTE_ROOT / self.stamp / self.run_id
+
+    @property
+    def artifact_dir(self) -> str:
+        return REMOTE_ARTIFACTS_ROOT / self.stamp / self.run_id
 
 
 # --------------------------------------------------------------------------
 # On-container helpers
 # --------------------------------------------------------------------------
-def _spawn(entry: str, args: Any, *, args_path: pathlib.Path) -> subprocess.Popen:
-    """Pickle an Args dataclass into the run dir and exec it via _run_entry.py.
-
-    stdout/stderr are inherited, so the subprocess logs straight into the Modal
-    container log; serve.py / run_libero.py write their own log files via their
-    ``log_dir`` arg.
-    """
-    args_path.parent.mkdir(parents=True, exist_ok=True)
-    args_path.write_bytes(pickle.dumps(args))
-    return subprocess.Popen(
-        [sys.executable, "scripts/_run_entry.py", entry, str(args_path)],
-        cwd=str(REMOTE_ROOT),
-    )
-
-
 def _terminate(proc: subprocess.Popen | None) -> None:
     if proc is None or proc.poll() is not None:
         return
@@ -119,28 +116,12 @@ def _terminate(proc: subprocess.Popen | None) -> None:
         proc.wait(timeout=30)
 
 
-def _materialize_experiment_config(case: Case) -> None:
-    if case.experiment_config is None:
-        return
-    path = case.run_dir / "experiment_config.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(case.experiment_config, indent=2))
-    case.client_args.experiment_config = str(path)
-
-
-def _ship(case: Case, stamp: str) -> str:
+# TODO: can try writing to volume to see if it doesn't hurt
+def _ship(case: Case) -> str:
     """Copy the case's run dir onto the artifacts volume; return the remote path."""
-    import shutil  # noqa: PLC0415
-
-    dest = REMOTE_ARTIFACTS_ROOT / stamp / case.run_id
-    for src in case.run_dir.rglob("*"):
-        if src.is_dir() or src.suffix in ARTIFACT_SKIP_SUFFIXES:
-            continue
-        dst = dest / src.relative_to(case.run_dir)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+    shutil.copytree(case.run_dir, case.artifact_dir)
     artifacts_volume.commit()
-    return str(dest)
+    return str(case.artifact_dir)
 
 
 # --------------------------------------------------------------------------
@@ -151,10 +132,25 @@ def _run_server(
 ) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
+    case.server_args.to_json(case.run_dir / "server_args.json")
     status, error = "ok", None
     proc: subprocess.Popen | None = None
     try:
-        proc = _spawn("serve", case.server_args, args_path=case.run_dir / "server_args.pkl")
+        with (
+            open(case.run_dir / "server.log", "w") as stdout_file,
+            open(case.run_dir / "server.log", "w") as stderr_file,
+        ):
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "scripts/serve.py",
+                    "--json-path",
+                    str(case.run_dir / "server_args.json"),
+                ],
+                cwd=str(REMOTE_ROOT),
+                stdout=stdout_file,
+                stderr=subprocess.STDOUT,
+            )
         with modal.forward(case.server_args.port, unencrypted=True) as tunnel:
             urls[case.run_id] = tunnel.tcp_socket
             print(f"[{case.run_id}] server tunnel up at {tunnel.tcp_socket}", flush=True)
@@ -168,17 +164,32 @@ def _run_server(
         urls[case.run_id] = ("", 0)  # poison so the orchestrator doesn't hang
     finally:
         _terminate(proc)
-    _ship(case, stamp)
+    _ship(case)
     return {"run_id": case.run_id, "status": status, "error": error}
 
 
 def _run_client(case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, Any]:
     """Run the LIBERO client to completion, summarize, ship the run dir."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
-    _materialize_experiment_config(case)
+    case.server_args.to_json(case.run_dir / "server_args.json")
+
     result: dict[str, Any] = {"run_id": case.run_id}
     try:
-        proc = _spawn("run_libero", case.client_args, args_path=case.run_dir / "client_args.pkl")
+        with (
+            open(case.run_dir / "client.log", "w") as stdout_file,
+            open(case.run_dir / "client.log", "w") as stderr_file,
+        ):
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "scripts/run_libero.py",
+                    "--json-path",
+                    str(case.run_dir / "client_args.json"),
+                ],
+                cwd=str(REMOTE_ROOT),
+                stdout=stdout_file,
+                stderr=subprocess.STDOUT,
+            )
         rc = proc.wait(timeout=CLIENT_TIMEOUT_S)
         if rc != 0:
             result.update(status="failed", error=f"client exited with code {rc}")
@@ -189,52 +200,14 @@ def _run_client(case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, An
         result.update(status="failed", error=repr(exc))
     finally:
         shutdown[case.run_id] = True  # always release the server
-    result["artifact_remote_path"] = _ship(case, stamp)
-    return result
-
-
-def _run_colocated(case: Case, stamp: str) -> dict[str, Any]:
-    """Run server + client as two subprocesses in a single container."""
-    case.run_dir.mkdir(parents=True, exist_ok=True)
-    _materialize_experiment_config(case)
-    result: dict[str, Any] = {"run_id": case.run_id}
-    server_proc = _spawn("serve", case.server_args, args_path=case.run_dir / "server_args.pkl")
-    try:
-        client_proc = _spawn(
-            "run_libero", case.client_args, args_path=case.run_dir / "client_args.pkl"
-        )
-        rc = client_proc.wait(timeout=CLIENT_TIMEOUT_S)
-        if rc != 0:
-            result.update(status="failed", error=f"client exited with code {rc}")
-        else:
-            result.update(summarize(pathlib.Path(case.client_args.output_dir)))
-            result["status"] = "ok"
-    except Exception as exc:  # noqa: BLE001
-        result.update(status="failed", error=repr(exc))
-    finally:
-        _terminate(server_proc)
-    result["artifact_remote_path"] = _ship(case, stamp)
+    result["artifact_remote_path"] = _ship(case)
     return result
 
 
 # --------------------------------------------------------------------------
 # Modal classes (one per image; resources retuned per-setup via with_options)
 # --------------------------------------------------------------------------
-@app.cls(
-    image=cpu_mock_image,
-    timeout=2 * 60 * 60,
-    cpu=4,
-    memory=8192,
-    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
-)
-class MockRunner:
-    """Colocated mock policy server + mock client on one CPU container."""
-
-    @modal.method()
-    def run(self, case: Case, stamp: str) -> dict[str, Any]:
-        return _run_colocated(case, stamp)
-
-
+# NOTE: we use modal classes instead of functions so we can specify resources using with_options
 @app.cls(
     image=gpu_server_image,
     timeout=2 * 60 * 60,
@@ -252,10 +225,8 @@ class GpuServer:
     """Real PI05/GR00T policy server on a GPU; no sim code."""
 
     @modal.method()
-    def serve(
-        self, case: Case, stamp: str, *, urls: modal.Dict, shutdown: modal.Dict
-    ) -> dict[str, Any]:
-        return _run_server(case, stamp, urls=urls, shutdown=shutdown)
+    def serve(self, case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
+        return _run_server(case, urls=urls, shutdown=shutdown)
 
 
 @app.cls(
@@ -272,8 +243,8 @@ class GpuLiberoClient:
     """LIBERO sim client with hardware EGL rendering on a small GPU."""
 
     @modal.method()
-    def run(self, case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, Any]:
-        return _run_client(case, stamp, shutdown=shutdown)
+    def run(self, case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
+        return _run_client(case, shutdown=shutdown)
 
 
 @app.cls(
@@ -289,40 +260,83 @@ class CpuLiberoClient:
     """LIBERO sim client with OSMesa software rendering; no GPU."""
 
     @modal.method()
-    def run(self, case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, Any]:
-        return _run_client(case, stamp, shutdown=shutdown)
+    def run(self, case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
+        return _run_client(case, shutdown=shutdown)
 
 
 # --------------------------------------------------------------------------
 # Setups
 # --------------------------------------------------------------------------
+@app.cls(
+    image=cpu_mock_image,
+    timeout=2 * 60 * 60,
+    memory=16384,
+    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
+)
 class MockSetup:
-    """One container per case, server + client colocated. Parallelized via .map()."""
+    """One container per case, server + client colocated."""
 
-    # FIXME: shouldn't use map here
+    @modal.method()
     def run(
         self,
-        cases: list[Case],
-        *,
-        stamp: str,
-        cpu: int = 4,
-        memory: int = 8192,
-        max_containers: int | None = None,
+        case: Case,
     ) -> Iterator[dict[str, Any]]:
-        cases = list(cases)
-        for case in cases:
-            case.client_args.host = "127.0.0.1"
-            case.client_args.port = case.server_args.port
-        opts: dict[str, Any] = {"cpu": cpu, "memory": memory}
-        if max_containers is not None:
-            opts["max_containers"] = max_containers
-        runner = MockRunner.with_options(**opts)()
-        yield from runner.run.map(cases, kwargs={"stamp": stamp}, order_outputs=False)
+        """Run server + client as two subprocesses in a single container."""
+        case.run_dir.mkdir(parents=True, exist_ok=True)
+        case.server_args.to_json(case.run_dir / "server_args.json")
+        case.client_args.to_json(case.run_dir / "client_args.json")
+        result: dict[str, Any] = {"run_id": case.run_id}
+        with (
+            open(case.run_dir / "server.log", "w") as stdout_file,
+            open(case.run_dir / "server.log", "w") as stderr_file,
+        ):
+            server_proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "scripts/serve.py",
+                    "--json-path",
+                    str(case.run_dir / "server_args.json"),
+                ],
+                cwd=str(REMOTE_ROOT),
+                stdout=stdout_file,
+                stderr=subprocess.STDOUT,
+            )
+        try:
+            with (
+                open(case.run_dir / "client.log", "w") as stdout_file,
+                open(case.run_dir / "client.log", "w") as stderr_file,
+            ):
+                client_proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "scripts/run_libero.py",
+                        "--json-path",
+                        str(case.run_dir / "client_args.json"),
+                    ],
+                    cwd=str(REMOTE_ROOT),
+                    stdout=stdout_file,
+                    stderr=subprocess.STDOUT,
+                )
+            rc = client_proc.wait(timeout=CLIENT_TIMEOUT_S)
+            if rc != 0:
+                result.update(status="failed", error=f"client exited with code {rc}")
+            else:
+                result.update(summarize(pathlib.Path(case.client_args.output_dir)))
+                result["status"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            result.update(status="failed", error=repr(exc))
+        finally:
+            _terminate(server_proc)
+        result["artifact_remote_path"] = _ship(case)
+        return result
 
 
-# TODO: shouldn't handle multiple cases, just one case
-
-
+@app.cls(
+    image=cpu_mock_image,  # reusing this because it's lightweight
+    timeout=2 * 60 * 60,
+    max_containers=10,  # TODO: change to 5 if we also need gpu for clients
+    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
+)
 class SplitSetup:
     """Server and client on separate containers, bridged by a forwarded tunnel.
 
@@ -332,86 +346,24 @@ class SplitSetup:
     for REAL_GPU, two GPUs) at once.
     """
 
-    def __init__(self, *, client_cls: Any):
-        self.client_cls = client_cls
-
+    @modal.method()
     def run(
         self,
-        cases: list[Case],
-        *,
-        stamp: str,
-        max_concurrent: int = 5,
+        case: Case,
     ) -> Iterator[dict[str, Any]]:
-        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
-
-        cases = list(cases)
-        if not cases:
-            return
-
         # TODO: automatically determine server and client resources
-        server = GpuServer.with_options(cpu=4, memory=16384, max_containers=max_concurrent)()
-        client = self.client_cls.with_options(cpu=16, memory=16384, max_containers=max_concurrent)()
+        server = GpuServer()
+        # TODO: figure out if CPU can work, otherwise just use GPU
+        client = CpuLiberoClient()
 
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
-            handles = {
-                case.run_id: server.serve.spawn(case, stamp, urls=urls, shutdown=shutdown)
-                for case in cases
-            }
-            print(
-                f"Spawned {len(handles)} server(s); launching clients as tunnels open",
-                flush=True,
-            )
-
-            def _run_one(case: Case) -> dict[str, Any]:
-                handle = handles[case.run_id]
-                while case.run_id not in urls:
-                    try:
-                        done = handle.get(timeout=0)
-                    except TimeoutError:
-                        time.sleep(5)
-                        continue
-                    except Exception as exc:  # noqa: BLE001
-                        return {
-                            "run_id": case.run_id,
-                            "status": "failed",
-                            "error": f"server raised before publishing a URL: {exc!r}",
-                        }
-                    return {
-                        "run_id": case.run_id,
-                        "status": "failed",
-                        "error": f"server finished without publishing a URL: {done!r}",
-                    }
-
-                host, port = urls[case.run_id]
-                if not host:
-                    shutdown[case.run_id] = True
-                    return {
-                        "run_id": case.run_id,
-                        "status": "failed",
-                        "error": "server failed before opening a tunnel",
-                    }
-                case.client_args.host = host
-                case.client_args.port = port
-                try:
-                    return client.run.remote(case, stamp, shutdown=shutdown)
-                except Exception as exc:  # noqa: BLE001
-                    shutdown[case.run_id] = True
-                    return {"run_id": case.run_id, "status": "failed", "error": repr(exc)}
-
-            with ThreadPoolExecutor(max_workers=len(cases)) as ex:
-                futures = [ex.submit(_run_one, case) for case in cases]
-                for fut in as_completed(futures):
-                    yield fut.result()
-
-            # Drain server handles to surface any server-side exceptions.
-            for run_id, handle in handles.items():
-                try:
-                    handle.get(timeout=300)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"server {run_id} cleanup failed: {exc!r}", flush=True)
+            server_handle = server.serve.spawn(case, urls=urls, shutdown=shutdown)
+            try:
+                return client.run.remote(case, shutdown=shutdown)
+            finally:
+                _terminate(server_handle)
 
 
 # Predefined setups: an experiment script picks one of these.
 MOCK = MockSetup()
-REAL_CPU = SplitSetup(client_cls=CpuLiberoClient)
-REAL_GPU = SplitSetup(client_cls=GpuLiberoClient)
+LIBERO = SplitSetup()

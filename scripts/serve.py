@@ -50,6 +50,9 @@ class Mock:
 
 @dataclasses.dataclass
 class Args(JsonArgs):
+    # hack to load from json path
+    json_path: pathlib.Path | None = None
+
     env: EnvMode = EnvMode.LIBERO
 
     # options are PI05, GROOT_N17
@@ -152,6 +155,8 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
 
 
 def main(args: Args) -> None:
+    if args.json_path is not None:
+        args = Args.from_json(args.json_path)
     seed_everything(args.seed)
     log_path = (
         pathlib.Path(args.log_dir)
