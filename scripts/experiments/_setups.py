@@ -31,7 +31,6 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
 from typing import Any
 
 import modal
@@ -62,7 +61,7 @@ CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
 REGION = "us-east"
 SERVER_GPU = "L40S"
-LIBERO_CLIENT_GPU = "A10G"
+LIBERO_CLIENT_GPU = "L40S"
 
 # Safety net on the client subprocess; the container `timeout` is the real cap.
 CLIENT_TIMEOUT_S = 90 * 60
@@ -78,6 +77,9 @@ class Case:
     server_args: serve.Args
     client_args: run_libero.Args
     stamp: str
+    # Modal GPU name for the policy server ("l40s", "h100", ...), or "mock" for
+    # the CPU-only colocated setup. Set by the sweep entrypoint.
+    gpu: str = "mock"
 
     def __post_init__(self) -> None:
         self.server_args.output_dir = self.run_dir / "outputs"
@@ -107,6 +109,20 @@ class Case:
 # --------------------------------------------------------------------------
 # On-container helpers
 # --------------------------------------------------------------------------
+def _popen_tee(cmd: list[str], *, cwd: str, log_path: pathlib.Path, tag: str) -> subprocess.Popen:
+    """Run ``cmd``, tag each line, stream to the container's stdout *and* ``log_path``.
+
+    Modal surfaces container stdout live in ``modal run`` and ``modal app logs``, so
+    teeing makes a split run debuggable in real time without losing the on-disk log
+    that gets shipped with the artifacts.
+    """
+    # Use '#' as the sed delimiter because tags (e.g. "server/scheduler=...") contain '/'.
+    shell_cmd = (
+        f"{shlex.join(cmd)} 2>&1 | sed -u 's#^#[{tag}] #' | tee {shlex.quote(str(log_path))}"
+    )
+    return subprocess.Popen(shell_cmd, shell=True, cwd=cwd)
+
+
 def _terminate(proc: subprocess.Popen | None) -> None:
     if proc is None or proc.poll() is not None:
         return
@@ -148,9 +164,7 @@ def _write_command_manifest(run_dir: pathlib.Path, commands: dict[str, list[str]
 # --------------------------------------------------------------------------
 # On-container run bodies
 # --------------------------------------------------------------------------
-def _run_server(
-    case: Case, stamp: str, *, urls: modal.Dict, shutdown: modal.Dict
-) -> dict[str, Any]:
+def _run_server(case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
     log_dir = case.run_dir / "logs"
@@ -166,20 +180,24 @@ def _run_server(
     status, error = "ok", None
     proc: subprocess.Popen | None = None
     try:
-        with open(log_dir / "server.log", "w") as log_file:
-            proc = subprocess.Popen(
-                server_cmd,
-                cwd=str(REMOTE_ROOT),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-            )
+        proc = _popen_tee(
+            server_cmd,
+            cwd=str(REMOTE_ROOT),
+            log_path=log_dir / "server.log",
+            tag=f"server/{case.run_id}",
+        )
         with modal.forward(case.server_args.port, unencrypted=True) as tunnel:
             urls[case.run_id] = tunnel.tcp_socket
-            print(f"[{case.run_id}] server tunnel up at {tunnel.tcp_socket}", flush=True)
+            print(f"[server/{case.run_id}] tunnel up at {tunnel.tcp_socket}", flush=True)
+            last_beat = 0.0
             while case.run_id not in shutdown:
                 if proc.poll() is not None:
                     status, error = "failed", f"server exited early (code={proc.returncode})"
                     break
+                now = time.time()
+                if now - last_beat > 30:
+                    print(f"[server/{case.run_id}] alive, waiting for client", flush=True)
+                    last_beat = now
                 time.sleep(2)
     except Exception as exc:  # noqa: BLE001
         status, error = "failed", repr(exc)
@@ -190,7 +208,7 @@ def _run_server(
     return {"run_id": case.run_id, "status": status, "error": error}
 
 
-def _run_client(case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, Any]:
+def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
     """Run the LIBERO client to completion, summarize, ship the run dir."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
     log_dir = case.run_dir / "logs"
@@ -206,13 +224,12 @@ def _run_client(case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, An
 
     result: dict[str, Any] = {"run_id": case.run_id}
     try:
-        with open(log_dir / "client.log", "w") as log_file:
-            proc = subprocess.Popen(
-                client_cmd,
-                cwd=str(REMOTE_ROOT),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-            )
+        proc = _popen_tee(
+            client_cmd,
+            cwd=str(REMOTE_ROOT),
+            log_path=log_dir / "client.log",
+            tag=f"client/{case.run_id}",
+        )
         rc = proc.wait(timeout=CLIENT_TIMEOUT_S)
         if rc != 0:
             result.update(status="failed", error=f"client exited with code {rc}")
@@ -303,7 +320,7 @@ class MockSetup:
     def run(
         self,
         case: Case,
-    ) -> Iterator[dict[str, Any]]:
+    ) -> dict[str, Any]:
         """Run server + client as two subprocesses in a single container."""
         case.run_dir.mkdir(parents=True, exist_ok=True)
         log_dir = case.run_dir / "logs"
@@ -324,21 +341,19 @@ class MockSetup:
         ]
         _write_command_manifest(case.run_dir, {"server": server_cmd, "client": client_cmd})
         result: dict[str, Any] = {"run_id": case.run_id}
-        with open(log_dir / "server.log", "w") as log_file:
-            server_proc = subprocess.Popen(
-                server_cmd,
-                cwd=str(REMOTE_ROOT),
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-            )
+        server_proc = _popen_tee(
+            server_cmd,
+            cwd=str(REMOTE_ROOT),
+            log_path=log_dir / "server.log",
+            tag=f"server/{case.run_id}",
+        )
         try:
-            with open(log_dir / "client.log", "w") as log_file:
-                client_proc = subprocess.Popen(
-                    client_cmd,
-                    cwd=str(REMOTE_ROOT),
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                )
+            client_proc = _popen_tee(
+                client_cmd,
+                cwd=str(REMOTE_ROOT),
+                log_path=log_dir / "client.log",
+                tag=f"client/{case.run_id}",
+            )
             rc = client_proc.wait(timeout=CLIENT_TIMEOUT_S)
             if rc != 0:
                 result.update(status="failed", error=f"client exited with code {rc}")
@@ -372,18 +387,78 @@ class SplitSetup:
     def run(
         self,
         case: Case,
-    ) -> Iterator[dict[str, Any]]:
-        # TODO: automatically determine server and client resources
-        server = GpuServer()
+    ) -> dict[str, Any]:
+        # GPU type comes from the sweep's --gpu flag; the class default is just a fallback.
+        print(f"[orch/{case.run_id}] spawning server on gpu={case.gpu}", flush=True)
+        server = GpuServer.with_options(gpu=case.gpu.upper())()
         # TODO: figure out if CPU can work, otherwise just use GPU
-        client = CpuLiberoClient()
+        # client = CpuLiberoClient()
+        client = GpuLiberoClient()
 
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
             server_handle = server.serve.spawn(case, urls=urls, shutdown=shutdown)
+            print(
+                f"[orch/{case.run_id}] server spawned (id={server_handle.object_id}); "
+                f"waiting for tunnel",
+                flush=True,
+            )
+            # Block until the server publishes its forwarded address, then point the
+            # client at it. ``urls`` may carry ("", 0) as a poison value if the server
+            # failed before forwarding — surface that as a clean failure.
+            deadline = time.time() + 15 * 60
+            while case.run_id not in urls:
+                if time.time() > deadline:
+                    raise RuntimeError(f"server never published tunnel for {case.run_id}")
+                time.sleep(2)
+            host, port = urls[case.run_id]
+            if not host:
+                return {
+                    "run_id": case.run_id,
+                    "status": "failed",
+                    "error": "server failed before forwarding",
+                }
+            case.client_args.host = host
+            case.client_args.port = port
+            # Wait for the server to finish loading weights so the client's per-worker
+            # barrier (60s in run_libero.py) isn't racing model load on cold start.
+            import urllib.request
+
+            metadata_url = f"http://{host}:{port}/metadata"
+            ready_deadline = time.time() + 10 * 60
+            while True:
+                try:
+                    with urllib.request.urlopen(metadata_url, timeout=5):
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    if time.time() > ready_deadline:
+                        return {
+                            "run_id": case.run_id,
+                            "status": "failed",
+                            "error": f"server /metadata never came up: {exc!r}",
+                        }
+                    print(
+                        f"[orch/{case.run_id}] /metadata not ready ({exc.__class__.__name__})",
+                        flush=True,
+                    )
+                    time.sleep(5)
+            print(
+                f"[orch/{case.run_id}] server ready at {host}:{port}; launching client", flush=True
+            )
             try:
-                return client.run.remote(case, shutdown=shutdown)
+                result = client.run.remote(case, shutdown=shutdown)
+                print(
+                    f"[orch/{case.run_id}] client returned status={result.get('status')}",
+                    flush=True,
+                )
+                return result
             finally:
-                _terminate(server_handle)
+                # The client sets shutdown[run_id] before returning, so the server
+                # should already be winding down; cancel is a belt-and-braces net
+                # for the failure paths (client crashed before signaling, etc.).
+                try:
+                    server_handle.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 # Predefined setups: an experiment script picks one of these.

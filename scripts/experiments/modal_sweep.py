@@ -37,7 +37,7 @@ sys.path.insert(0, str(_HERE.parent))  # serve, run_libero
 
 import run_libero  # noqa: E402
 import serve  # noqa: E402
-from _setups import MOCK, Case, app  # noqa: E402
+from _setups import LIBERO, MOCK, Case, app  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
 
 
@@ -99,14 +99,9 @@ def _make_cases(
     return cases
 
 
-def get_worker(server_args: serve.Args, client_args: run_libero.Args) -> modal.Cls:
-    return MOCK
-    # if server_args.env == "mock":
-    #     return MOCK
-    # elif server_args.env == "libero":
-    #     return LIBERO
-    # else:
-    #     raise ValueError(f"Unknown environment: {server_args.env}")
+def get_worker(gpu: str) -> modal.Cls:
+    """``mock`` colocates server + client on CPU; any GPU name uses the split setup."""
+    return MOCK if gpu.lower() == "mock" else LIBERO
 
 
 def parse_list_args(value: str, *, cast=str) -> list[Any]:
@@ -123,11 +118,14 @@ def main(
     seeds: str = "7",
     max_batch_size: str = "",
     alpha: str = "",
+    gpu: str = "mock",
 ) -> None:
     """Run scheduler sweeps on Modal.
 
-    For ``experiment=alpha-fairness``, every path in ``experiment_configs`` is an
-    explicit scenario config. No robot profiles are generated from shorthand.
+    ``gpu`` is the single knob that picks mock vs. real: ``mock`` runs the mock
+    policy + mock client colocated on CPU; any Modal GPU name (``l40s``,
+    ``h100``, ...) runs the real ``default`` policy server on that GPU with a
+    LIBERO client. It overrides whatever ``policy``/``env`` the config files set.
     """
 
     out = pathlib.Path(output_dir)
@@ -139,6 +137,15 @@ def main(
     server_args = serve.Args.from_json(server_config)
     client_args = run_libero.Args.from_json(client_config)
 
+    # `gpu` is the source of truth for mock vs. real; reconcile the configs to it.
+    if gpu.lower() == "mock":
+        policy = server_args.policy if isinstance(server_args.policy, serve.Mock) else serve.Mock()
+        server_args = dataclasses.replace(server_args, policy=policy)
+        client_args = dataclasses.replace(client_args, env="mock", progress_type="logging")
+    else:
+        server_args = dataclasses.replace(server_args, policy=serve.Default())
+        client_args = dataclasses.replace(client_args, env="libero", progress_type="logging")
+
     cases = _make_cases(
         server_args=server_args,
         client_args=client_args,
@@ -149,8 +156,9 @@ def main(
         alpha=alpha,
         stamp=stamp,
     )
+    cases = [dataclasses.replace(case, gpu=gpu) for case in cases]
 
-    worker = get_worker(server_args, client_args)
+    worker = get_worker(gpu)
     rows: list[dict[str, Any]] = []
     for row in worker.run.map(cases, order_outputs=False):
         rows.append(row)

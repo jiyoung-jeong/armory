@@ -554,7 +554,7 @@ def main(args: Args) -> None:
 
     seed_everything(args.seed)
     if args.env == "libero":
-        episodes = create_episodes(args.task_suite_name, args.num_trials_per_task)
+        episodes = create_episodes(args.task_suite_name, args.num_trials_per_task)[:1]
     else:
         episodes = create_mock_episodes(args.num_trials_per_task * args.num_robots)
 

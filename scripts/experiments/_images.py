@@ -112,6 +112,29 @@ def _add_repo_sources(image: modal.Image, *, py_source: tuple[str, ...]) -> moda
     )
 
 
+def _bake_libero_config(image: modal.Image) -> modal.Image:
+    """Pre-write ``~/.libero/config.yaml`` so importing ``libero`` doesn't block
+    on its first-run interactive prompt (the container has no stdin).
+
+    Must run before any ``add_local_*`` step — Modal forbids build commands
+    after local mounts.
+    """
+    lines = [
+        "assets: /root/libero/libero/assets",
+        "bddl_files: /root/libero/libero/bddl_files",
+        "benchmark_root: /root/libero/libero",
+        "datasets: /root/libero/datasets",
+        "init_states: /root/libero/libero/init_files",
+    ]
+    # printf with %s\n keeps the whole RUN on one Dockerfile line (no embedded
+    # newlines, which break Modal's Dockerfile parser).
+    args = " ".join(f"'{ln}'" for ln in lines)
+    return image.run_commands(
+        "mkdir -p /root/.libero",
+        f"printf '%s\\n' {args} > /root/.libero/config.yaml",
+    )
+
+
 def _add_libero_data(image: modal.Image) -> modal.Image:
     """Mount the libero bddl/init/assets data dirs next to the libero package."""
     for name, remote_path in _LIBERO_DATA_DIRS.items():
@@ -191,14 +214,16 @@ gpu_server_image = _add_repo_sources(
 # --- GPU libero client: LIBERO sim with hardware EGL rendering -----------------
 gpu_libero_client_image = _add_libero_data(
     _add_repo_sources(
-        _cuda_base.apt_install(*_EGL_APT).env(
-            {
-                **_LIBERO_CLIENT_ENV,
-                # MuJoCo defaults to OSMesa software rendering, far too slow for
-                # the LIBERO sim. Force hardware EGL on the GPU.
-                "MUJOCO_GL": "egl",
-                "PYOPENGL_PLATFORM": "egl",
-            }
+        _bake_libero_config(
+            _cuda_base.apt_install(*_EGL_APT).env(
+                {
+                    **_LIBERO_CLIENT_ENV,
+                    # MuJoCo defaults to OSMesa software rendering, far too slow for
+                    # the LIBERO sim. Force hardware EGL on the GPU.
+                    "MUJOCO_GL": "egl",
+                    "PYOPENGL_PLATFORM": "egl",
+                }
+            )
         ),
         py_source=_FULL_PY_SOURCE,
     )
@@ -220,18 +245,20 @@ cpu_mock_image = _add_repo_sources(
 # (100ms+/step), but it runs the real sim without consuming GPU quota.
 cpu_libero_client_image = _add_libero_data(
     _add_repo_sources(
-        modal.Image.debian_slim(python_version="3.11")
-        .apt_install("git", "build-essential", "cmake", *_EGL_APT)
-        .pip_install("torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cpu")
-        .pip_install("av==17.0.0")
-        .pip_install_from_requirements(str(REQUIREMENTS_FILE))
-        .workdir(str(REMOTE_ROOT))
-        .env(
-            {
-                **_LIBERO_CLIENT_ENV,
-                "MUJOCO_GL": "osmesa",
-                "PYOPENGL_PLATFORM": "osmesa",
-            }
+        _bake_libero_config(
+            modal.Image.debian_slim(python_version="3.11")
+            .apt_install("git", "build-essential", "cmake", *_EGL_APT)
+            .pip_install("torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cpu")
+            .pip_install("av==17.0.0")
+            .pip_install_from_requirements(str(REQUIREMENTS_FILE))
+            .workdir(str(REMOTE_ROOT))
+            .env(
+                {
+                    **_LIBERO_CLIENT_ENV,
+                    "MUJOCO_GL": "osmesa",
+                    "PYOPENGL_PLATFORM": "osmesa",
+                }
+            )
         ),
         py_source=_FULL_PY_SOURCE,
     )
