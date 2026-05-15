@@ -24,7 +24,9 @@ address, one for the client to signal it's done).
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -124,6 +126,25 @@ def _ship(case: Case) -> str:
     return str(case.artifact_dir)
 
 
+def _write_command_manifest(run_dir: pathlib.Path, commands: dict[str, list[str]]) -> None:
+    """Write a human-readable + runnable record of the subprocess commands.
+
+    ``commands.json`` keeps the raw argv; ``commands.sh`` is a runnable script so a
+    case can be reproduced by hand from the run dir.
+    """
+    manifest = {
+        "cwd": str(REMOTE_ROOT),
+        "commands": {
+            name: {"argv": argv, "shell": shlex.join(argv)} for name, argv in commands.items()
+        },
+    }
+    (run_dir / "commands.json").write_text(json.dumps(manifest, indent=2))
+    lines = ["#!/usr/bin/env bash", "set -euo pipefail", f"cd {shlex.quote(str(REMOTE_ROOT))}", ""]
+    for name, argv in commands.items():
+        lines += [f"# {name}", shlex.join(argv), ""]
+    (run_dir / "commands.sh").write_text("\n".join(lines) + "\n")
+
+
 # --------------------------------------------------------------------------
 # On-container run bodies
 # --------------------------------------------------------------------------
@@ -132,23 +153,24 @@ def _run_server(
 ) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = case.run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     case.server_args.to_json(case.run_dir / "server_args.json")
+    server_cmd = [
+        sys.executable,
+        "scripts/serve.py",
+        "--json-path",
+        str(case.run_dir / "server_args.json"),
+    ]
+    _write_command_manifest(case.run_dir, {"server": server_cmd})
     status, error = "ok", None
     proc: subprocess.Popen | None = None
     try:
-        with (
-            open(case.run_dir / "server.log", "w") as stdout_file,
-            open(case.run_dir / "server.log", "w") as stderr_file,
-        ):
+        with open(log_dir / "server.log", "w") as log_file:
             proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "scripts/serve.py",
-                    "--json-path",
-                    str(case.run_dir / "server_args.json"),
-                ],
+                server_cmd,
                 cwd=str(REMOTE_ROOT),
-                stdout=stdout_file,
+                stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
         with modal.forward(case.server_args.port, unencrypted=True) as tunnel:
@@ -171,23 +193,24 @@ def _run_server(
 def _run_client(case: Case, stamp: str, *, shutdown: modal.Dict) -> dict[str, Any]:
     """Run the LIBERO client to completion, summarize, ship the run dir."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
-    case.server_args.to_json(case.run_dir / "server_args.json")
+    log_dir = case.run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    case.client_args.to_json(case.run_dir / "client_args.json")
+    client_cmd = [
+        sys.executable,
+        "scripts/run_libero.py",
+        "--json-path",
+        str(case.run_dir / "client_args.json"),
+    ]
+    _write_command_manifest(case.run_dir, {"client": client_cmd})
 
     result: dict[str, Any] = {"run_id": case.run_id}
     try:
-        with (
-            open(case.run_dir / "client.log", "w") as stdout_file,
-            open(case.run_dir / "client.log", "w") as stderr_file,
-        ):
+        with open(log_dir / "client.log", "w") as log_file:
             proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "scripts/run_libero.py",
-                    "--json-path",
-                    str(case.run_dir / "client_args.json"),
-                ],
+                client_cmd,
                 cwd=str(REMOTE_ROOT),
-                stdout=stdout_file,
+                stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
         rc = proc.wait(timeout=CLIENT_TIMEOUT_S)
@@ -283,38 +306,37 @@ class MockSetup:
     ) -> Iterator[dict[str, Any]]:
         """Run server + client as two subprocesses in a single container."""
         case.run_dir.mkdir(parents=True, exist_ok=True)
+        log_dir = case.run_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         case.server_args.to_json(case.run_dir / "server_args.json")
         case.client_args.to_json(case.run_dir / "client_args.json")
+        server_cmd = [
+            sys.executable,
+            "scripts/serve.py",
+            "--json-path",
+            str(case.run_dir / "server_args.json"),
+        ]
+        client_cmd = [
+            sys.executable,
+            "scripts/run_libero.py",
+            "--json-path",
+            str(case.run_dir / "client_args.json"),
+        ]
+        _write_command_manifest(case.run_dir, {"server": server_cmd, "client": client_cmd})
         result: dict[str, Any] = {"run_id": case.run_id}
-        with (
-            open(case.run_dir / "server.log", "w") as stdout_file,
-            open(case.run_dir / "server.log", "w") as stderr_file,
-        ):
+        with open(log_dir / "server.log", "w") as log_file:
             server_proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    "scripts/serve.py",
-                    "--json-path",
-                    str(case.run_dir / "server_args.json"),
-                ],
+                server_cmd,
                 cwd=str(REMOTE_ROOT),
-                stdout=stdout_file,
+                stdout=log_file,
                 stderr=subprocess.STDOUT,
             )
         try:
-            with (
-                open(case.run_dir / "client.log", "w") as stdout_file,
-                open(case.run_dir / "client.log", "w") as stderr_file,
-            ):
+            with open(log_dir / "client.log", "w") as log_file:
                 client_proc = subprocess.Popen(
-                    [
-                        sys.executable,
-                        "scripts/run_libero.py",
-                        "--json-path",
-                        str(case.run_dir / "client_args.json"),
-                    ],
+                    client_cmd,
                     cwd=str(REMOTE_ROOT),
-                    stdout=stdout_file,
+                    stdout=log_file,
                     stderr=subprocess.STDOUT,
                 )
             rc = client_proc.wait(timeout=CLIENT_TIMEOUT_S)

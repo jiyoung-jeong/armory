@@ -92,8 +92,6 @@ class Args(JsonArgs):
     debug: bool = False  # Run in single process with immediate progress output
 
     def execution_horizon_for_robot(self, robot_idx: int) -> int:
-        if not self.execution_horizon:
-            return 10
         if isinstance(self.execution_horizon, int):
             return self.execution_horizon
         return int(self.execution_horizon[robot_idx])
@@ -511,7 +509,9 @@ def validate_args(args: Args) -> None:
     assert args.overwrite or not args.output_dir.exists(), (
         f"Output path {args.output_dir} already exists"
     )
-    assert not args.execution_horizon or len(args.execution_horizon) != args.num_robots, (
+    assert (
+        isinstance(args.execution_horizon, int) or len(args.execution_horizon) == args.num_robots
+    ), (
         f"execution_horizon must either be empty or have exactly {args.num_robots} values (one per robot), but got {len(args.execution_horizon)} values"
     )
     assert args.num_robots > 0, "num_robots must be positive"

@@ -151,8 +151,12 @@ def main(
     )
 
     worker = get_worker(server_args, client_args)
-    rows = list(worker.run.map(cases))
-    print(rows)
+    rows: list[dict[str, Any]] = []
+    for row in worker.run.map(cases, order_outputs=False):
+        rows.append(row)
+        sr = row.get("starvation_rate")
+        sr_str = f"{sr:.3f}" if isinstance(sr, (int, float)) else "n/a"
+        print(f"{row.get('status', '?')}: {row['run_id']} starvation={sr_str}")
 
     download_artifacts(stamp=stamp, out=out, rows=rows)
     write_rows(out / f"sweep_results_{stamp}.csv", rows)
