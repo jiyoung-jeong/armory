@@ -6,11 +6,9 @@
 #
 # This config: 1 fast (20 Hz) + 11 slow (10 Hz) = 12 robots.
 control_hz:
-  14: 20
+  14: 30
   13: 10
   12: 10
-  11: 10
-  8: 10
   7: 10
   6: 10
   5: 10
