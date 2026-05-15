@@ -21,8 +21,8 @@ mkdir -p logs "${CASE_DIR}/logs"
 PORT="$(find_free_port 8000 9000 "${SLURM_JOB_ID:-7}")"
 SERVER_NODELIST="${SLURM_JOB_NODELIST_HET_GROUP_0:-${SLURM_JOB_NODELIST:-}}"
 SERVER_NODE="$(scontrol show hostnames "${SERVER_NODELIST}" | head -1)"
-SERVER_CPUS="${SLURM_CPUS_PER_TASK_HET_GROUP_0:-${SLURM_CPUS_PER_TASK:-4}}"
-CLIENT_CPUS="${SLURM_CPUS_PER_TASK_HET_GROUP_1:-20}"
+SERVER_CPUS="${SLURM_CPUS_PER_TASK_HET_GROUP_0:-${SLURM_CPUS_PER_TASK:-}}"
+CLIENT_CPUS="${SLURM_CPUS_PER_TASK_HET_GROUP_1:-}"
 
 echo "======================================"
 echo "Job ID: ${SLURM_JOB_ID:-unknown}"
@@ -32,6 +32,15 @@ echo "Port: ${PORT}"
 echo "Server CPUs: ${SERVER_CPUS}"
 echo "Client CPUs: ${CLIENT_CPUS}"
 echo "======================================"
+
+SERVER_SRUN=(srun --het-group=0 --ntasks=1 --overlap --exact)
+if [ -n "${SERVER_CPUS}" ]; then
+    SERVER_SRUN+=(--cpus-per-task="${SERVER_CPUS}")
+fi
+CLIENT_SRUN=(srun --het-group=1 --ntasks=1 --overlap --exact)
+if [ -n "${CLIENT_CPUS}" ]; then
+    CLIENT_SRUN+=(--cpus-per-task="${CLIENT_CPUS}")
+fi
 
 python3 - "${CASE_DIR}" "${SERVER_NODE}" "${PORT}" <<'EOF'
 import json
@@ -53,7 +62,7 @@ server_path.write_text(json.dumps(server_args, indent=2) + "\n")
 client_path.write_text(json.dumps(client_args, indent=2) + "\n")
 EOF
 
-srun --het-group=0 --ntasks=1 --cpus-per-task="${SERVER_CPUS}" --overlap --exact bash -lc "
+"${SERVER_SRUN[@]}" bash -lc "
     set -euo pipefail
     cd '${REPO_ROOT}'
     source '${SCRIPT_DIR}/utils.sh'
@@ -71,7 +80,7 @@ fi
 
 CLIENT_STATUS=ok
 CLIENT_ERROR=""
-if ! srun --het-group=1 --ntasks=1 --cpus-per-task="${CLIENT_CPUS}" --overlap --exact bash -lc "
+if ! "${CLIENT_SRUN[@]}" bash -lc "
     set -euo pipefail
     cd '${REPO_ROOT}'
     source '${SCRIPT_DIR}/utils.sh'
