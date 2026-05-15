@@ -168,6 +168,9 @@ cython_debug/
 #.idea/
 policy_logs/
 
+# Modal
+requirements-modal*
+
 # Credentials and secrets
 *.json
 !package*.json

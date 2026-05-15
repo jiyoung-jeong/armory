@@ -1,6 +1,7 @@
 """Shared utilities for scripts."""
 
 import json
+import pathlib
 import subprocess
 import time
 from collections.abc import Callable
@@ -21,10 +22,28 @@ from armory_client.schemas import ServerMetadata
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:
-    INFERENCE_PROFILES = {
-        profile_name: {int(batch_size): latency for batch_size, latency in profile.items()}
-        for profile_name, profile in json.load(f).items()
-    }
+    INFERENCE_PROFILES = json.load(f)
+
+
+class JsonArgs:
+    """Mixin for dataclass Args providing JSON serialization/deserialization."""
+
+    def to_json(self, path: str | pathlib.Path) -> None:
+        path = pathlib.Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._serialize(), indent=2))
+
+    @classmethod
+    def from_json(cls, path: str | pathlib.Path) -> "JsonArgs":
+        data = json.loads(pathlib.Path(path).read_text())
+        return cls._deserialize(data)
+
+    def _serialize(self) -> dict:
+        raise NotImplementedError
+
+    @classmethod
+    def _deserialize(cls, data: dict) -> "JsonArgs":
+        raise NotImplementedError
 
 
 def get_gpu_info() -> dict[str, Any]:
@@ -129,7 +148,8 @@ def resolve_policy(
             env=env.value,
             action_horizon=mock.action_horizon,
             action_dim=mock.action_dim,
-            profile=mock.profile,
+            model=mock.model,
+            gpu=mock.gpu,
         )
         return ResolvedPolicy(metadata=metadata, factory=factory)
 
@@ -233,12 +253,15 @@ class _MockPolicy:
 class _MockPolicyFactory:
     """Picklable factory for the mock policy."""
 
-    def __init__(self, *, env: str, action_horizon: int, action_dim: int, profile: str):
+    def __init__(self, *, env: str, action_horizon: int, action_dim: int, model: str, gpu: str):
         self._env = env
         self._action_horizon = action_horizon
         self._action_dim = action_dim
-        self._profile = profile
-        self._inference_latency = INFERENCE_PROFILES[profile]
+        self._profile = f"{model}_{gpu}"
+        self._inference_latency = {
+            int(batch_size): latency
+            for batch_size, latency in INFERENCE_PROFILES[model][gpu].items()
+        }
 
     def __call__(self) -> _MockPolicy:
         return _MockPolicy(
