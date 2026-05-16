@@ -122,7 +122,7 @@ def _save_single_panel_plot(
     y_label: str,
     panel_title: str,
     pareto: bool,
-) -> None:
+) -> list[pathlib.Path]:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -131,14 +131,23 @@ def _save_single_panel_plot(
 
     df = pd.read_csv(results_csv)
     if df.empty:
-        return
-    df = df[df.get("status", "ok") == "ok"]
-    needed = {"mean_starvation", y_col, "scheduler", "model", "scenario_id"}
+        return []
+    if "status" in df.columns:
+        df = df[df["status"] == "ok"].copy()
+    if "alpha_requested" not in df.columns and "alpha" in df.columns:
+        df["alpha_requested"] = pd.to_numeric(df["alpha"], errors="coerce")
+    if "scenario_id" not in df.columns:
+        df["scenario_id"] = "all"
+    if "model" not in df.columns:
+        df["model"] = "all"
+
+    needed = {"mean_starvation", y_col, "scheduler", "model", "scenario_id", "alpha_requested"}
     if not needed.issubset(df.columns):
-        return
+        return []
     df = df.dropna(subset=["mean_starvation", y_col])
 
     plots_dir.mkdir(parents=True, exist_ok=True)
+    written: list[pathlib.Path] = []
     for (scenario_id, model), sub in df.groupby(["scenario_id", "model"]):
         fig, ax = plt.subplots(figsize=(8, 6))
         handle = _plot_one_yaxis(
@@ -162,16 +171,21 @@ def _save_single_panel_plot(
             fontweight="bold",
         )
         plt.tight_layout()
-        safe_model = model.replace(".", "_").replace("/", "_")
-        out = plots_dir / f"{name_prefix}__{scenario_id}__{safe_model}.png"
+        safe_scenario = str(scenario_id).replace(".", "_").replace("/", "_")
+        safe_model = str(model).replace(".", "_").replace("/", "_")
+        out = plots_dir / f"{name_prefix}__{safe_scenario}__{safe_model}.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"Wrote {out}")
+        written.append(out)
+    return written
 
 
-def plot_starvation_pareto(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
+def plot_starvation_pareto(
+    results_csv: pathlib.Path, plots_dir: pathlib.Path
+) -> list[pathlib.Path]:
     """Pareto plot: mean vs worst-robot starvation. Bottom-left = best."""
-    _save_single_panel_plot(
+    return _save_single_panel_plot(
         results_csv,
         plots_dir,
         name_prefix="starvation_pareto",
@@ -182,9 +196,11 @@ def plot_starvation_pareto(results_csv: pathlib.Path, plots_dir: pathlib.Path) -
     )
 
 
-def plot_starvation_vs_variance(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
+def plot_starvation_vs_variance(
+    results_csv: pathlib.Path, plots_dir: pathlib.Path
+) -> list[pathlib.Path]:
     """Mean starvation vs cross-robot starvation variance. Bottom-left = best."""
-    _save_single_panel_plot(
+    return _save_single_panel_plot(
         results_csv,
         plots_dir,
         name_prefix="starvation_vs_variance",
@@ -195,6 +211,8 @@ def plot_starvation_vs_variance(results_csv: pathlib.Path, plots_dir: pathlib.Pa
     )
 
 
-def plot_results(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> None:
-    plot_starvation_pareto(results_csv, plots_dir)
-    plot_starvation_vs_variance(results_csv, plots_dir)
+def plot_results(results_csv: pathlib.Path, plots_dir: pathlib.Path) -> list[pathlib.Path]:
+    written: list[pathlib.Path] = []
+    written.extend(plot_starvation_pareto(results_csv, plots_dir))
+    written.extend(plot_starvation_vs_variance(results_csv, plots_dir))
+    return written

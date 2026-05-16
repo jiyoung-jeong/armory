@@ -653,7 +653,7 @@ def plot_results(
     x: str = "num_robots",
     line: str = "scheduler",
     metrics: list[str] | None = None,
-) -> None:
+) -> list[pathlib.Path]:
     output_dir = output_dir or (results.parent / "plots")
     output_dir.mkdir(parents=True, exist_ok=True)
     if metrics is None:
@@ -690,6 +690,7 @@ def plot_results(
     print("Wrote plots:")
     for path in written:
         print(path)
+    return written
 
 
 def main() -> None:
