@@ -29,7 +29,9 @@ class SlotData:
     action_index_start: int
     request_timestamp: float
     deadline: float
-    execution_horizon: int  # how many steps of the predicted chunk the robot is willing to execute
+    max_execution_horizon: (
+        int  # how many steps of the predicted chunk the robot is willing to execute
+    )
     infer_type: Any
     params: Any
     noise: Any  # np.ndarray | None

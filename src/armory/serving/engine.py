@@ -56,7 +56,6 @@ class GpuWorker:
         gpu_out_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
-        min_execution_horizon: int = 10,
     ) -> None:
         self.policy_factory = policy_factory
         self.max_batch_size = max_batch_size
@@ -66,7 +65,6 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
-        self._min_execution_horizon = min_execution_horizon
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -154,7 +152,7 @@ class GpuWorker:
                     observation_step=sd.observation_step,
                     action_index_start=sd.action_index_start,
                     request_timestamp=sd.request_timestamp,
-                    execution_horizon=sd.execution_horizon,
+                    max_execution_horizon=sd.max_execution_horizon,
                     actions=action_dict["actions"],
                     noise=action_dict["noise"],
                     server_arrival_time=sd.arrival_timestamp,
@@ -261,12 +259,13 @@ class GpuWorker:
             )
         return None
 
-    def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
-        return (
-            sr.is_padding
-            or sd.robot_id not in self._last_served_action_index
-            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_execution_horizon
-        )
+    # TODO: request stuff
+    # def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
+    #     return (
+    #         sr.is_padding
+    #         or sd.robot_id not in self._last_served_action_index
+    #         or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_max_execution_horizon
+    #     )
 
     def _update_state(
         self,

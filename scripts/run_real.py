@@ -89,7 +89,7 @@ class Args:
 
     broker_type: str = "naive_async"
 
-    execution_horizon: int = 20
+    max_execution_horizon: int = 20
 
     resize_size: int = 224
 
@@ -159,7 +159,7 @@ def _write_runtime_metadata(out: pathlib.Path, robots: list, args: Args) -> None
         control_hz=args.control_hz,
         broker_type=args.broker_type,
         episodes=[f"real_session_{r.name}" for r in robots],
-        execution_horizon=[args.execution_horizon] * len(robots),
+        max_execution_horizon=[args.max_execution_horizon] * len(robots),
     )
     metadata.to_json(out / "runtime_metadata.json")
 
@@ -206,8 +206,11 @@ def main(args: Args) -> None:
         out = args.output_dir / f"trial_{ts}"
         out.mkdir(parents=True, exist_ok=True)
         logger.info("output dir: %s", out.resolve())
-        logger.info("running trial on %d robot(s): %s",
-                    len(targets), [f"WS-{r.id}/{r.name}" for r in targets])
+        logger.info(
+            "running trial on %d robot(s): %s",
+            len(targets),
+            [f"WS-{r.id}/{r.name}" for r in targets],
+        )
 
         _write_runtime_metadata(out, targets, args)
 
@@ -257,6 +260,7 @@ def main(args: Args) -> None:
         # Finally: same offline metrics pass as run_libero.py.
         try:
             from sims.libero.metrics import calculate_metrics, generate_all_plots
+
             calculate_metrics(out)
             generate_all_plots(out)
             logger.info("metrics + plots written to %s", out)
@@ -288,7 +292,8 @@ def _flatten_fetched_layout(out: pathlib.Path, remote_subdir: str) -> None:
             if target.exists():
                 logger.warning(
                     "flatten: %s already exists, merging episodes from %s",
-                    target, robot_idx_dir,
+                    target,
+                    robot_idx_dir,
                 )
                 for ep in robot_idx_dir.iterdir():
                     dest = target / ep.name

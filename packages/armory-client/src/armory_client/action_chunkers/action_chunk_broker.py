@@ -55,7 +55,7 @@ class ActionChunkBrokerBase:
                 action_chunk_index=len(self._action_chunks) - 1,
                 index_in_chunk=i,
             )
-            for i in range(action_chunk.execution_horizon)
+            for i in range(action_chunk.max_execution_horizon)
             if action_chunk.action_index_start + i >= self._next_action_step
         )
 
@@ -102,14 +102,14 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         ws_client: BidirectionalWebsocket,
         control_hz: int,
         realtime: bool = True,
-        execution_horizon: int = 0,
+        max_execution_horizon: int = 0,
         real: bool = False,
     ) -> None:
         super().__init__(real=real)
 
         self._step_duration = 1 / control_hz
         self._realtime = realtime
-        self.execution_horizon = execution_horizon
+        self.max_execution_horizon = max_execution_horizon
 
         self._ws_client = ws_client
         self._lock = threading.Lock()
@@ -133,7 +133,7 @@ class ActionChunkBroker(ActionChunkBrokerBase):
             obs,
             self.deadline,
             self._next_action_step,
-            execution_horizon=self.execution_horizon,
+            max_execution_horizon=self.max_execution_horizon,
         )
 
     def _receive_actions(self) -> None:
@@ -152,7 +152,7 @@ class ActionChunkBroker(ActionChunkBrokerBase):
                     action_chunk.observation_step,
                     action_chunk.response_timestamp,
                     action_chunk.action_index_start,
-                    action_chunk.execution_horizon,
+                    action_chunk.max_execution_horizon,
                     action_chunk.execution_start_step,
                     first_executed_index,
                 )

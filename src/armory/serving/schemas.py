@@ -32,7 +32,7 @@ class SlotRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
-    execution_horizon: int
+    max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None
     noise: np.ndarray | None
@@ -50,7 +50,7 @@ class AckNotification:
     chunk_id: int
     observation_step: int
     action_index_start: int
-    execution_horizon: int
+    max_execution_horizon: int
     execution_start_step: int
     first_executed_index: int
 
@@ -89,7 +89,7 @@ class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
     action_index_start: int  # action index of the first action in the chunk
-    execution_horizon: int
+    max_execution_horizon: int
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int = 0  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
@@ -172,7 +172,7 @@ class InternalRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
-    execution_horizon: int
+    max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
     noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
@@ -197,7 +197,7 @@ class InternalRequest:
             action_index_start=slot_data.action_index_start,
             request_timestamp=slot_data.request_timestamp,
             deadline=slot_data.deadline,
-            execution_horizon=slot_data.execution_horizon,
+            max_execution_horizon=slot_data.max_execution_horizon,
             infer_type=slot_data.infer_type,
             params=params,
         )

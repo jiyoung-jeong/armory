@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import pathlib
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
-import dataclasses
 import imageio
 import numpy as np
 from typing_extensions import override
@@ -215,7 +215,7 @@ class Saver(_subscriber.Subscriber):
             # Save metadata
             # TODO: fix this
             data_to_save[f"{prefix}/start_step"] = chunk.observation_step
-            data_to_save[f"{prefix}/execution_horizon"] = chunk.execution_horizon
+            data_to_save[f"{prefix}/max_execution_horizon"] = chunk.max_execution_horizon
 
         # Save as compressed npz
         np.savez_compressed(debug_data_file, **data_to_save)

@@ -57,7 +57,7 @@ class Args(JsonArgs):
     port: int = 8080
     resize_size: int = 224
     action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
-    execution_horizon: list[int] = field(default_factory=list)
+    max_execution_horizon: list[int] = field(default_factory=list)
 
     #################################################################################################################
     # LIBERO environment-specific parameters
@@ -91,12 +91,12 @@ class Args(JsonArgs):
     log_dir: pathlib.Path | None = None
     debug: bool = False  # Run in single process with immediate progress output
 
-    def execution_horizon_for_robot(self, robot_idx: int) -> int:
-        if len(self.execution_horizon) == 0:
+    def max_execution_horizon_for_robot(self, robot_idx: int) -> int:
+        if len(self.max_execution_horizon) == 0:
             return 0
-        if isinstance(self.execution_horizon, int):
-            return self.execution_horizon
-        return int(self.execution_horizon[robot_idx])
+        if isinstance(self.max_execution_horizon, int):
+            return self.max_execution_horizon
+        return int(self.max_execution_horizon[robot_idx])
 
     @property
     def http_base(self) -> str:
@@ -108,7 +108,7 @@ class Args(JsonArgs):
             "port": self.port,
             "resize_size": self.resize_size,
             "action_chunk_broker_type": self.action_chunk_broker_type.value,
-            "execution_horizon": self.execution_horizon,
+            "max_execution_horizon": self.max_execution_horizon,
             "env": self.env,
             "task_suite_name": self.task_suite_name,
             "num_trials_per_task": self.num_trials_per_task,
@@ -151,8 +151,8 @@ def _apply_experiment_config(args: Args, experiment_config: dict[str, object]) -
     )
     args.num_robots = int(experiment["num_robots"])
     args.num_trials_per_task = int(experiment["trials_per_robot"])
-    args.execution_horizon = [
-        int(robots[f"robot_{idx}"]["execution_horizon"]) for idx in range(args.num_robots)
+    args.max_execution_horizon = [
+        int(robots[f"robot_{idx}"]["max_execution_horizon"]) for idx in range(args.num_robots)
     ]
 
 
@@ -245,7 +245,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     config = BrokerConfig(
         ws_client=ws_client,
         control_hz=args.control_hz,
-        execution_horizon=args.execution_horizon_for_robot(robot_idx),
+        max_execution_horizon=args.max_execution_horizon_for_robot(robot_idx),
     )
     broker = args.action_chunk_broker_type.create(config)
     agent = _policy_agent.PolicyAgent(broker=broker)
@@ -511,8 +511,10 @@ def validate_args(args: Args) -> None:
     assert args.overwrite or not args.output_dir.exists(), (
         f"Output path {args.output_dir} already exists"
     )
-    assert len(args.execution_horizon) == 0 or len(args.execution_horizon) == args.num_robots, (
-        f"execution_horizon must either be empty or have exactly {args.num_robots} values (one per robot), but got {len(args.execution_horizon)} values"
+    assert (
+        len(args.max_execution_horizon) == 0 or len(args.max_execution_horizon) == args.num_robots
+    ), (
+        f"max_execution_horizon must either be empty or have exactly {args.num_robots} values (one per robot), but got {len(args.max_execution_horizon)} values"
     )
     assert args.num_robots > 0, "num_robots must be positive"
     assert args.num_trials_per_task > 0, "num_trials_per_task must be positive"
@@ -606,7 +608,7 @@ def main(args: Args) -> None:
         seed=args.seed,
         resize_size=args.resize_size,
         episodes=[str(ep) for ep in episodes],
-        execution_horizon=args.execution_horizon,
+        max_execution_horizon=args.max_execution_horizon,
     )
 
     runtime_metadata.to_json(args.output_dir / "runtime_metadata.json")

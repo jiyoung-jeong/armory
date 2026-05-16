@@ -17,7 +17,7 @@ def _make_request(
     observation_step: int,
     action_index_start: int,
     request_timestamp: float,
-    execution_horizon: int,
+    max_execution_horizon: int,
 ) -> SlotRequest:
     return SlotRequest(
         slot_index=0,
@@ -28,7 +28,7 @@ def _make_request(
         action_index_start=action_index_start,
         request_timestamp=request_timestamp,
         deadline=0.0,
-        execution_horizon=execution_horizon,
+        max_execution_horizon=max_execution_horizon,
         infer_type=InferType.SYNC,
         params=None,
         noise=None,
@@ -38,7 +38,7 @@ def _make_request(
 
 def _make_robot(scenario: Scenario) -> Robot:
     """Create a Robot seeded with the initial obs=0 control step and acked chunks."""
-    horizon = scenario.chunks[0].execution_horizon
+    horizon = scenario.chunks[0].max_execution_horizon
     robot = Robot(CONTROL_HZ, horizon)
     robot.step(_make_request(0, 0, 0.0, horizon))
     for chunk in scenario.chunks:
@@ -55,12 +55,12 @@ def test_chunk_tracking(scenario: Scenario) -> None:
     for actual, expected in zip(robot.chunks, scenario.chunks):
         assert actual.observation_step == expected.observation_step
         assert actual.action_index_start == expected.action_index_start
-        assert actual.execution_horizon == expected.execution_horizon
+        assert actual.max_execution_horizon == expected.max_execution_horizon
         assert actual.arrival_time == pytest.approx(expected.arrival_time)
         assert actual.origin == "confirmed"
 
     assert robot.max_overall_action_step == max(
-        c.action_index_start + c.execution_horizon - 1 for c in scenario.chunks
+        c.action_index_start + c.max_execution_horizon - 1 for c in scenario.chunks
     )
 
 
@@ -87,7 +87,7 @@ def test_deadline(scenario: Scenario) -> None:
 
 
 def _seeded_mirror(scenario: Scenario) -> Mirror:
-    horizon = scenario.chunks[0].execution_horizon
+    horizon = scenario.chunks[0].max_execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
     return mirror
@@ -137,7 +137,7 @@ def test_mirror_fast_forward_multiple_robots() -> None:
 
     rids = ["a", "b"]
     mirror = Mirror()
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     for rid in rids:
         mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
 
@@ -157,7 +157,7 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
 
     rids = ["a", "b"]
     mirror = Mirror()
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     for rid in rids:
         mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
     # Only "a" gets the chunk, but both should advance.
@@ -194,7 +194,7 @@ class _StubLatencyTracker(LatencyTracker):
 
 def test_mirror_checkpoint_roundtrip() -> None:
     """Mutate via fast_forward, restore from checkpoint, state should match pre-mutation."""
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
 
@@ -217,7 +217,7 @@ def test_mirror_checkpoint_roundtrip() -> None:
 
 def test_mirror_checkpoint_drops_robots_added_after() -> None:
     """A robot added after the checkpoint is dropped on restore."""
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     mirror = Mirror()
     mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="a"), CONTROL_HZ)
     ckpt = mirror.checkpoint()
@@ -231,7 +231,7 @@ def test_mirror_checkpoint_drops_robots_added_after() -> None:
 
 def test_mirror_checkpoint_restores_divergent_branch_contents() -> None:
     """Restore must recover branch contents, not just truncate lists to branch lengths."""
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
     mirror.robots[ROBOT_ID].queue_chunk(LONG_RUN.chunks[0])
@@ -254,7 +254,7 @@ def test_mirror_update_completion_refines_arrival() -> None:
     """update_batch_completion sets arrival_time to completion + action_latency."""
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
     mirror = Mirror(tracker)
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
     chunk = LONG_RUN.chunks[0]
     mirror.robots[ROBOT_ID].queue_chunk(chunk)
@@ -274,8 +274,8 @@ def test_mirror_update_completion_refines_arrival() -> None:
                 observation_step=chunk.observation_step,
                 action_index_start=chunk.action_index_start,
                 request_timestamp=0.0,
-                actions=np.zeros((1, chunk.execution_horizon, 7)),
-                execution_horizon=chunk.execution_horizon,
+                actions=np.zeros((1, chunk.max_execution_horizon, 7)),
+                max_execution_horizon=chunk.max_execution_horizon,
             )
         ],
         batch_id=0,
@@ -292,7 +292,7 @@ def test_mirror_update_completion_refines_arrival() -> None:
 
 def test_mirror_confirm_chunk_by_chunk_id() -> None:
     """confirm_chunk matches by chunk_id and sets arrival_time=ack.receive_time."""
-    horizon = LONG_RUN.chunks[0].execution_horizon
+    horizon = LONG_RUN.chunks[0].max_execution_horizon
     mirror = Mirror()
     mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
     chunk = LONG_RUN.chunks[1]  # chunk_id=1
@@ -305,7 +305,7 @@ def test_mirror_confirm_chunk_by_chunk_id() -> None:
         chunk_id=chunk.chunk_id,
         observation_step=chunk.observation_step,
         action_index_start=chunk.action_index_start,
-        execution_horizon=chunk.execution_horizon,
+        max_execution_horizon=chunk.max_execution_horizon,
         execution_start_step=3,
         first_executed_index=1,
         receive_time=42.0,
@@ -340,7 +340,7 @@ def test_mirror_get_chunks_basic() -> None:
     # arrival_time = dispatch + infer + action = 2.0 + 0.1 + 0.02
     assert chunk.arrival_time == pytest.approx(2.12)
     assert chunk.origin == "queued"
-    assert chunk.execution_horizon == horizon
+    assert chunk.max_execution_horizon == horizon
     # observation_step: latest step before (dispatch_time - obs_latency) = 1.95;
     # steps tick at integer times, so the latest step before 1.95 is step 1.
     assert chunk.observation_step == 1

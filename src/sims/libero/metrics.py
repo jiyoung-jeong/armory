@@ -116,7 +116,13 @@ def _build_actions_left_matrix(
     """
     by_robot = load_actions_left(output_path)
     if not by_robot:
-        return [], np.empty((0, 0), dtype=float), [], float(control_hz or _load_control_hz(output_path)), 0.0
+        return (
+            [],
+            np.empty((0, 0), dtype=float),
+            [],
+            float(control_hz or _load_control_hz(output_path)),
+            0.0,
+        )
 
     robots = sorted(by_robot.keys(), key=int, reverse=True)
 
@@ -136,7 +142,9 @@ def _build_actions_left_matrix(
                     median_gap = float(np.median(np.diff(ts)))
                     if median_gap > 0:
                         per_robot_rates.append(1.0 / median_gap)
-        resolved_control_hz = max(per_robot_rates) if per_robot_rates else _load_control_hz(output_path)
+        resolved_control_hz = (
+            max(per_robot_rates) if per_robot_rates else _load_control_hz(output_path)
+        )
 
     # Global t0: earliest first-step timestamp across all robots.
     t0 = min(ts[0] for eps in by_robot.values() for ts, _ in eps if len(ts) > 0)
@@ -208,7 +216,7 @@ def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
                     "task_id": result.task_id,
                     "task_language": result.task_language,
                     "latency": chunk.latency,
-                    "execution_horizon": chunk.execution_horizon,
+                    "max_execution_horizon": chunk.max_execution_horizon,
                 }
             )
 
@@ -249,10 +257,15 @@ def compute_fairness_metrics(output_path: pathlib.Path) -> dict | None:
     if "starvation_steps" not in df.columns or "observed_steps" not in df.columns:
         return None
 
-    agg = df.groupby("robot_idx").agg(
-        starvation_steps=("starvation_steps", "sum"),
-        observed_steps=("observed_steps", "sum"),
-    ).reset_index().sort_values("robot_idx")
+    agg = (
+        df.groupby("robot_idx")
+        .agg(
+            starvation_steps=("starvation_steps", "sum"),
+            observed_steps=("observed_steps", "sum"),
+        )
+        .reset_index()
+        .sort_values("robot_idx")
+    )
     if agg.empty:
         return None
 

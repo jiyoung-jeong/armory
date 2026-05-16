@@ -27,8 +27,8 @@ def _make_responses(action_chunks: list[ActionChunk]) -> list[TimedResponse]:
                 observation_step=chunk.observation_step,
                 action_index_start=chunk.action_index_start,
                 request_timestamp=0.0,
-                actions=np.zeros((chunk.execution_horizon, 7)),
-                execution_horizon=chunk.execution_horizon,
+                actions=np.zeros((chunk.max_execution_horizon, 7)),
+                max_execution_horizon=chunk.max_execution_horizon,
             ),
             chunk,
             chunk.arrival_time,
@@ -43,7 +43,7 @@ def _with_arrival_time(action_chunk: ActionChunk, arrival_time: float) -> Action
         observation_step=action_chunk.observation_step,
         arrival_time=arrival_time,
         action_index_start=action_chunk.action_index_start,
-        execution_horizon=action_chunk.execution_horizon,
+        max_execution_horizon=action_chunk.max_execution_horizon,
     )
 
 

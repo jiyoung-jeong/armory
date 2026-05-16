@@ -137,7 +137,7 @@ def _load_steps_taken(chunk_file: pathlib.Path) -> int:
 
 def _action_fate_counts_for_episode(chunk_file: pathlib.Path) -> dict[str, int]:
     df = pd.read_parquet(chunk_file)
-    needed = {"action_index_start", "execution_horizon", "execution_start_step"}
+    needed = {"action_index_start", "max_execution_horizon", "execution_start_step"}
     missing = needed - set(df.columns)
     if missing:
         raise SystemExit(f"{chunk_file} missing required column(s): {', '.join(sorted(missing))}")
@@ -163,7 +163,7 @@ def _action_fate_counts_for_episode(chunk_file: pathlib.Path) -> dict[str, int]:
     total_produced = 0
     for row in chunks.itertuples(index=False):
         start = int(row.action_index_start)
-        horizon = int(row.execution_horizon)
+        horizon = int(row.max_execution_horizon)
         execution_start_step = int(row.execution_start_step)
         total_produced += horizon
         arrivals_by_step.setdefault(execution_start_step, []).append((start, horizon))

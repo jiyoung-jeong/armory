@@ -83,7 +83,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
             action_index_start=0,
             request_timestamp=time.time(),
             deadline=deadline if deadline is not None else 0.0,
-            execution_horizon=self._server_metadata.action_horizon,
+            max_execution_horizon=self._server_metadata.action_horizon,
             infer_type=infer_type,
             params=params,
             noise=noise,
@@ -107,7 +107,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
             observation_step=result["observation_step"],
             receive_time=receive_time,
             action_index_start=result["action_index_start"],
-            execution_horizon=result["execution_horizon"],
+            max_execution_horizon=result["max_execution_horizon"],
             execution_start_step=obs.step,
         )
         with self._ws_lock:

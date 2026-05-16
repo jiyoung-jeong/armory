@@ -26,7 +26,7 @@ class _FakeBroker:
             action_index_start=0,
             execution_start_step=observation_step,
             actions=np.zeros((1, 7), dtype=np.float32),
-            execution_horizon=1,
+            max_execution_horizon=1,
             request_timestamp=request_timestamp,
             response_timestamp=request_timestamp + 0.05,
             noise=None,
@@ -98,8 +98,14 @@ def test_writes_expected_episode_layout(tmp_path):
     assert ep.name == "0_real_0_failure", ep.name
 
     # Required files for calculate_metrics
-    expected = {"metadata.json", "timestamps.csv", "action_chunks.parquet",
-                "actions_left.npy", "cost_history.npy", "cost_history.png"}
+    expected = {
+        "metadata.json",
+        "timestamps.csv",
+        "action_chunks.parquet",
+        "actions_left.npy",
+        "cost_history.npy",
+        "cost_history.png",
+    }
     actual = {p.name for p in ep.iterdir()}
     missing = expected - actual
     assert not missing, f"missing files: {missing}; got {actual}"

@@ -81,14 +81,14 @@ def load_experiment_config(path: str | pathlib.Path) -> ExperimentConfig:
         uplink_sigma = float(robot_cfg["uplink_sigma"])
         downlink_median = float(robot_cfg["downlink_median_ms"])
         downlink_sigma = float(robot_cfg["downlink_sigma"])
-        execution_horizon = int(robot_cfg["execution_horizon"])
+        max_execution_horizon = int(robot_cfg["max_execution_horizon"])
 
         robots[str(robot_id)] = {
             "uplink_median_ms": uplink_median,
             "uplink_sigma": uplink_sigma,
             "downlink_median_ms": downlink_median,
             "downlink_sigma": downlink_sigma,
-            "execution_horizon": execution_horizon,
+            "max_execution_horizon": max_execution_horizon,
             "seed": int(robot_cfg["seed"]) if robot_cfg.get("seed") is not None else None,
         }
 

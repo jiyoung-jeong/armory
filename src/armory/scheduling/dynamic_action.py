@@ -3,7 +3,7 @@ import time
 from typing import Any
 
 from armory.scheduling.base import RequestScheduler
-from armory.serving.schemas import RobotID, SlotRequest
+from armory.serving.schemas import SlotRequest
 
 
 class DynamicActionScheduler(RequestScheduler):
@@ -11,11 +11,10 @@ class DynamicActionScheduler(RequestScheduler):
         self,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_execution_horizon: int = 0,
         *,
         alpha: float = 0.0,
     ):
-        super().__init__(batch_queue, max_batch_size, min_execution_horizon=min_execution_horizon)
+        super().__init__(batch_queue, max_batch_size)
         self._alpha = max(0.0, alpha)
         self._service_debt: dict[str, float] = {}
         self._demand_rate: dict[str, float] = {}
@@ -27,7 +26,7 @@ class DynamicActionScheduler(RequestScheduler):
         super().update(request)
         # update the demand rate for the robot
         self._demand_rate[request.robot_id] = float(request.control_hz) / max(
-            1.0, float(request.execution_horizon)
+            1.0, float(request.max_execution_horizon)
         )
 
     def reset_robot(self, robot_id: str) -> None:
