@@ -6,7 +6,7 @@ import logging
 import multiprocessing as mp
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +27,14 @@ def _action_time(robot: Robot) -> float:
 
 def _action_times(mirror: Mirror) -> dict[RobotID, float]:
     return {rid: _action_time(robot) for rid, robot in mirror.robots.items()}
+
+
+def _coerce_horizon_multipliers(
+    multipliers: Mapping[int | str, float] | None,
+) -> dict[int, float]:
+    if multipliers is None:
+        return {}
+    return {int(horizon): float(multiplier) for horizon, multiplier in multipliers.items()}
 
 
 def _mirror_summary(mirror: Mirror, now: float) -> str:
@@ -67,11 +75,15 @@ class IncrementalSearch:
         latency_tracker: LatencyTracker,
         start_time: float,
         horizon: float,
+        candidate_robot_ids: tuple[RobotID, ...],
+        action_multipliers: Mapping[RobotID, float] | None = None,
         max_depth: int = 5,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = start_time
         self.end_time = start_time + horizon
+        self.candidate_robot_ids = tuple(rid for rid in candidate_robot_ids if rid in mirror.robots)
+        self.action_multipliers = dict(action_multipliers or {})
         self.max_depth = max_depth
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
@@ -103,11 +115,10 @@ class IncrementalSearch:
         return list(self.best_schedule)
 
     def _candidates(self) -> Iterator[tuple[RobotID, ...]]:
-        # FIXME: search space is just prefix-of-EDF batches
-        deadlines = self.snapshot.deadlines()
-        sorted_ids = sorted(self.snapshot.robots.keys(), key=lambda rid: deadlines[rid])
-        return iter(
-            tuple(sorted_ids[:i]) for i in range(1, min(self.max_batch_size, len(sorted_ids)) + 1)
+        sorted_ids = sorted(self.candidate_robot_ids)
+        max_size = min(self.max_batch_size, len(sorted_ids))
+        return itertools.chain.from_iterable(
+            itertools.combinations(sorted_ids, size) for size in range(1, max_size + 1)
         )
 
     def _expand(
@@ -146,7 +157,11 @@ class IncrementalSearch:
         if gpu_time <= 0:
             return
         new_times = _action_times(self.snapshot)
-        gained = sum(new_times[rid] - self.initial_action_times.get(rid, 0.0) for rid in new_times)
+        gained = sum(
+            self.action_multipliers.get(rid, 1.0)
+            * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
+            for rid in new_times
+        )
         objective = gained / gpu_time
         if objective > self.best_objective:
             self.best_objective = objective
@@ -178,6 +193,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         max_in_flight: int = 5,
         step_budget_nodes: int = 32,
         scheduling_buffer: float = 0.01,
+        action_horizon_multipliers: Mapping[int | str, float] | None = None,
     ) -> None:
         super().__init__(batch_queue, max_batch_size)
         self.horizon = horizon
@@ -185,6 +201,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.max_in_flight = max_in_flight
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
+        self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
@@ -197,11 +214,19 @@ class LookaheadActionsScheduler(RequestScheduler):
         if not self._latest_requests:
             logger.debug("lookahead stage=exit reason=no_requests")
             return [], {"reason": "no_requests"}
+        if not candidates:
+            logger.debug("lookahead stage=exit reason=no_candidates")
+            return [], {"reason": "no_candidates"}
 
         next_avail = self.mirror.next_time_server_available()
         slack = next_avail - time.time()
         in_flight = self.mirror.in_flight_batches_count
         dispatch_budget = max(0, self.max_in_flight - in_flight)
+        candidate_robot_ids = tuple(sorted(r.robot_id for r in candidates))
+        action_multipliers = {
+            r.robot_id: self.action_horizon_multipliers.get(r.max_execution_horizon, 1.0)
+            for r in candidates
+        }
 
         logger.debug(
             "search start: robots=%d slack=%+.3fs in_flight=%d budget=%d | %s",
@@ -219,6 +244,8 @@ class LookaheadActionsScheduler(RequestScheduler):
             "max_in_flight": self.max_in_flight,
             "step_budget_nodes": self.step_budget_nodes,
             "scheduling_buffer": self.scheduling_buffer,
+            "action_horizon_multipliers": dict(self.action_horizon_multipliers),
+            "action_multipliers": action_multipliers,
             "slack_s": slack,
             "next_server_available": next_avail,
             "in_flight": in_flight,
@@ -242,7 +269,7 @@ class LookaheadActionsScheduler(RequestScheduler):
                 self.scheduling_buffer,
             )
             notes["mode"] = "greedy_no_slack"
-            return [self._greedy()], notes
+            return [self._greedy(candidates)], notes
 
         logger.debug(
             "lookahead stage=search_init horizon=%.3fs max_depth=%d", self.horizon, self.max_depth
@@ -252,6 +279,8 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.latency_tracker,
             next_avail,
             self.horizon,
+            candidate_robot_ids,
+            action_multipliers,
             self.max_depth,
         )
         search_started_at = time.time()
@@ -286,7 +315,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         if not best:
             logger.debug("lookahead stage=exit reason=greedy_search_empty")
             notes["mode"] = "greedy_search_empty"
-            return [self._greedy()], notes
+            return [self._greedy(candidates)], notes
 
         notes["mode"] = "search"
         batches: list[list[SlotRequest]] = []
@@ -304,9 +333,8 @@ class LookaheadActionsScheduler(RequestScheduler):
         )
         return batches, notes
 
-    def _greedy(self) -> list[SlotRequest]:
+    def _greedy(self, candidates: list[SlotRequest]) -> list[SlotRequest]:
         deadlines = self.mirror.deadlines()
-        requests = list(self._latest_requests.values())
-        return sorted(requests, key=lambda r: deadlines.get(r.robot_id, r.deadline))[
+        return sorted(candidates, key=lambda r: deadlines.get(r.robot_id, r.deadline))[
             : self._max_batch_size
         ]
