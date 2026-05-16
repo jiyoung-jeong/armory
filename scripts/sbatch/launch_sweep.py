@@ -404,45 +404,6 @@ def _submit_collector(*, run_root: pathlib.Path, stamp: str, job_ids: list[str],
     return collector_job_id
 
 
-def _normalize_slurm_resources(args: argparse.Namespace) -> None:
-    pass
-    # partition_gpu = GPU_PARTITION_TYPES.get(args.partition)
-    # args.server_gpu = args.server_gpu or partition_gpu or DEFAULT_SERVER_GPU
-    # args.client_gpu = args.client_gpu or partition_gpu or DEFAULT_CLIENT_GPU
-    # args.server_cpus = args.server_cpus or DEFAULT_SERVER_CPUS
-
-    # if args.client_cpus is None:
-    #     args.client_cpus = DEFAULT_CLIENT_CPUS
-    #     max_cpus_per_gpu = MAX_CPUS_PER_GPU.get(args.partition)
-    #     if max_cpus_per_gpu:
-    #         args.client_cpus = min(args.client_cpus, max_cpus_per_gpu * args.client_gpus)
-
-    # max_cpus_per_gpu = MAX_CPUS_PER_GPU.get(args.partition)
-    # if args.server_cpus < 1 or args.client_cpus < 1:
-    #     raise SystemExit("--server-cpus and --client-cpus must be at least 1.")
-    # if partition_gpu and args.server_gpu != partition_gpu:
-    #     raise SystemExit(f"--server-gpu must be {partition_gpu!r} for partition {args.partition!r}.")
-    # if partition_gpu and args.client_gpu != partition_gpu:
-    #     raise SystemExit(f"--client-gpu must be {partition_gpu!r} for partition {args.partition!r}.")
-    # if not max_cpus_per_gpu:
-    #     return
-
-    # max_server_cpus = max_cpus_per_gpu * args.server_gpus
-    # max_client_cpus = max_cpus_per_gpu * args.client_gpus
-    # if args.server_cpus > max_server_cpus:
-    #     raise SystemExit(
-    #         f"--server-cpus {args.server_cpus} exceeds {args.partition}'s "
-    #         f"{max_cpus_per_gpu}:1 CPU:GPU limit for {args.server_gpus} server GPU(s); "
-    #         f"use --server-cpus {max_server_cpus} or request more server GPUs."
-    #     )
-    # if args.client_cpus > max_client_cpus:
-    #     raise SystemExit(
-    #         f"--client-cpus {args.client_cpus} exceeds {args.partition}'s "
-    #         f"{max_cpus_per_gpu}:1 CPU:GPU limit for {args.client_gpus} client GPU(s); "
-    #         f"use --client-cpus {max_client_cpus} or request more client GPUs."
-    #     )
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -502,7 +463,6 @@ def main() -> None:
     args = parse_args()
     if args.server_gpus < 1 or args.client_gpus < 1:
         raise SystemExit("--server-gpus and --client-gpus must be at least 1.")
-    _normalize_slurm_resources(args)
     stamp = args.stamp or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     run_root = pathlib.Path(args.output_dir) / stamp
     run_root.mkdir(parents=True, exist_ok=True)
