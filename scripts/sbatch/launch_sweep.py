@@ -35,14 +35,14 @@ MAX_CPUS_PER_GPU = {
 
 EXAMPLES = """examples:
   # 1. Dry-run a tiny sweep. This writes case dirs + jobs CSV but submits nothing.
-  uv run python scripts/sbatch/launch_sweep.py \\
-      --server-config configs/server/mock.json \\
-      --client-config /path/to/client_short.json \\
-      --output-dir experiments/sweeps/slurm \\
-      --schedulers greedy-deadline,dynamic-action \\
-      --num-robots 2,4 \\
-      --seeds 7 \\
-      --max-batch-size 1 \\
+  uv run python scripts/sbatch/launch_sweep.py \
+      --server-config configs/server/mock.json \
+      --client-config configs/client/libero/short.json \
+      --output-dir experiments/sweeps/slurm \
+      --schedulers greedy-deadline,dynamic-action \
+      --num-robots 2,4 \
+      --seeds 7 \
+      --max-batch-size 1 \
       --dry-run
 
   # 2. Submit a real LIBERO GPU scheduler sweep.
@@ -64,29 +64,46 @@ EXAMPLES = """examples:
       --client-gpus 1
 
   # 3. Submit an alpha sweep for dynamic-action plus baselines.
-  uv run python scripts/sbatch/launch_sweep.py \\
-      --server-config configs/server/mock.json \\
-      --client-config /path/to/client_short.json \\
-      --output-dir experiments/sweeps/slurm_alpha \\
-      --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \\
-      --num-robots 6,8,10 \\
-      --seeds 7,42 \\
-      --alpha 0.0,0.25,0.5,0.75,1.0
+  uv run python scripts/sbatch/launch_sweep.py \
+      --account gts-<pi-uid> \
+      --server-config configs/server/mock.json \
+      --client-config /path/to/client_short.json \
+      --output-dir experiments/sweeps/slurm_alpha \
+      --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
+      --num-robots 6,8,10 \
+      --seeds 7,42 \
+      --alpha 0.0,0.25,0.5,0.75,1.0 \
+      --submit-collector
 
   # 4. Preserve the server config policy exactly, useful for mock/smoke tests.
-  uv run python scripts/sbatch/launch_sweep.py \\
-      --server-config configs/server/mock.json \\
-      --client-config /path/to/mock_client.json \\
-      --server-policy config \\
-      --schedulers greedy-deadline \\
-      --num-robots 1 \\
-      --seeds 7 \\
+  uv run python scripts/sbatch/launch_sweep.py \
+      --server-config configs/server/mock.json \
+      --client-config /path/to/mock_client.json \
+      --server-policy config \
+      --schedulers greedy-deadline \
+      --num-robots 1 \
+      --seeds 7 \
       --dry-run
 
   # 5. Collect results after jobs finish.
-  uv run python scripts/sbatch/collect_results.py \\
-      --output-dir experiments/sweeps/slurm_libero \\
+  uv run python scripts/sbatch/collect_results.py \
+      --output-dir experiments/sweeps/slurm_libero \
       --stamp 20260515_130000
+
+  # 6. Submit only the collector for an existing run, after specific jobs finish.
+  sbatch --parsable \
+      --account=gts-<pi-uid> \
+      --dependency=afterany:12345:12346:12347 \
+      scripts/sbatch/collect_results.sh \
+      experiments/sweeps/slurm_libero \
+      20260515_130000
+
+phoenix notes:
+  - Use pace-quota to find valid --account values.
+  - Phoenix L40S jobs in this workflow use --partition gpu-l40s, -G 1, and --mem.
+  - Heterogeneous jobs are submitted as two GPU components split by ":".
+  - QOS is optional in the launcher; Phoenix defaults to inferno.
+  - Pass --qos embers explicitly for preemptible backfill.
 """
 
 
@@ -179,6 +196,26 @@ def _write_command_manifest(case_dir: pathlib.Path) -> None:
     command_sh = case_dir / "commands.sh"
     command_sh.write_text("\n".join(lines))
     command_sh.chmod(0o755)
+
+
+def _run_sbatch(cmd: list[str]) -> str:
+    result = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        command = shlex.join(cmd)
+        raise RuntimeError(
+            "sbatch failed\n"
+            f"command: {command}\n"
+            f"exit code: {result.returncode}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    return result.stdout.strip()
 
 
 def _make_cases(
@@ -289,11 +326,82 @@ def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
     if args.account:
         cmd.insert(2, f"--account={args.account}")
     if args.exclude:
-        cmd.insert(2, f"--exclude={args.exclude}")
+        options.append(f"--exclude={args.exclude}")
+    if args.qos:
+        options.append(f"--qos={args.qos}")
+    if cpus > 0:
+        options.append(f"--cpus-per-task={cpus}")
+    return options
+
+
+def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
+    cmd = (
+        ["sbatch", "--parsable"]
+        + _gpu_component_options(
+            args=args,
+            gpus=args.server_gpus,
+            mem=args.server_mem,
+            cpus=args.server_cpus,
+        )
+        + [":"]
+        + _gpu_component_options(
+            args=args,
+            gpus=args.client_gpus,
+            mem=args.client_mem,
+            cpus=args.client_cpus,
+        )
+    )
     for opt in args.sbatch_option:
         cmd.append(opt)
     cmd += [str(SCRIPTS_DIR / "sbatch" / "run_case.sh"), str(case_dir)]
-    return subprocess.check_output(cmd, cwd=REPO_ROOT, text=True).strip()
+    return _run_sbatch(cmd)
+
+
+def _job_id_for_dependency(job_id: str) -> str:
+    # `sbatch --parsable` may return "jobid" or "jobid;cluster".
+    return job_id.split(";", 1)[0]
+
+
+def _submit_collector(*, run_root: pathlib.Path, stamp: str, job_ids: list[str], args: argparse.Namespace) -> str:
+    dependency_ids = [_job_id_for_dependency(job_id) for job_id in job_ids if job_id]
+    if not dependency_ids:
+        raise RuntimeError("Cannot submit collector without case job ids.")
+
+    cmd = [
+        "sbatch",
+        "--parsable",
+        f"--account={args.account}",
+        f"--dependency=afterany:{':'.join(dependency_ids)}",
+        f"--time={args.collector_time}",
+        f"--cpus-per-task={args.collector_cpus}",
+        f"--mem-per-cpu={args.collector_mem_per_cpu}",
+        "--job-name=armory_collect",
+        "--output=logs/armory_collect_%j.out",
+        "--error=logs/armory_collect_%j.err",
+    ]
+    collector_qos = args.collector_qos or args.qos
+    if collector_qos:
+        cmd.append(f"--qos={collector_qos}")
+    if args.collector_partition:
+        cmd.insert(4, f"--partition={args.collector_partition}")
+    if args.exclude:
+        cmd.append(f"--exclude={args.exclude}")
+    for opt in args.collector_sbatch_option:
+        cmd.append(opt)
+    cmd += [str(SCRIPTS_DIR / "sbatch" / "collect_results.sh"), str(pathlib.Path(args.output_dir)), stamp]
+    collector_job_id = _run_sbatch(cmd)
+
+    metadata = {
+        "stamp": stamp,
+        "run_root": str(run_root),
+        "collector_job_id": collector_job_id,
+        "dependency": "afterany:" + ":".join(dependency_ids),
+        "case_job_ids": job_ids,
+    }
+    collector_path = run_root / f"collector_{stamp}.json"
+    collector_path.write_text(json.dumps(metadata, indent=2) + "\n")
+    print(f"Wrote {collector_path}")
+    return collector_job_id
 
 
 def _normalize_slurm_resources(args: argparse.Namespace) -> None:
@@ -374,6 +482,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--client-cpus", type=int, default=None)
     parser.add_argument("--exclude", default="")
     parser.add_argument("--sbatch-option", action="append", default=[])
+    parser.add_argument(
+        "--submit-collector",
+        action="store_true",
+        help="Submit a final collector Slurm job with afterany dependencies on all case jobs.",
+    )
+    parser.add_argument("--collector-partition", default="")
+    parser.add_argument("--collector-qos", default="")
+    parser.add_argument("--collector-time", default="01:00:00")
+    parser.add_argument("--collector-cpus", type=int, default=2)
+    parser.add_argument("--collector-mem-per-cpu", default="4G")
+    parser.add_argument("--collector-sbatch-option", action="append", default=[])
     parser.add_argument("--stamp", default="")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -427,6 +546,20 @@ def main() -> None:
 
     jobs_csv = run_root / f"jobs_{stamp}.csv"
     write_rows(jobs_csv, rows)
+
+    if args.submit_collector:
+        if args.dry_run:
+            print("Skipping collector submission because --dry-run is set.")
+        else:
+            job_ids = [str(row["job_id"]) for row in rows if row.get("job_id")]
+            collector_job_id = _submit_collector(
+                run_root=run_root,
+                stamp=stamp,
+                job_ids=job_ids,
+                args=args,
+            )
+            print(f"Submitted collector {collector_job_id} after {len(job_ids)} case job(s).")
+
     print(f"Prepared {len(rows)} case(s) under {run_root}")
     if args.dry_run:
         print("Dry run only; no Slurm jobs submitted.")

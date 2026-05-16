@@ -36,6 +36,15 @@ echo "Server CPUs: ${SERVER_CPUS} / GPU: ${SERVER_GPU_ID}"
 echo "Client CPUs: ${CLIENT_CPUS} / GPU: ${CLIENT_GPU_ID}"
 echo "======================================"
 
+SERVER_SRUN=(srun --het-group=0 --ntasks=1 --overlap --exact)
+if [ -n "${SERVER_CPUS}" ]; then
+    SERVER_SRUN+=(--cpus-per-task="${SERVER_CPUS}")
+fi
+CLIENT_SRUN=(srun --het-group=1 --ntasks=1 --overlap --exact)
+if [ -n "${CLIENT_CPUS}" ]; then
+    CLIENT_SRUN+=(--cpus-per-task="${CLIENT_CPUS}")
+fi
+
 python3 - "${CASE_DIR}" "${SERVER_NODE}" "${PORT}" <<'EOF'
 import json
 import pathlib
@@ -56,8 +65,13 @@ server_path.write_text(json.dumps(server_args, indent=2) + "\n")
 client_path.write_text(json.dumps(client_args, indent=2) + "\n")
 EOF
 
-( set -euo pipefail; cd "${REPO_ROOT}"; CUDA_VISIBLE_DEVICES="${SERVER_GPU_ID}" uv run python scripts/serve.py --json-path "${CASE_DIR}/server_args.json" \
-) >"${CASE_DIR}/logs/server.stdout.log" 2>"${CASE_DIR}/logs/server.stderr.log" &
+"${SERVER_SRUN[@]}" bash -lc "
+    set -euo pipefail
+    cd '${REPO_ROOT}'
+    source '${SCRIPT_DIR}/utils.sh'
+    setup_armory_env
+    uv run python scripts/serve.py --json-path '${CASE_DIR}/server_args.json'
+" >"${CASE_DIR}/logs/server.stdout.log" 2>"${CASE_DIR}/logs/server.stderr.log" &
 SERVER_JOB_PID=$!
 echo "Server launched with PID ${SERVER_JOB_PID}"
 setup_server_monitor "${SERVER_JOB_PID}"
@@ -69,8 +83,13 @@ fi
 
 CLIENT_STATUS=ok
 CLIENT_ERROR=""
-if ! ( set -euo pipefail; cd "${REPO_ROOT}"; CUDA_VISIBLE_DEVICES="${CLIENT_GPU_ID}" uv run python scripts/run_libero.py --json-path "${CASE_DIR}/client_args.json" \
-) >"${CASE_DIR}/logs/client.stdout.log" 2>"${CASE_DIR}/logs/client.stderr.log"; then
+if ! "${CLIENT_SRUN[@]}" bash -lc "
+    set -euo pipefail
+    cd '${REPO_ROOT}'
+    source '${SCRIPT_DIR}/utils.sh'
+    setup_armory_env
+    uv run python scripts/run_libero.py --json-path '${CASE_DIR}/client_args.json'
+" >"${CASE_DIR}/logs/client.stdout.log" 2>"${CASE_DIR}/logs/client.stderr.log"; then
     CLIENT_STATUS=failed
     CLIENT_ERROR="client exited nonzero"
 fi
