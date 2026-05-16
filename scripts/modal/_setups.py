@@ -73,17 +73,34 @@ checkpoint_volume = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_mis
 class Case:
     server_args: serve.Args
     client_args: run_libero.Args
+    experiment_config: dict[str, Any]
+    experiment_name: str
+    stream_logs: bool
     stamp: str
 
     def __post_init__(self) -> None:
         # serve.Args has no output_dir; only the client needs it for metrics.
         self.client_args.output_dir = self.run_dir / "outputs"
+        self.client_args.experiment_config = str(self.experiment_config_path)
+
+    @property
+    def settings(self) -> run_libero.ExperimentSettings:
+        return run_libero.ExperimentSettings.from_config(self.experiment_config)
+
+    @property
+    def num_robots(self) -> int:
+        return self.settings.num_robots
+
+    @property
+    def client_env(self) -> str:
+        return self.settings.env
 
     @property
     def run_id(self) -> str:
         parts = [
             f"scheduler={self.server_args.scheduling_algorithm}",
-            f"num_robots={self.client_args.num_robots}",
+            f"experiment={self.experiment_name}",
+            f"num_robots={self.num_robots}",
             f"seed={self.client_args.seed}",
             f"max_batch_size={self.server_args.max_batch_size}",
             f"alpha={self.server_args.alpha}",
@@ -97,6 +114,10 @@ class Case:
         return REMOTE_ROOT / self.stamp / self.run_id
 
     @property
+    def experiment_config_path(self) -> pathlib.Path:
+        return self.run_dir / "experiment_config.json"
+
+    @property
     def artifact_dir(self) -> pathlib.Path:
         return REMOTE_ARTIFACTS_ROOT / self.stamp / self.run_id
 
@@ -104,18 +125,30 @@ class Case:
 # --------------------------------------------------------------------------
 # On-container helpers
 # --------------------------------------------------------------------------
-def _popen_tee(cmd: list[str], *, cwd: str, log_path: pathlib.Path, tag: str) -> subprocess.Popen:
-    """Run ``cmd``, tag each line, stream to the container's stdout *and* ``log_path``.
+def _popen_logged(
+    cmd: list[str],
+    *,
+    cwd: str,
+    log_path: pathlib.Path,
+    tag: str,
+    stream_logs: bool,
+) -> subprocess.Popen:
+    """Run ``cmd`` and always write its output to ``log_path``.
 
-    Modal surfaces container stdout live in ``modal run`` and ``modal app logs``, so
-    teeing makes a split run debuggable in real time without losing the on-disk log
-    that gets shipped with the artifacts.
+    When ``stream_logs`` is true, also tag and tee each line to container stdout.
+    Modal surfaces container stdout in ``modal run`` and ``modal app logs``, so
+    keeping this off by default prevents high-volume server/client logs from
+    flooding the local terminal while preserving on-disk logs in artifacts.
     """
-    # Use '#' as the sed delimiter because tags (e.g. "server/scheduler=...") contain '/'.
-    shell_cmd = (
-        f"{shlex.join(cmd)} 2>&1 | sed -u 's#^#[{tag}] #' | tee {shlex.quote(str(log_path))}"
-    )
-    return subprocess.Popen(shell_cmd, shell=True, cwd=cwd)
+    if stream_logs:
+        # Use '#' as the sed delimiter because tags (e.g. "server/scheduler=...") contain '/'.
+        shell_cmd = (
+            f"{shlex.join(cmd)} 2>&1 | sed -u 's#^#[{tag}] #' | tee {shlex.quote(str(log_path))}"
+        )
+        return subprocess.Popen(shell_cmd, shell=True, cwd=cwd)
+
+    log_file = log_path.open("w")
+    return subprocess.Popen(cmd, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT)
 
 
 def _terminate(proc: subprocess.Popen | None) -> None:
@@ -127,6 +160,10 @@ def _terminate(proc: subprocess.Popen | None) -> None:
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=30)
+
+
+def _write_experiment_config(case: Case) -> None:
+    case.experiment_config_path.write_text(json.dumps(case.experiment_config, indent=2) + "\n")
 
 
 def _ship(case: Case) -> str:
@@ -164,6 +201,7 @@ def _run_server(case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[s
     log_dir = case.run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     case.server_args.to_json(case.run_dir / "server_args.json")
+    _write_experiment_config(case)
     server_cmd = [
         sys.executable,
         "scripts/serve.py",
@@ -174,11 +212,12 @@ def _run_server(case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[s
     status, error = "ok", None
     proc: subprocess.Popen | None = None
     try:
-        proc = _popen_tee(
+        proc = _popen_logged(
             server_cmd,
             cwd=str(REMOTE_ROOT),
             log_path=log_dir / "server.log",
             tag=f"server/{case.run_id}",
+            stream_logs=case.stream_logs,
         )
         with modal.forward(case.server_args.port, unencrypted=True) as tunnel:
             urls[case.run_id] = tunnel.tcp_socket
@@ -207,6 +246,7 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
     case.run_dir.mkdir(parents=True, exist_ok=True)
     log_dir = case.run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    _write_experiment_config(case)
     case.client_args.to_json(case.run_dir / "client_args.json")
     client_cmd = [
         sys.executable,
@@ -218,11 +258,12 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
 
     result: dict[str, Any] = {"run_id": case.run_id}
     try:
-        proc = _popen_tee(
+        proc = _popen_logged(
             client_cmd,
             cwd=str(REMOTE_ROOT),
             log_path=log_dir / "client.log",
             tag=f"client/{case.run_id}",
+            stream_logs=case.stream_logs,
         )
         rc = proc.wait(timeout=CLIENT_TIMEOUT_S)
         if rc != 0:
@@ -332,6 +373,7 @@ class MockSetup:
         log_dir = case.run_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         case.server_args.to_json(case.run_dir / "server_args.json")
+        _write_experiment_config(case)
         case.client_args.to_json(case.run_dir / "client_args.json")
         server_cmd = [
             sys.executable,
@@ -347,18 +389,20 @@ class MockSetup:
         ]
         _write_command_manifest(case.run_dir, {"server": server_cmd, "client": client_cmd})
         result: dict[str, Any] = {"run_id": case.run_id}
-        server_proc = _popen_tee(
+        server_proc = _popen_logged(
             server_cmd,
             cwd=str(REMOTE_ROOT),
             log_path=log_dir / "server.log",
             tag=f"server/{case.run_id}",
+            stream_logs=case.stream_logs,
         )
         try:
-            client_proc = _popen_tee(
+            client_proc = _popen_logged(
                 client_cmd,
                 cwd=str(REMOTE_ROOT),
                 log_path=log_dir / "client.log",
                 tag=f"client/{case.run_id}",
+                stream_logs=case.stream_logs,
             )
             rc = client_proc.wait(timeout=CLIENT_TIMEOUT_S)
             if rc != 0:
@@ -384,7 +428,7 @@ class SplitSetup:
     """Server and client on separate containers, bridged by a forwarded tunnel.
 
     The server class is picked from ``case.server_args.policy`` (mock -> CPU image,
-    real -> GPU image); the client class is picked from ``case.client_args.env``
+    real -> GPU image); the client class is picked from ``case.client_env``
     (mock -> CPU image, libero -> GPU image). The orchestrator itself runs on the
     cheap CPU mock image since it only does spawn + URL handoff + wait.
     """
@@ -397,7 +441,7 @@ class SplitSetup:
         else:
             server = GpuServer()
             server_kind = f"gpu-{SERVER_GPU.lower()}"
-        if case.client_args.env == "mock":
+        if case.client_env == "mock":
             client = CpuMockClient()
             client_kind = "cpu-mock"
         else:
@@ -476,7 +520,7 @@ class SplitSetup:
 
 def select_setup(case: Case) -> modal.Cls:
     """Mock policy + mock env -> colocated CPU; everything else -> split."""
-    if isinstance(case.server_args.policy, serve.Mock) and case.client_args.env == "mock":
+    if isinstance(case.server_args.policy, serve.Mock) and case.client_env == "mock":
         return MOCK
     return SPLIT
 

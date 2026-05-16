@@ -1,10 +1,9 @@
 """Modal scheduler sweep entrypoint.
 
-Mirrors ``scripts/sbatch/launch_sweep.py``: same sweep axes (``--schedulers``,
-``--num-robots``, ``--seeds``, ``--max-batch-size`` or ``--alpha``), same case
-layout (one dir per case under ``<output_dir>/<stamp>/``), same downstream CSV
-and plot pipeline. The setup (mock-colocated vs. split GPU+CPU) is picked from
-the server policy and client env in the configs — no GPU flag.
+Mirrors ``scripts/sbatch/launch_sweep.py``: scheduler/server axes are swept by
+flags, while client experiment shapes are supplied explicitly via one
+``--client-config`` file or every JSON/JSONC file in a config directory. The setup
+(mock-colocated vs. split GPU+CPU) is picked from the server policy and client env.
 
 Examples:
     # Mock policy + mock env: server + client colocated on one CPU container.
@@ -13,16 +12,14 @@ Examples:
         --client-config configs/client/mock/short.json \\
         --server-policy config \\
         --schedulers max-batch,dynamic-action \\
-        --num-robots 2,4 \\
         --seeds 7 \\
         --output-dir experiments/sweeps/modal_mock
 
     # Real default policy on GPU + mock-env client on CPU (split, two containers).
     uv run modal run scripts/modal/modal_sweep.py \\
         --server-config configs/server/gpu.json \\
-        --client-config configs/client/mock/half_fast_half_slow/10.json \\
+        --client-config configs/client/mock/half_fast_half_slow \\
         --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \\
-        --num-robots 10 \\
         --seeds 7,42 \\
         --alpha 0.0,0.25,0.5,0.75,1.0 \\
         --output-dir experiments/sweeps/mock
@@ -35,6 +32,8 @@ import datetime as dt
 import pathlib
 import sys
 from typing import Any
+
+from armory_client.network_emulation import load_experiment_config
 
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # _setups, _utils
@@ -51,12 +50,29 @@ def parse_list_args(value: str, *, cast=str) -> list[Any]:
     return [cast(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def _client_config_paths(path: str) -> list[pathlib.Path]:
+    candidate = pathlib.Path(path)
+    if candidate.is_file():
+        return [candidate]
+    if candidate.is_dir():
+        paths = sorted([*candidate.rglob("*.json"), *candidate.rglob("*.jsonc")])
+        if paths:
+            return paths
+    raise SystemExit(f"--client-config must be a JSON/JSONC file or directory: {path}")
+
+
+def _experiment_name(path: pathlib.Path, *, root: pathlib.Path | None = None) -> str:
+    rel = path.relative_to(root) if root is not None else pathlib.Path(path.name)
+    return str(rel.with_suffix("")).replace("/", "_")
+
+
 def _make_cases(
     *,
     server_args: serve.Args,
     client_args: run_libero.Args,
+    experiment_configs: list[tuple[str, dict[str, Any]]],
+    stream_logs: bool,
     schedulers: list[str],
-    num_robots_list: list[int],
     seeds: list[int],
     max_batch_sizes: list[int],
     alphas: list[float],
@@ -72,7 +88,7 @@ def _make_cases(
     cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
-            for num_robots in num_robots_list:
+            for experiment_name, experiment_config in experiment_configs:
                 for max_batch_size in max_batch_sizes:
                     for alpha in alphas:
                         server = dataclasses.replace(
@@ -85,10 +101,18 @@ def _make_cases(
                         client = dataclasses.replace(
                             client_args,
                             seed=seed,
-                            num_robots=num_robots,
                             overwrite=True,
                         )
-                        cases.append(Case(server_args=server, client_args=client, stamp=stamp))
+                        cases.append(
+                            Case(
+                                server_args=server,
+                                client_args=client,
+                                experiment_config=experiment_config,
+                                experiment_name=experiment_name,
+                                stream_logs=stream_logs,
+                                stamp=stamp,
+                            )
+                        )
     return cases
 
 
@@ -97,7 +121,8 @@ def _case_row(case: Case) -> dict[str, Any]:
         "stamp": case.stamp,
         "run_id": case.run_id,
         "scheduler": case.server_args.scheduling_algorithm,
-        "num_robots": case.client_args.num_robots,
+        "experiment": case.experiment_name,
+        "num_robots": case.num_robots,
         "seed": case.client_args.seed,
         "max_batch_size": case.server_args.max_batch_size,
         "alpha": case.server_args.alpha,
@@ -110,11 +135,11 @@ def main(
     client_config: str = "",
     output_dir: str = "experiments/sweeps/modal",
     schedulers: str = "fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action",
-    num_robots: str = "2,4,6,8,10",
     seeds: str = "7",
     max_batch_size: str = "",
     alpha: str = "",
     server_policy: str = "default",
+    stream_logs: bool = False,
 ) -> None:
     """Submit a scheduler sweep on Modal.
 
@@ -136,15 +161,22 @@ def main(
     run_root.mkdir(parents=True, exist_ok=True)
 
     server_args = serve.Args.from_json(server_config)
-    client_args = run_libero.Args.from_json(client_config)
+    client_paths = _client_config_paths(client_config)
+    config_root = pathlib.Path(client_config) if pathlib.Path(client_config).is_dir() else None
+    experiment_configs = [
+        (_experiment_name(path, root=config_root), load_experiment_config(path))
+        for path in client_paths
+    ]
+    client_args = run_libero.Args(experiment_config="", progress_type="logging", overwrite=True)
     if server_policy == "default":
         server_args = dataclasses.replace(server_args, policy=serve.Default())
 
     cases = _make_cases(
         server_args=server_args,
         client_args=client_args,
+        experiment_configs=experiment_configs,
+        stream_logs=stream_logs,
         schedulers=parse_list_args(schedulers),
-        num_robots_list=parse_list_args(num_robots, cast=int),
         seeds=parse_list_args(seeds, cast=int),
         max_batch_sizes=parse_list_args(max_batch_size, cast=int),
         alphas=parse_list_args(alpha, cast=float),
@@ -153,19 +185,24 @@ def main(
     if not cases:
         raise SystemExit("No cases produced; check sweep arguments.")
 
-    # Setup is determined by policy + env, neither of which varies per case.
-    worker = select_setup(cases[0])
-    print(f"Running {len(cases)} case(s) on setup={type(worker).__name__}")
-
     case_rows = [_case_row(case) for case in cases]
+    case_rows_by_run_id = {row["run_id"]: row for row in case_rows}
     write_rows(run_root / f"cases_{stamp}.csv", case_rows)
 
     rows: list[dict[str, Any]] = []
-    for row in worker.run.map(cases, order_outputs=False):
-        rows.append(row)
-        sr = row.get("starvation_rate")
-        sr_str = f"{sr:.3f}" if isinstance(sr, (int, float)) else "n/a"
-        print(f"{row.get('status', '?')}: {row['run_id']} starvation={sr_str}")
+    grouped: dict[str, tuple[Any, list[Case]]] = {}
+    for case in cases:
+        worker = select_setup(case)
+        key = type(worker).__name__
+        grouped.setdefault(key, (worker, []))[1].append(case)
+    for setup_name, (worker, setup_cases) in grouped.items():
+        print(f"Running {len(setup_cases)} case(s) on setup={setup_name}")
+        for row in worker.run.map(setup_cases, order_outputs=False):
+            row = {**case_rows_by_run_id.get(row.get("run_id", ""), {}), **row}
+            rows.append(row)
+            sr = row.get("starvation_rate")
+            sr_str = f"{sr:.3f}" if isinstance(sr, (int, float)) else "n/a"
+            print(f"{row.get('status', '?')}: {row['run_id']} starvation={sr_str}")
 
     download_artifacts(stamp=stamp, out=run_root, rows=rows)
     results_csv = run_root / f"sweep_results_{stamp}.csv"

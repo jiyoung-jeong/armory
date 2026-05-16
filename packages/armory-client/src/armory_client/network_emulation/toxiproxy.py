@@ -56,11 +56,15 @@ def load_experiment_config(path: str | pathlib.Path) -> ExperimentConfig:
     robots_raw = raw.get("robots")
 
     experiment = {
+        "env": str(experiment_raw["env"]).strip().lower(),
+        "task_suite_name": str(experiment_raw["task_suite_name"]),
         "action_chunk_broker_type": str(experiment_raw.get("action_chunk_broker_type", ""))
         .strip()
         .lower(),
-        "num_robots": int(experiment_raw.get("num_robots", 0)),
-        "trials_per_robot": int(experiment_raw.get("trials_per_robot", 0)),
+        "num_robots": int(experiment_raw["num_robots"]),
+        "trials_per_robot": int(experiment_raw["trials_per_robot"]),
+        "max_steps": int(experiment_raw["max_steps"]),
+        "control_hz": int(experiment_raw["control_hz"]),
     }
 
     toxiproxy = {
@@ -81,6 +85,7 @@ def load_experiment_config(path: str | pathlib.Path) -> ExperimentConfig:
         uplink_sigma = float(robot_cfg["uplink_sigma"])
         downlink_median = float(robot_cfg["downlink_median_ms"])
         downlink_sigma = float(robot_cfg["downlink_sigma"])
+        min_execution_horizon = int(robot_cfg["min_execution_horizon"])
         max_execution_horizon = int(robot_cfg["max_execution_horizon"])
 
         robots[str(robot_id)] = {
@@ -88,6 +93,7 @@ def load_experiment_config(path: str | pathlib.Path) -> ExperimentConfig:
             "uplink_sigma": uplink_sigma,
             "downlink_median_ms": downlink_median,
             "downlink_sigma": downlink_sigma,
+            "min_execution_horizon": min_execution_horizon,
             "max_execution_horizon": max_execution_horizon,
             "seed": int(robot_cfg["seed"]) if robot_cfg.get("seed") is not None else None,
         }

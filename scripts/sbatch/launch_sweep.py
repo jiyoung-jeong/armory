@@ -26,7 +26,6 @@ EXAMPLES = """examples:
       --client-config configs/client/libero/short.json \
       --output-dir experiments/sweeps/slurm \
       --schedulers greedy-deadline,dynamic-action \
-      --num-robots 2,4 \
       --seeds 7 \
       --max-batch-size 1 \
       --dry-run
@@ -39,10 +38,9 @@ EXAMPLES = """examples:
   #    enough V100s to satisfy the CPU:GPU<12 rule.
   uv run python scripts/sbatch/launch_sweep.py \
       --server-config configs/server/mock.json \
-      --client-config configs/client/libero/short.json \
+      --client-config configs/client/libero/half_fast_half_slow \
       --output-dir experiments/sweeps/slurm_libero \
       --schedulers max-batch,dynamic-action \
-      --num-robots 2,4,6,8,10 \
       --seeds 7,42 \
       --max-batch-size 1,2,4 \
       --account gts-dxu345-rl2
@@ -51,10 +49,9 @@ EXAMPLES = """examples:
   uv run python scripts/sbatch/launch_sweep.py \
       --account gts-dxu345-rl2 \
       --server-config configs/server/mock.json \
-      --client-config configs/client/libero/short.json \
+      --client-config configs/client/libero/half_fast_half_slow \
       --output-dir experiments/sweeps/slurm_alpha \
       --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
-      --num-robots 6,8,10 \
       --seeds 7,42 \
       --alpha 0.0,0.25,0.5,0.75,1.0 \
       --submit-collector
@@ -65,7 +62,6 @@ EXAMPLES = """examples:
       --client-config configs/client/mock/short.json \
       --server-policy config \
       --schedulers greedy-deadline \
-      --num-robots 1 \
       --seeds 7 \
       --dry-run
 
@@ -108,27 +104,34 @@ class Case:
         *,
         server_args: dict[str, Any],
         client_args: dict[str, Any],
+        experiment_config: dict[str, Any],
+        experiment_name: str,
         stamp: str,
         scheduler: str,
-        num_robots: int,
         seed: int,
         max_batch_size: int,
         alpha: float,
     ) -> None:
         self.server_args = server_args
         self.client_args = client_args
+        self.experiment_config = experiment_config
+        self.experiment_name = experiment_name
         self.stamp = stamp
         self.scheduler = scheduler
-        self.num_robots = num_robots
         self.seed = seed
         self.max_batch_size = max_batch_size
         self.alpha = alpha
+
+    @property
+    def num_robots(self) -> int:
+        return int(self.experiment_config["experiment"]["num_robots"])
 
     @property
     def run_id(self) -> str:
         return "__".join(
             [
                 f"scheduler={self.scheduler}",
+                f"experiment={self.experiment_name}",
                 f"num_robots={self.num_robots}",
                 f"seed={self.seed}",
                 f"max_batch_size={self.max_batch_size}",
@@ -153,6 +156,45 @@ def _read_json(path: str) -> dict[str, Any]:
     return json.loads(_resolve_path(path).read_text())
 
 
+def _client_config_paths(path: str) -> list[pathlib.Path]:
+    candidate = _resolve_path(path)
+    if candidate.is_file():
+        return [candidate]
+    if candidate.is_dir():
+        paths = sorted([*candidate.rglob("*.json"), *candidate.rglob("*.jsonc")])
+        if paths:
+            return paths
+    raise SystemExit(f"--client-config must be a JSON/JSONC file or directory: {path}")
+
+
+def _experiment_name(path: pathlib.Path, *, root: pathlib.Path | None = None) -> str:
+    rel = path.relative_to(root) if root is not None else pathlib.Path(path.name)
+    return str(rel.with_suffix("")).replace("/", "_")
+
+
+def _read_experiment_config(path: pathlib.Path) -> dict[str, Any]:
+    data = json.loads(path.read_text())
+    experiment = data["experiment"]
+    robots = data["robots"]
+    for key in (
+        "env",
+        "task_suite_name",
+        "action_chunk_broker_type",
+        "num_robots",
+        "trials_per_robot",
+        "max_steps",
+        "control_hz",
+    ):
+        if key not in experiment:
+            raise ValueError(f"{path}: missing experiment.{key}")
+    for idx in range(int(experiment["num_robots"])):
+        robot = robots[f"robot_{idx}"]
+        for key in ("min_execution_horizon", "max_execution_horizon"):
+            if key not in robot:
+                raise ValueError(f"{path}: missing robots.robot_{idx}.{key}")
+    return data
+
+
 def _write_json(path: pathlib.Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
@@ -172,8 +214,8 @@ def _make_cases(
     *,
     server_args: dict[str, Any],
     client_args: dict[str, Any],
+    experiment_configs: list[tuple[str, dict[str, Any]]],
     schedulers: list[str],
-    num_robots_list: list[int],
     seeds: list[int],
     max_batch_sizes: list[int],
     alphas: list[float],
@@ -189,7 +231,7 @@ def _make_cases(
     cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
-            for num_robots in num_robots_list:
+            for experiment_name, experiment_config in experiment_configs:
                 for max_batch_size in max_batch_sizes:
                     for alpha in alphas:
                         server = {
@@ -202,8 +244,6 @@ def _make_cases(
                         client = {
                             **client_args,
                             "seed": seed,
-                            "num_robots": num_robots,
-                            "env": "libero",
                             "progress_type": "logging",
                             "overwrite": True,
                         }
@@ -211,9 +251,10 @@ def _make_cases(
                             Case(
                                 server_args=server,
                                 client_args=client,
+                                experiment_config=experiment_config,
+                                experiment_name=experiment_name,
                                 stamp=stamp,
                                 scheduler=scheduler,
-                                num_robots=num_robots,
                                 seed=seed,
                                 max_batch_size=max_batch_size,
                                 alpha=alpha,
@@ -231,9 +272,16 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
     _write_json(
         case_dir / "server_args.json", {**case.server_args, "log_dir": str(log_dir / "server")}
     )
+    experiment_config_path = case_dir / "experiment_config.json"
+    _write_json(experiment_config_path, case.experiment_config)
     _write_json(
         case_dir / "client_args.json",
-        {**case.client_args, "output_dir": str(output_dir), "log_dir": str(log_dir / "client")},
+        {
+            **case.client_args,
+            "experiment_config": str(experiment_config_path),
+            "output_dir": str(output_dir),
+            "log_dir": str(log_dir / "client"),
+        },
     )
     _write_json(
         case_dir / "case.json",
@@ -241,6 +289,7 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
             "stamp": case.stamp,
             "run_id": case.run_id,
             "scheduler": case.scheduler,
+            "experiment": case.experiment_name,
             "num_robots": case.num_robots,
             "seed": case.seed,
             "max_batch_size": case.max_batch_size,
@@ -407,7 +456,11 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--server-config", default="configs/server/mock.json")
-    parser.add_argument("--client-config", default="")
+    parser.add_argument(
+        "--client-config",
+        default="",
+        help="Experiment config JSON/JSONC file, or a directory whose JSON/JSONC files become cases.",
+    )
     parser.add_argument(
         "--requeue",
         default="",
@@ -425,7 +478,6 @@ def parse_args() -> argparse.Namespace:
         "--schedulers",
         default="fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action",
     )
-    parser.add_argument("--num-robots", default="2,4,6,8,10")
     parser.add_argument("--seeds", default="7")
     parser.add_argument("--max-batch-size", default="")
     parser.add_argument("--alpha", default="")
@@ -464,14 +516,25 @@ def main() -> None:
     run_root.mkdir(parents=True, exist_ok=True)
 
     server_args = _read_json(args.server_config)
-    client_args = _read_json(args.client_config)
+    client_paths = _client_config_paths(args.client_config)
+    resolved_client_config = _resolve_path(args.client_config)
+    config_root = resolved_client_config if resolved_client_config.is_dir() else None
+    experiment_configs = [
+        (_experiment_name(path, root=config_root), _read_experiment_config(path))
+        for path in client_paths
+    ]
+    client_args = {
+        "experiment_config": "",
+        "progress_type": "logging",
+        "overwrite": True,
+    }
     if args.server_policy == "default":
         server_args["policy"] = {"type": "default"}
     cases = _make_cases(
         server_args=server_args,
         client_args=client_args,
+        experiment_configs=experiment_configs,
         schedulers=parse_list_args(args.schedulers),
-        num_robots_list=parse_list_args(args.num_robots, cast=int),
         seeds=parse_list_args(args.seeds, cast=int),
         max_batch_sizes=parse_list_args(args.max_batch_size, cast=int),
         alphas=parse_list_args(args.alpha, cast=float),
@@ -485,6 +548,7 @@ def main() -> None:
             "stamp": stamp,
             "run_id": case.run_id,
             "scheduler": case.scheduler,
+            "experiment": case.experiment_name,
             "num_robots": case.num_robots,
             "seed": case.seed,
             "max_batch_size": case.max_batch_size,
