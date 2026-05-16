@@ -16,8 +16,10 @@ setup_armory_env() {
     export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 
     if [ -f "${HOME}/.bashrc" ]; then
+        set +u
         # shellcheck disable=SC1090
         source "${HOME}/.bashrc"
+        set -u
     fi
 }
 

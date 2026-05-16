@@ -19,6 +19,20 @@ sys.path.insert(0, str(SCRIPTS_DIR / "modal"))
 from _utils import write_rows  # noqa: E402
 
 
+DEFAULT_SERVER_GPU = "l40s"
+DEFAULT_CLIENT_GPU = "a40"
+DEFAULT_SERVER_CPUS = 4
+DEFAULT_CLIENT_CPUS = 20
+GPU_PARTITION_TYPES = {
+    "gpu-l40s": "l40s",
+    "gpu-v100": "v100",
+}
+MAX_CPUS_PER_GPU = {
+    "gpu-l40s": 10,
+    "gpu-v100": 12,
+}
+
+
 EXAMPLES = """examples:
   # 1. Dry-run a tiny sweep. This writes case dirs + jobs CSV but submits nothing.
   uv run python scripts/sbatch/launch_sweep.py \\
@@ -42,9 +56,12 @@ EXAMPLES = """examples:
       --num-robots 2,4,6,8,10 \\
       --seeds 7,42 \\
       --max-batch-size 1,2,4 \\
+      --account gts-dxu345-rl2 \\
       --partition overcap \\
       --server-gpu l40s \\
-      --client-gpu a40
+      --client-gpu a40 \\
+      --server-gpus 1 \\
+      --client-gpus 1
 
   # 3. Submit an alpha sweep for dynamic-action plus baselines.
   uv run python scripts/sbatch/launch_sweep.py \\
@@ -255,27 +272,67 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
 
 
 def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
+    total_gpus = args.server_gpus + args.client_gpus
+    total_cpus = args.server_cpus + args.client_cpus
     cmd = [
         "sbatch",
         "--parsable",
         f"--partition={args.partition}",
         f"--time={args.time}",
-        f"--cpus-per-task={args.server_cpus}",
-        f"--gpus-per-node={args.server_gpu}:1",
-        "--mem=32G",
-        ":",
-        f"--partition={args.partition}",
-        f"--time={args.time}",
-        f"--cpus-per-task={args.client_cpus}",
-        f"--gpus-per-node={args.client_gpu}:1",
-        "--mem=64G",
+        "--nodes=1",
+        "--ntasks=1",
+        f"--cpus-per-task={total_cpus}",
+        f"--gres=gpu:{total_gpus}",
+        "--mem=96G",
+        f"--export=ALL,ARMORY_SERVER_CPUS={args.server_cpus},ARMORY_CLIENT_CPUS={args.client_cpus},ARMORY_SCRIPTS_DIR={SCRIPTS_DIR / 'sbatch'}",
     ]
+    if args.account:
+        cmd.insert(2, f"--account={args.account}")
     if args.exclude:
         cmd.insert(2, f"--exclude={args.exclude}")
     for opt in args.sbatch_option:
         cmd.append(opt)
     cmd += [str(SCRIPTS_DIR / "sbatch" / "run_case.sh"), str(case_dir)]
     return subprocess.check_output(cmd, cwd=REPO_ROOT, text=True).strip()
+
+
+def _normalize_slurm_resources(args: argparse.Namespace) -> None:
+    pass
+    # partition_gpu = GPU_PARTITION_TYPES.get(args.partition)
+    # args.server_gpu = args.server_gpu or partition_gpu or DEFAULT_SERVER_GPU
+    # args.client_gpu = args.client_gpu or partition_gpu or DEFAULT_CLIENT_GPU
+    # args.server_cpus = args.server_cpus or DEFAULT_SERVER_CPUS
+
+    # if args.client_cpus is None:
+    #     args.client_cpus = DEFAULT_CLIENT_CPUS
+    #     max_cpus_per_gpu = MAX_CPUS_PER_GPU.get(args.partition)
+    #     if max_cpus_per_gpu:
+    #         args.client_cpus = min(args.client_cpus, max_cpus_per_gpu * args.client_gpus)
+
+    # max_cpus_per_gpu = MAX_CPUS_PER_GPU.get(args.partition)
+    # if args.server_cpus < 1 or args.client_cpus < 1:
+    #     raise SystemExit("--server-cpus and --client-cpus must be at least 1.")
+    # if partition_gpu and args.server_gpu != partition_gpu:
+    #     raise SystemExit(f"--server-gpu must be {partition_gpu!r} for partition {args.partition!r}.")
+    # if partition_gpu and args.client_gpu != partition_gpu:
+    #     raise SystemExit(f"--client-gpu must be {partition_gpu!r} for partition {args.partition!r}.")
+    # if not max_cpus_per_gpu:
+    #     return
+
+    # max_server_cpus = max_cpus_per_gpu * args.server_gpus
+    # max_client_cpus = max_cpus_per_gpu * args.client_gpus
+    # if args.server_cpus > max_server_cpus:
+    #     raise SystemExit(
+    #         f"--server-cpus {args.server_cpus} exceeds {args.partition}'s "
+    #         f"{max_cpus_per_gpu}:1 CPU:GPU limit for {args.server_gpus} server GPU(s); "
+    #         f"use --server-cpus {max_server_cpus} or request more server GPUs."
+    #     )
+    # if args.client_cpus > max_client_cpus:
+    #     raise SystemExit(
+    #         f"--client-cpus {args.client_cpus} exceeds {args.partition}'s "
+    #         f"{max_cpus_per_gpu}:1 CPU:GPU limit for {args.client_gpus} client GPU(s); "
+    #         f"use --client-cpus {max_client_cpus} or request more client GPUs."
+    #     )
 
 
 def parse_args() -> argparse.Namespace:
@@ -298,12 +355,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", default="7")
     parser.add_argument("--max-batch-size", default="")
     parser.add_argument("--alpha", default="")
+    parser.add_argument("--account", default="")
     parser.add_argument("--partition", default="overcap")
-    parser.add_argument("--time", default="24:00:00")
-    parser.add_argument("--server-gpu", default="l40s")
-    parser.add_argument("--client-gpu", default="a40")
-    parser.add_argument("--server-cpus", type=int, default=4)
-    parser.add_argument("--client-cpus", type=int, default=20)
+    parser.add_argument("--time", default="1:00:00")
+    parser.add_argument(
+        "--server-gpu",
+        default="",
+        help="Server GPU type for --gres. Defaults to the GPU partition type when known.",
+    )
+    parser.add_argument(
+        "--client-gpu",
+        default="",
+        help="Client GPU type for --gres. Defaults to the GPU partition type when known.",
+    )
+    parser.add_argument("--server-gpus", type=int, default=1, help="Number of server GPUs.")
+    parser.add_argument("--client-gpus", type=int, default=1, help="Number of client GPUs.")
+    parser.add_argument("--server-cpus", type=int, default=DEFAULT_SERVER_CPUS)
+    parser.add_argument("--client-cpus", type=int, default=None)
     parser.add_argument("--exclude", default="")
     parser.add_argument("--sbatch-option", action="append", default=[])
     parser.add_argument("--stamp", default="")
@@ -313,6 +381,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.server_gpus < 1 or args.client_gpus < 1:
+        raise SystemExit("--server-gpus and --client-gpus must be at least 1.")
+    _normalize_slurm_resources(args)
     stamp = args.stamp or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     run_root = pathlib.Path(args.output_dir) / stamp
     run_root.mkdir(parents=True, exist_ok=True)
