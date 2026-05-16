@@ -81,7 +81,9 @@ class RequestScheduler(ABC):
         logger.debug(
             "schedule stage=mirror_schedulable latest_requests=%d", len(self._latest_requests)
         )
-        candidates = self.mirror.schedulable_requests(self._latest_requests, min_execution_horizon=self._min_execution_horizon)
+        candidates = self.mirror.schedulable_requests(
+            self._latest_requests, min_execution_horizon=self._min_execution_horizon
+        )
         candidate_ids = [r.robot_id for r in candidates]
         logger.debug("schedule stage=mirror_deadlines robots=%d", len(self.mirror.robots))
         deadlines = self.mirror.deadlines() if self.mirror.robots else {}
@@ -153,7 +155,7 @@ class RequestScheduler(ABC):
         self.mirror.reset_robot(robot_id)
         # self.latency_tracker.clear(robot_id)
 
-    def reset_all(self) -> None:
+    def clear_all(self) -> None:
         """Drop all scheduler + mirror state. For use on /reset between trials.
 
         Per-robot ResetRequests (sent on websocket close) only clear per-robot
@@ -163,7 +165,5 @@ class RequestScheduler(ABC):
         and the next trial sees zero scheduling decisions.
         """
         self._latest_requests.clear()
-        self.mirror.robots.clear()
-        self.mirror.in_flight_batches.clear()
-        self.mirror.last_batch_completed_time = 0.0
-        # Latency tracker keeps its profile — that's still valid across trials.
+        self.mirror.clear_all()
+        self.latency_tracker.clear_all()

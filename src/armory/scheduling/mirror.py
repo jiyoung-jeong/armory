@@ -150,6 +150,8 @@ class Robot:
                 self.chunks[i] = new_chunk
                 return
 
+        # TODO: recompute chunks after this one
+
         # NOTE: chunk check
         for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
             if prev.action_index_start + prev.execution_horizon < curr.action_index_start:
@@ -537,3 +539,9 @@ class Mirror:
                 self.last_batch_completed_time - now if self.last_batch_completed_time > 0 else None
             ),
         }
+
+    def clear_all(self) -> None:
+        self.robots.clear()
+        self.in_flight_batches.clear()
+        self.last_batch_completed_time = 0.0
+        self.chunk_id_counter = itertools.count(1)

@@ -59,6 +59,11 @@ class LatencyTracker(ABC):
         self._observation_latency.pop(robot_id, None)
         self._action_latency.pop(robot_id, None)
 
+    def clear_all(self) -> None:
+        self._observation_latency.clear()
+        self._infer_latency.clear()
+        self._action_latency.clear()
+
     def __repr__(self) -> str:
         return f"LatencyTracker(observation_latency={self._observation_latency}, infer_latency={self._infer_latency}, action_latency={self._action_latency})"
 
