@@ -19,22 +19,8 @@ sys.path.insert(0, str(SCRIPTS_DIR / "modal"))
 from _utils import write_rows  # noqa: E402
 
 
-DEFAULT_SERVER_GPU = "l40s"
-DEFAULT_CLIENT_GPU = "a40"
-DEFAULT_SERVER_CPUS = 4
-DEFAULT_CLIENT_CPUS = 20
-GPU_PARTITION_TYPES = {
-    "gpu-l40s": "l40s",
-    "gpu-v100": "v100",
-}
-MAX_CPUS_PER_GPU = {
-    "gpu-l40s": 10,
-    "gpu-v100": 12,
-}
-
-
 EXAMPLES = """examples:
-  # 1. Dry-run a tiny sweep. This writes case dirs + jobs CSV but submits nothing.
+  # 1. Dry-run a tiny sweep. Writes case dirs + jobs CSV but submits nothing.
   uv run python scripts/sbatch/launch_sweep.py \
       --server-config configs/server/mock.json \
       --client-config configs/client/libero/short.json \
@@ -45,29 +31,25 @@ EXAMPLES = """examples:
       --max-batch-size 1 \
       --dry-run
 
-  # 2. Submit a real LIBERO GPU scheduler sweep.
+  # 2. Submit a real LIBERO scheduler sweep.
   #    The checked-in mock server config is used as a base, but policy is
   #    rewritten to {"type": "default"} unless --server-policy config is set.
-  uv run python scripts/sbatch/launch_sweep.py \\
-      --server-config configs/server/mock.json \\
-      --client-config /path/to/client_short.json \\
-      --output-dir experiments/sweeps/slurm_libero \\
-      --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \\
-      --num-robots 2,4,6,8,10 \\
-      --seeds 7,42 \\
-      --max-batch-size 1,2,4 \\
-      --account gts-dxu345-rl2 \\
-      --partition overcap \\
-      --server-gpu l40s \\
-      --client-gpu a40 \\
-      --server-gpus 1 \\
-      --client-gpus 1
+  uv run python scripts/sbatch/launch_sweep.py \
+      --server-config configs/server/mock.json \
+      --client-config configs/client/libero/short.json \
+      --output-dir experiments/sweeps/slurm_libero \
+      --schedulers max-batch,dynamic-action \
+      --num-robots 2,4,6,8,10 \
+      --seeds 7,42 \
+      --max-batch-size 1,2,4 \
+      --account gts-dxu345-rl2 \
+      --partition gpu-l40s
 
   # 3. Submit an alpha sweep for dynamic-action plus baselines.
   uv run python scripts/sbatch/launch_sweep.py \
       --account gts-<pi-uid> \
       --server-config configs/server/mock.json \
-      --client-config /path/to/client_short.json \
+      --client-config configs/client/libero/short.json \
       --output-dir experiments/sweeps/slurm_alpha \
       --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
       --num-robots 6,8,10 \
@@ -78,7 +60,7 @@ EXAMPLES = """examples:
   # 4. Preserve the server config policy exactly, useful for mock/smoke tests.
   uv run python scripts/sbatch/launch_sweep.py \
       --server-config configs/server/mock.json \
-      --client-config /path/to/mock_client.json \
+      --client-config configs/client/mock/short.json \
       --server-policy config \
       --schedulers greedy-deadline \
       --num-robots 1 \
@@ -100,10 +82,10 @@ EXAMPLES = """examples:
 
 phoenix notes:
   - Use pace-quota to find valid --account values.
-  - Phoenix L40S jobs in this workflow use --partition gpu-l40s, -G 1, and --mem.
-  - Heterogeneous jobs are submitted as two GPU components split by ":".
+  - Default --partition gpu-l40s + 2 GPUs per case (server on GPU 0, client on GPU 1).
   - QOS is optional in the launcher; Phoenix defaults to inferno.
   - Pass --qos embers explicitly for preemptible backfill.
+  - See scripts/sbatch/PHOENIX_NOTES.md for cluster-specific details.
 """
 
 
@@ -151,9 +133,7 @@ def _resolve_path(path: str) -> pathlib.Path:
     if candidate.is_absolute() or candidate.exists():
         return candidate
     repo_candidate = REPO_ROOT / path
-    if repo_candidate.exists():
-        return repo_candidate
-    return candidate
+    return repo_candidate if repo_candidate.exists() else candidate
 
 
 def _read_json(path: str) -> dict[str, Any]:
@@ -165,55 +145,12 @@ def _write_json(path: pathlib.Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def _write_command_manifest(case_dir: pathlib.Path) -> None:
-    server_cmd = [
-        "uv",
-        "run",
-        "python",
-        "scripts/serve.py",
-        "--json-path",
-        str(case_dir / "server_args.json"),
-    ]
-    client_cmd = [
-        "uv",
-        "run",
-        "python",
-        "scripts/run_libero.py",
-        "--json-path",
-        str(case_dir / "client_args.json"),
-    ]
-    manifest = {
-        "cwd": str(REPO_ROOT),
-        "commands": {
-            "server": {"argv": server_cmd, "shell": shlex.join(server_cmd)},
-            "client": {"argv": client_cmd, "shell": shlex.join(client_cmd)},
-        },
-    }
-    (case_dir / "commands.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    lines = ["#!/usr/bin/env bash", "set -euo pipefail", f"cd {shlex.quote(str(REPO_ROOT))}", ""]
-    for name, command in manifest["commands"].items():
-        lines += [f"# {name}", command["shell"], ""]
-    command_sh = case_dir / "commands.sh"
-    command_sh.write_text("\n".join(lines))
-    command_sh.chmod(0o755)
-
-
 def _run_sbatch(cmd: list[str]) -> str:
-    result = subprocess.run(
-        cmd,
-        cwd=REPO_ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    result = subprocess.run(cmd, cwd=REPO_ROOT, text=True, capture_output=True)
     if result.returncode != 0:
-        command = shlex.join(cmd)
         raise RuntimeError(
-            "sbatch failed\n"
-            f"command: {command}\n"
-            f"exit code: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
+            f"sbatch failed\ncommand: {shlex.join(cmd)}\n"
+            f"exit code: {result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
     return result.stdout.strip()
 
@@ -276,41 +213,35 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
     case_dir = run_root / case.run_id
     output_dir = case_dir / "outputs"
     log_dir = case_dir / "logs"
-    case_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    server_args = {**case.server_args, "log_dir": str(log_dir / "server")}
-    client_args = {
-        **case.client_args,
-        "output_dir": str(output_dir),
-        "log_dir": str(log_dir / "client"),
-    }
-    _write_json(case_dir / "server_args.json", server_args)
-    _write_json(case_dir / "client_args.json", client_args)
-    (case_dir / "case.json").write_text(
-        json.dumps(
-            {
-                "stamp": case.stamp,
-                "run_id": case.run_id,
-                "scheduler": case.scheduler,
-                "num_robots": case.num_robots,
-                "seed": case.seed,
-                "max_batch_size": case.max_batch_size,
-                "alpha": case.alpha,
-                "case_dir": str(case_dir),
-                "output_dir": str(output_dir),
-            },
-            indent=2,
-        )
-        + "\n"
+    _write_json(case_dir / "server_args.json", {**case.server_args, "log_dir": str(log_dir / "server")})
+    _write_json(
+        case_dir / "client_args.json",
+        {**case.client_args, "output_dir": str(output_dir), "log_dir": str(log_dir / "client")},
     )
-    _write_command_manifest(case_dir)
+    _write_json(
+        case_dir / "case.json",
+        {
+            "stamp": case.stamp,
+            "run_id": case.run_id,
+            "scheduler": case.scheduler,
+            "num_robots": case.num_robots,
+            "seed": case.seed,
+            "max_batch_size": case.max_batch_size,
+            "alpha": case.alpha,
+            "case_dir": str(case_dir),
+            "output_dir": str(output_dir),
+        },
+    )
     return case_dir
 
 
-def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
-    total_gpus = args.server_gpus + args.client_gpus
-    total_cpus = args.server_cpus + args.client_cpus
+def _cpus_for(num_robots: int, cpus_per_robot: int) -> int:
+    return max(8, num_robots * cpus_per_robot)
+
+
+def _submit_case(case_dir: pathlib.Path, *, num_robots: int, args: argparse.Namespace) -> str:
     cmd = [
         "sbatch",
         "--parsable",
@@ -318,41 +249,15 @@ def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
         f"--time={args.time}",
         "--nodes=1",
         "--ntasks=1",
-        f"--cpus-per-task={total_cpus}",
-        f"--gres=gpu:{total_gpus}",
-        "--mem=96G",
-        f"--export=ALL,ARMORY_SERVER_CPUS={args.server_cpus},ARMORY_CLIENT_CPUS={args.client_cpus},ARMORY_SCRIPTS_DIR={SCRIPTS_DIR / 'sbatch'}",
+        f"--cpus-per-task={_cpus_for(num_robots, args.cpus_per_robot)}",
+        "--gres=gpu:2",
+        f"--mem={args.mem}",
+        f"--export=ALL,ARMORY_SCRIPTS_DIR={SCRIPTS_DIR / 'sbatch'}",
     ]
     if args.account:
-        cmd.insert(2, f"--account={args.account}")
-    if args.exclude:
-        options.append(f"--exclude={args.exclude}")
+        cmd.append(f"--account={args.account}")
     if args.qos:
-        options.append(f"--qos={args.qos}")
-    if cpus > 0:
-        options.append(f"--cpus-per-task={cpus}")
-    return options
-
-
-def _submit_case(case_dir: pathlib.Path, args: argparse.Namespace) -> str:
-    cmd = (
-        ["sbatch", "--parsable"]
-        + _gpu_component_options(
-            args=args,
-            gpus=args.server_gpus,
-            mem=args.server_mem,
-            cpus=args.server_cpus,
-        )
-        + [":"]
-        + _gpu_component_options(
-            args=args,
-            gpus=args.client_gpus,
-            mem=args.client_mem,
-            cpus=args.client_cpus,
-        )
-    )
-    for opt in args.sbatch_option:
-        cmd.append(opt)
+        cmd.append(f"--qos={args.qos}")
     cmd += [str(SCRIPTS_DIR / "sbatch" / "run_case.sh"), str(case_dir)]
     return _run_sbatch(cmd)
 
@@ -363,31 +268,15 @@ def _job_id_for_dependency(job_id: str) -> str:
 
 
 def _submit_collector(*, run_root: pathlib.Path, stamp: str, job_ids: list[str], args: argparse.Namespace) -> str:
-    dependency_ids = [_job_id_for_dependency(job_id) for job_id in job_ids if job_id]
+    dependency_ids = [_job_id_for_dependency(jid) for jid in job_ids if jid]
     if not dependency_ids:
         raise RuntimeError("Cannot submit collector without case job ids.")
 
-    cmd = [
-        "sbatch",
-        "--parsable",
-        f"--account={args.account}",
-        f"--dependency=afterany:{':'.join(dependency_ids)}",
-        f"--time={args.collector_time}",
-        f"--cpus-per-task={args.collector_cpus}",
-        f"--mem-per-cpu={args.collector_mem_per_cpu}",
-        "--job-name=armory_collect",
-        "--output=logs/armory_collect_%j.out",
-        "--error=logs/armory_collect_%j.err",
-    ]
-    collector_qos = args.collector_qos or args.qos
-    if collector_qos:
-        cmd.append(f"--qos={collector_qos}")
-    if args.collector_partition:
-        cmd.insert(4, f"--partition={args.collector_partition}")
-    if args.exclude:
-        cmd.append(f"--exclude={args.exclude}")
-    for opt in args.collector_sbatch_option:
-        cmd.append(opt)
+    cmd = ["sbatch", "--parsable", f"--dependency=afterany:{':'.join(dependency_ids)}"]
+    if args.account:
+        cmd.append(f"--account={args.account}")
+    if args.qos:
+        cmd.append(f"--qos={args.qos}")
     cmd += [str(SCRIPTS_DIR / "sbatch" / "collect_results.sh"), str(pathlib.Path(args.output_dir)), stamp]
     collector_job_id = _run_sbatch(cmd)
 
@@ -425,35 +314,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-batch-size", default="")
     parser.add_argument("--alpha", default="")
     parser.add_argument("--account", default="")
-    parser.add_argument("--partition", default="overcap")
+    parser.add_argument("--partition", default="gpu-l40s")
+    parser.add_argument("--qos", default="")
     parser.add_argument("--time", default="1:00:00")
+    parser.add_argument("--mem", default="96G")
     parser.add_argument(
-        "--server-gpu",
-        default="",
-        help="Server GPU type for --gres. Defaults to the GPU partition type when known.",
+        "--cpus-per-robot",
+        type=int,
+        default=2,
+        help="Total CPU request per case = max(8, num_robots * this).",
     )
-    parser.add_argument(
-        "--client-gpu",
-        default="",
-        help="Client GPU type for --gres. Defaults to the GPU partition type when known.",
-    )
-    parser.add_argument("--server-gpus", type=int, default=1, help="Number of server GPUs.")
-    parser.add_argument("--client-gpus", type=int, default=1, help="Number of client GPUs.")
-    parser.add_argument("--server-cpus", type=int, default=DEFAULT_SERVER_CPUS)
-    parser.add_argument("--client-cpus", type=int, default=None)
-    parser.add_argument("--exclude", default="")
-    parser.add_argument("--sbatch-option", action="append", default=[])
-    parser.add_argument(
-        "--submit-collector",
-        action="store_true",
-        help="Submit a final collector Slurm job with afterany dependencies on all case jobs.",
-    )
-    parser.add_argument("--collector-partition", default="")
-    parser.add_argument("--collector-qos", default="")
-    parser.add_argument("--collector-time", default="01:00:00")
-    parser.add_argument("--collector-cpus", type=int, default=2)
-    parser.add_argument("--collector-mem-per-cpu", default="4G")
-    parser.add_argument("--collector-sbatch-option", action="append", default=[])
+    parser.add_argument("--submit-collector", action="store_true")
     parser.add_argument("--stamp", default="")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -461,8 +332,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.server_gpus < 1 or args.client_gpus < 1:
-        raise SystemExit("--server-gpus and --client-gpus must be at least 1.")
     stamp = args.stamp or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     run_root = pathlib.Path(args.output_dir) / stamp
     run_root.mkdir(parents=True, exist_ok=True)
@@ -498,26 +367,20 @@ def main() -> None:
             "job_id": "",
         }
         if not args.dry_run:
-            row["job_id"] = _submit_case(case_dir, args)
+            row["job_id"] = _submit_case(case_dir, num_robots=case.num_robots, args=args)
             print(f"Submitted {row['job_id']}: {case.run_id}")
         else:
             print(f"Prepared {case.run_id}: {case_dir}")
         rows.append(row)
 
-    jobs_csv = run_root / f"jobs_{stamp}.csv"
-    write_rows(jobs_csv, rows)
+    write_rows(run_root / f"jobs_{stamp}.csv", rows)
 
     if args.submit_collector:
         if args.dry_run:
             print("Skipping collector submission because --dry-run is set.")
         else:
             job_ids = [str(row["job_id"]) for row in rows if row.get("job_id")]
-            collector_job_id = _submit_collector(
-                run_root=run_root,
-                stamp=stamp,
-                job_ids=job_ids,
-                args=args,
-            )
+            collector_job_id = _submit_collector(run_root=run_root, stamp=stamp, job_ids=job_ids, args=args)
             print(f"Submitted collector {collector_job_id} after {len(job_ids)} case job(s).")
 
     print(f"Prepared {len(rows)} case(s) under {run_root}")
