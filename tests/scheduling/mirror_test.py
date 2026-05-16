@@ -28,6 +28,7 @@ def _make_request(
         action_index_start=action_index_start,
         request_timestamp=request_timestamp,
         deadline=0.0,
+        min_execution_horizon=0,
         max_execution_horizon=max_execution_horizon,
         infer_type=InferType.SYNC,
         params=None,
@@ -39,7 +40,7 @@ def _make_request(
 def _make_robot(scenario: Scenario) -> Robot:
     """Create a Robot seeded with the initial obs=0 control step and acked chunks."""
     horizon = scenario.chunks[0].max_execution_horizon
-    robot = Robot(CONTROL_HZ, horizon)
+    robot = Robot(CONTROL_HZ, 0, horizon)
     robot.step(_make_request(0, 0, 0.0, horizon))
     for chunk in scenario.chunks:
         robot.queue_chunk(chunk)
@@ -275,6 +276,7 @@ def test_mirror_update_completion_refines_arrival() -> None:
                 action_index_start=chunk.action_index_start,
                 request_timestamp=0.0,
                 actions=np.zeros((1, chunk.max_execution_horizon, 7)),
+                min_execution_horizon=chunk.min_execution_horizon,
                 max_execution_horizon=chunk.max_execution_horizon,
             )
         ],
@@ -305,6 +307,7 @@ def test_mirror_confirm_chunk_by_chunk_id() -> None:
         chunk_id=chunk.chunk_id,
         observation_step=chunk.observation_step,
         action_index_start=chunk.action_index_start,
+        min_execution_horizon=chunk.min_execution_horizon,
         max_execution_horizon=chunk.max_execution_horizon,
         execution_start_step=3,
         first_executed_index=1,

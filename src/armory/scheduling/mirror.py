@@ -66,8 +66,9 @@ class Robot:
     enforces this by calling ``step()`` immediately after construction.
     """
 
-    def __init__(self, control_hz: float, max_execution_horizon: int):
+    def __init__(self, control_hz: float, min_execution_horizon: int, max_execution_horizon: int):
         self.control_hz = control_hz
+        self.min_execution_horizon = min_execution_horizon
         self.max_execution_horizon = max_execution_horizon
 
         # Both lists are sorted increasing by time by assertion.
@@ -93,6 +94,8 @@ class Robot:
           shouldn't ever ask for a lower action index than it last reported).
         """
         if not self.steps:
+            self.min_execution_horizon = request.min_execution_horizon
+            self.max_execution_horizon = request.max_execution_horizon
             assert request.action_index_start == 0
             control_step = ControlStep(
                 time=request.request_timestamp,
@@ -101,6 +104,8 @@ class Robot:
                 next_action_step=0,
             )
         else:
+            self.min_execution_horizon = request.min_execution_horizon
+            self.max_execution_horizon = request.max_execution_horizon
             latest = self.steps[-1]
             if request.observation_step <= latest.observation_step:
                 logger.warning(
@@ -246,6 +251,7 @@ class Robot:
         step = self.steps[-1] if self.steps else None
         return {
             "control_hz": self.control_hz,
+            "min_execution_horizon": self.min_execution_horizon,
             "max_execution_horizon": self.max_execution_horizon,
             "n_steps": len(self.steps),
             "n_chunks": len(self.chunks),
@@ -315,7 +321,9 @@ class Mirror:
         """Returns False if the request was dropped as stale by ``Robot.step``."""
         if request.robot_id not in self.robots:
             # NOTE: for now, assume control_hz and max_execution_horizon are fixed for a robot's lifetime
-            self.robots[request.robot_id] = Robot(control_hz, request.max_execution_horizon)
+            self.robots[request.robot_id] = Robot(
+                control_hz, request.min_execution_horizon, request.max_execution_horizon
+            )
         return self.robots[request.robot_id].step(request)
 
     def _next_chunk_context(self, rid: RobotID, dispatch_time: float) -> tuple[ControlStep, int]:
@@ -348,6 +356,7 @@ class Mirror:
                 observation_step=cs.observation_step,
                 arrival_time=dispatch_time + infer_lat + self.latency_tracker.action_latency(rid),
                 action_index_start=action_index_start,
+                min_execution_horizon=robot.min_execution_horizon,
                 max_execution_horizon=robot.max_execution_horizon,
                 origin=origin,
             )
@@ -402,6 +411,7 @@ class Mirror:
                     observation_step=infer_response.observation_step,
                     arrival_time=actual_completion + self.latency_tracker.action_latency(robot_id),
                     action_index_start=infer_response.action_index_start,
+                    min_execution_horizon=infer_response.min_execution_horizon,
                     max_execution_horizon=infer_response.max_execution_horizon,
                     execution_start_step=0,
                     origin="completed",
@@ -418,6 +428,7 @@ class Mirror:
             observation_step=ack.observation_step,
             arrival_time=ack.receive_time,
             action_index_start=ack.action_index_start,
+            min_execution_horizon=ack.min_execution_horizon,
             max_execution_horizon=ack.max_execution_horizon,
             execution_start_step=ack.execution_start_step,
             first_executed_index=ack.first_executed_index,
@@ -459,17 +470,12 @@ class Mirror:
             obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(robot_id)
             if robot.get_latest_control_step_before(obs_cutoff) is None:
                 continue
-            #
 
-            _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
-            # TODO: make it a should serve
-            # if (
-            #     len(robot.chunks) == 0
-            #     or request.can_serve(action_index_start)
-            #      action_index_start
-            #     > robot.chunks[-1].action_index_start + request.min_max_execution_horizon
-            # ):
-            #     schedulable_requests.append(request)
+            _, anticipated_action_index_start = self._next_chunk_context(robot_id, dispatch_time)
+            if len(robot.chunks) == 0 or request.can_serve(
+                robot.chunks[-1].action_index_start, anticipated_action_index_start
+            ):
+                schedulable_requests.append(request)
 
             # else:
             #     logger.debug("Request %s is not schedulable", request.robot_id)

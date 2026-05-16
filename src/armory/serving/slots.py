@@ -29,6 +29,7 @@ class SlotData:
     action_index_start: int
     request_timestamp: float
     deadline: float
+    min_execution_horizon: int
     max_execution_horizon: (
         int  # how many steps of the predicted chunk the robot is willing to execute
     )

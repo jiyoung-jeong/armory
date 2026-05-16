@@ -12,8 +12,10 @@ class ActionChunkBrokerBase:
     def __init__(
         self,
         real: bool = False,
+        min_execution_horizon: int = 0,
     ) -> None:
         self._real = real
+        self.min_execution_horizon = min_execution_horizon
         self._action_queue: deque[Action] = deque()
         self._action_chunks: list[ActionChunk] = []
         self._next_observation_step: int = 0  # next observation step to see
@@ -102,10 +104,11 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         ws_client: BidirectionalWebsocket,
         control_hz: int,
         realtime: bool = True,
+        min_execution_horizon: int = 0,
         max_execution_horizon: int = 0,
         real: bool = False,
     ) -> None:
-        super().__init__(real=real)
+        super().__init__(real=real, min_execution_horizon=min_execution_horizon)
 
         self._step_duration = 1 / control_hz
         self._realtime = realtime
@@ -133,6 +136,7 @@ class ActionChunkBroker(ActionChunkBrokerBase):
             obs,
             self.deadline,
             self._next_action_step,
+            min_execution_horizon=self.min_execution_horizon,
             max_execution_horizon=self.max_execution_horizon,
         )
 
@@ -152,6 +156,7 @@ class ActionChunkBroker(ActionChunkBrokerBase):
                     action_chunk.observation_step,
                     action_chunk.response_timestamp,
                     action_chunk.action_index_start,
+                    action_chunk.min_execution_horizon,
                     action_chunk.max_execution_horizon,
                     action_chunk.execution_start_step,
                     first_executed_index,

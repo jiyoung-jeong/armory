@@ -192,6 +192,7 @@ class MetricsStore(JSONDataclass):
                 request_id=request.request_id,
                 observation_step=request.observation_step,
                 action_index_start=request.action_index_start,
+                min_execution_horizon=request.min_execution_horizon,
                 max_execution_horizon=request.max_execution_horizon,
                 request_timestamp=request.request_timestamp,
                 server_arrival_time=request.arrival_timestamp,  # FIXME: make timestamp/arrival time naming convention consistent

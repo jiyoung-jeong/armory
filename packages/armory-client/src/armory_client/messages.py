@@ -42,6 +42,7 @@ class InferRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
+    min_execution_horizon: int
     max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
@@ -72,6 +73,7 @@ class InferResponse:
     action_index_start: int  # from request
     request_timestamp: float  # from request
     actions: Float[np.ndarray, "1 action_horizon action_dim"]  # TODO: check the type on this
+    min_execution_horizon: int
     max_execution_horizon: int
     noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
     # Lifecycle timestamps (filled by server, all time.time()):
@@ -89,6 +91,7 @@ class ResponseAck:
     observation_step: int  # step when observation was captured
     receive_time: float  # time.time() on client at receipt
     action_index_start: int  # action index of the first action in the chunk
+    min_execution_horizon: int
     max_execution_horizon: int
     execution_start_step: int  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
@@ -101,6 +104,7 @@ class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
     action_index_start: int  # action index of the first action in the chunk
+    min_execution_horizon: int
     max_execution_horizon: int
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int  # client step when new chunk became available

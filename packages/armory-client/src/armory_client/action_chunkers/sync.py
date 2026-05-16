@@ -17,6 +17,7 @@ class SyncBroker(ActionChunkBroker):
         ws_client: BidirectionalWebsocket,
         control_hz: int,
         realtime: bool = True,
+        min_execution_horizon: int = 0,
         max_execution_horizon: int = 0,
         real: bool = False,
     ):
@@ -29,6 +30,7 @@ class SyncBroker(ActionChunkBroker):
             ws_client=ws_client,
             control_hz=control_hz,
             realtime=realtime,
+            min_execution_horizon=min_execution_horizon,
             max_execution_horizon=resolved_max_execution_horizon,
             real=real,
         )
@@ -42,5 +44,6 @@ class SyncBroker(ActionChunkBroker):
             obs,
             self.deadline,
             self._next_action_step,
+            min_execution_horizon=self.min_execution_horizon,
             max_execution_horizon=self.max_execution_horizon,
         )

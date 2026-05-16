@@ -40,6 +40,7 @@ CHUNK_OVERLAP = Scenario(
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
         ActionChunk(
@@ -47,6 +48,7 @@ CHUNK_OVERLAP = Scenario(
             observation_step=4,
             arrival_time=arrives_before(4),
             action_index_start=2,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
     ],
@@ -71,6 +73,7 @@ PAUSE_BEFORE_INFERENCE = Scenario(
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
         ActionChunk(
@@ -78,6 +81,7 @@ PAUSE_BEFORE_INFERENCE = Scenario(
             observation_step=7,
             arrival_time=arrives_before(9),
             action_index_start=5,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
     ],
@@ -107,6 +111,7 @@ PAUSE_DURING_INFERENCE = Scenario(
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
         ActionChunk(
@@ -114,6 +119,7 @@ PAUSE_DURING_INFERENCE = Scenario(
             observation_step=5,
             arrival_time=arrives_before(9),
             action_index_start=3,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
     ],
@@ -141,6 +147,7 @@ LONG_RUN = Scenario(
             observation_step=0,
             arrival_time=arrives_before(2),
             action_index_start=0,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
         ActionChunk(
@@ -148,6 +155,7 @@ LONG_RUN = Scenario(
             observation_step=5,
             arrival_time=arrives_before(7),
             action_index_start=5,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
         ActionChunk(
@@ -155,6 +163,7 @@ LONG_RUN = Scenario(
             observation_step=10,
             arrival_time=arrives_before(12),
             action_index_start=10,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
         ActionChunk(
@@ -162,6 +171,7 @@ LONG_RUN = Scenario(
             observation_step=15,
             arrival_time=arrives_before(17),
             action_index_start=15,
+            min_execution_horizon=0,
             max_execution_horizon=5,
         ),
     ],

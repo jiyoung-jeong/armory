@@ -32,6 +32,7 @@ class SlotRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
+    min_execution_horizon: int
     max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None
@@ -39,6 +40,11 @@ class SlotRequest:
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
     is_padding: bool = False  # true for artificial slots used only to pad GPU batch size
+
+    def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
+        return (
+            anticipated_action_index_start >= last_action_index_start + self.min_execution_horizon
+        )
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,7 @@ class AckNotification:
     chunk_id: int
     observation_step: int
     action_index_start: int
+    min_execution_horizon: int
     max_execution_horizon: int
     execution_start_step: int
     first_executed_index: int
@@ -89,6 +96,7 @@ class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
     action_index_start: int  # action index of the first action in the chunk
+    min_execution_horizon: int
     max_execution_horizon: int
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int = 0  # client step when new chunk became available
@@ -172,6 +180,7 @@ class InternalRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
+    min_execution_horizon: int
     max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
@@ -197,6 +206,7 @@ class InternalRequest:
             action_index_start=slot_data.action_index_start,
             request_timestamp=slot_data.request_timestamp,
             deadline=slot_data.deadline,
+            min_execution_horizon=slot_data.min_execution_horizon,
             max_execution_horizon=slot_data.max_execution_horizon,
             infer_type=slot_data.infer_type,
             params=params,

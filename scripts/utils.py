@@ -232,6 +232,7 @@ class _MockPolicy:
             action_index_start=0,
             request_timestamp=now,
             deadline=now + 60.0,
+            min_execution_horizon=0,
             max_execution_horizon=0,
             infer_type=InferType.SYNC,
             params=None,

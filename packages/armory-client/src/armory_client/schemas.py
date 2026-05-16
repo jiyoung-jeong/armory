@@ -157,6 +157,7 @@ class ActionChunk(ParquetDataclass):
     action_index_start: int
     execution_start_step: int  # which observation step the execution started on
     actions: np.ndarray
+    min_execution_horizon: int
     max_execution_horizon: int
     request_timestamp: float
     response_timestamp: float
@@ -176,6 +177,7 @@ class ActionChunk(ParquetDataclass):
             action_index_start=infer_response.action_index_start,
             execution_start_step=execution_start_step,
             actions=infer_response.actions,
+            min_execution_horizon=infer_response.min_execution_horizon,
             max_execution_horizon=infer_response.max_execution_horizon,
             request_timestamp=infer_response.request_timestamp,
             response_timestamp=time.time(),

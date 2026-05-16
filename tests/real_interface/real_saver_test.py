@@ -26,6 +26,7 @@ class _FakeBroker:
             action_index_start=0,
             execution_start_step=observation_step,
             actions=np.zeros((1, 7), dtype=np.float32),
+            min_execution_horizon=0,
             max_execution_horizon=1,
             request_timestamp=request_timestamp,
             response_timestamp=request_timestamp + 0.05,
