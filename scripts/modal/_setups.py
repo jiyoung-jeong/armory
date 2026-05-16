@@ -1,24 +1,22 @@
-"""Shared Modal classes and predefined run setups for the sweep scripts.
+"""Shared Modal classes and setups for the experiment sweep scripts.
 
-An experiment is always a *policy server* talking to one or more *clients*. There
-are only a few combinations we run:
+An experiment is a *policy server* talking to one or more *clients*. Combinations:
 
-    setup       server                client                containers
-    --------    ------------------    -----------------     ----------------
-    MOCK        mock policy (CPU)     mock client (CPU)     1 (colocated)
-    REAL_CPU    real policy (GPU)     LIBERO, OSMesa CPU    2 (server on GPU)
-    REAL_GPU    real policy (GPU)     LIBERO, EGL GPU       2 (both on GPU)
+    server policy    client env    image(s)                       containers
+    --------------   -----------   ----------------------------   ----------
+    mock             mock          cpu_mock_image (colocated)     1
+    mock             libero        cpu_mock_image + libero GPU    2 (split)
+    default/ckpt     mock          gpu_server + cpu_mock_image    2 (split)
+    default/ckpt     libero        gpu_server + libero GPU        2 (split)
 
-A *case* is just a ``serve.Args`` plus a ``run_libero.Args`` — the real argument
-dataclasses of ``scripts/serve.py`` and ``scripts/run_libero.py``. The container
-pickles each into the run dir and execs ``scripts/_run_entry.py``, which calls the
-script's ``main(args)``. There is no argv reconstruction and no per-experiment
-glue here: the experiment scripts build the two dataclasses, the setup runs them.
+A *case* is a ``serve.Args`` plus a ``run_libero.Args``. The container pickles each
+into the run dir and execs the matching script. The sweep entrypoint inspects the
+server policy and client env to pick a setup; nothing else here needs that knowledge.
 
-The MOCK setup runs server + client as two subprocesses in one container. The
-REAL_* setups put them on separate containers, bridged by a ``modal.forward``
-tunnel and a pair of ephemeral ``modal.Dict``s (one to publish the server's
-address, one for the client to signal it's done).
+The colocated mock setup runs server + client as two subprocesses in one container.
+Split setups put them on separate containers, bridged by ``modal.forward`` and a
+pair of ephemeral ``modal.Dict``s (one to publish the server's address, one for the
+client to signal completion).
 """
 
 from __future__ import annotations
@@ -35,17 +33,17 @@ from typing import Any
 
 import modal
 
+# Modal loads this module as /root/_setups.py for class services, but the repo's
+# scripts/ tree is mounted at /app/scripts/. Add both: the parent (for local
+# runs) and /app/scripts/modal (for remote, where _images.py + _utils.py live).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-# Modal may import this module as /root/_setups.py for class services while the
-# repo's scripts directory is mounted separately in the image at /app/scripts.
 sys.path.insert(0, "/app/scripts")
-sys.path.insert(0, "/app/scripts/experiments")
+sys.path.insert(0, "/app/scripts/modal")
 import run_libero  # noqa: E402
 import serve  # noqa: E402
 from _images import (  # noqa: E402
     CHECKPOINT_VOLUME_PATH,
     REMOTE_ROOT,
-    cpu_libero_client_image,
     cpu_mock_image,
     gpu_libero_client_image,
     gpu_server_image,
@@ -55,7 +53,6 @@ from _utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
 APP_NAME = "armory-experiments"
 
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
-# Bulky binaries we never want in the downloaded artifact tree.
 
 CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
@@ -77,12 +74,9 @@ class Case:
     server_args: serve.Args
     client_args: run_libero.Args
     stamp: str
-    # Modal GPU name for the policy server ("l40s", "h100", ...), or "mock" for
-    # the CPU-only colocated setup. Set by the sweep entrypoint.
-    gpu: str = "mock"
 
     def __post_init__(self) -> None:
-        self.server_args.output_dir = self.run_dir / "outputs"
+        # serve.Args has no output_dir; only the client needs it for metrics.
         self.client_args.output_dir = self.run_dir / "outputs"
 
     @property
@@ -96,13 +90,14 @@ class Case:
         ]
         return "__".join(parts)
 
-    # NOTE: run path is separate from artifact path because modal Volumes might not be good for lots of writes
+    # Run path is separate from artifact path because Modal Volumes don't love
+    # lots of small writes; we write hot to the container disk and copy at the end.
     @property
     def run_dir(self) -> pathlib.Path:
         return REMOTE_ROOT / self.stamp / self.run_id
 
     @property
-    def artifact_dir(self) -> str:
+    def artifact_dir(self) -> pathlib.Path:
         return REMOTE_ARTIFACTS_ROOT / self.stamp / self.run_id
 
 
@@ -134,7 +129,6 @@ def _terminate(proc: subprocess.Popen | None) -> None:
         proc.wait(timeout=30)
 
 
-# TODO: can try writing to volume to see if it doesn't hurt
 def _ship(case: Case) -> str:
     """Copy the case's run dir onto the artifacts volume; return the remote path."""
     shutil.copytree(case.run_dir, case.artifact_dir)
@@ -209,7 +203,7 @@ def _run_server(case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[s
 
 
 def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
-    """Run the LIBERO client to completion, summarize, ship the run dir."""
+    """Run the client to completion, summarize, ship the run dir."""
     case.run_dir.mkdir(parents=True, exist_ok=True)
     log_dir = case.run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -245,9 +239,8 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Modal classes (one per image; resources retuned per-setup via with_options)
+# Modal classes (one per image; resources fixed per class)
 # --------------------------------------------------------------------------
-# NOTE: we use modal classes instead of functions so we can specify resources using with_options
 @app.cls(
     image=gpu_server_image,
     timeout=2 * 60 * 60,
@@ -263,6 +256,23 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
 )
 class GpuServer:
     """Real PI05/GR00T policy server on a GPU; no sim code."""
+
+    @modal.method()
+    def serve(self, case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
+        return _run_server(case, urls=urls, shutdown=shutdown)
+
+
+@app.cls(
+    image=cpu_mock_image,
+    timeout=2 * 60 * 60,
+    cpu=2,
+    memory=8192,
+    region=REGION,
+    max_containers=10,
+    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
+)
+class CpuMockServer:
+    """Mock policy server (no weights, no GPU); used when policy.type == 'mock'."""
 
     @modal.method()
     def serve(self, case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
@@ -288,16 +298,16 @@ class GpuLiberoClient:
 
 
 @app.cls(
-    image=cpu_libero_client_image,
+    image=cpu_mock_image,
     timeout=2 * 60 * 60,
-    cpu=16,
-    memory=16384,
+    cpu=4,
+    memory=8192,
     region=REGION,
-    max_containers=5,
+    max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
-class CpuLiberoClient:
-    """LIBERO sim client with OSMesa software rendering; no GPU."""
+class CpuMockClient:
+    """Mock-env client (no rendering, no GPU); used when client.env == 'mock'."""
 
     @modal.method()
     def run(self, case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
@@ -314,14 +324,10 @@ class CpuLiberoClient:
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class MockSetup:
-    """One container per case, server + client colocated."""
+    """Server + client colocated in one CPU container (mock policy + mock env only)."""
 
     @modal.method()
-    def run(
-        self,
-        case: Case,
-    ) -> dict[str, Any]:
-        """Run server + client as two subprocesses in a single container."""
+    def run(self, case: Case) -> dict[str, Any]:
         case.run_dir.mkdir(parents=True, exist_ok=True)
         log_dir = case.run_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -369,31 +375,38 @@ class MockSetup:
 
 
 @app.cls(
-    image=cpu_mock_image,  # reusing this because it's lightweight
+    image=cpu_mock_image,  # orchestrator is lightweight; only spawns class instances
     timeout=2 * 60 * 60,
-    max_containers=10,  # TODO: change to 5 if we also need gpu for clients
+    max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class SplitSetup:
     """Server and client on separate containers, bridged by a forwarded tunnel.
 
-    Every server is spawned up front so they all queue in Modal's scheduler; each
-    client launches as soon as its server publishes a tunnel address. Concurrency
-    is capped by ``max_concurrent`` because a split case holds two containers (and,
-    for REAL_GPU, two GPUs) at once.
+    The server class is picked from ``case.server_args.policy`` (mock -> CPU image,
+    real -> GPU image); the client class is picked from ``case.client_args.env``
+    (mock -> CPU image, libero -> GPU image). The orchestrator itself runs on the
+    cheap CPU mock image since it only does spawn + URL handoff + wait.
     """
 
     @modal.method()
-    def run(
-        self,
-        case: Case,
-    ) -> dict[str, Any]:
-        # GPU type comes from the sweep's --gpu flag; the class default is just a fallback.
-        print(f"[orch/{case.run_id}] spawning server on gpu={case.gpu}", flush=True)
-        server = GpuServer.with_options(gpu=case.gpu.upper())()
-        # TODO: figure out if CPU can work, otherwise just use GPU
-        # client = CpuLiberoClient()
-        client = GpuLiberoClient()
+    def run(self, case: Case) -> dict[str, Any]:
+        if isinstance(case.server_args.policy, serve.Mock):
+            server = CpuMockServer()
+            server_kind = "cpu-mock"
+        else:
+            server = GpuServer()
+            server_kind = f"gpu-{SERVER_GPU.lower()}"
+        if case.client_args.env == "mock":
+            client = CpuMockClient()
+            client_kind = "cpu-mock"
+        else:
+            client = GpuLiberoClient()
+            client_kind = f"gpu-{LIBERO_CLIENT_GPU.lower()}"
+        print(
+            f"[orch/{case.run_id}] server={server_kind} client={client_kind}",
+            flush=True,
+        )
 
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
             server_handle = server.serve.spawn(case, urls=urls, shutdown=shutdown)
@@ -461,6 +474,12 @@ class SplitSetup:
                     pass
 
 
-# Predefined setups: an experiment script picks one of these.
+def select_setup(case: Case) -> modal.Cls:
+    """Mock policy + mock env -> colocated CPU; everything else -> split."""
+    if isinstance(case.server_args.policy, serve.Mock) and case.client_args.env == "mock":
+        return MOCK
+    return SPLIT
+
+
 MOCK = MockSetup()
-LIBERO = SplitSetup()
+SPLIT = SplitSetup()

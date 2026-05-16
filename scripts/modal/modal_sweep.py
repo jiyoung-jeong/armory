@@ -1,23 +1,31 @@
-"""Unified Modal sweep entrypoint for scheduler experiments.
+"""Modal scheduler sweep entrypoint.
+
+Mirrors ``scripts/sbatch/launch_sweep.py``: same sweep axes (``--schedulers``,
+``--num-robots``, ``--seeds``, ``--max-batch-size`` or ``--alpha``), same case
+layout (one dir per case under ``<output_dir>/<stamp>/``), same downstream CSV
+and plot pipeline. The setup (mock-colocated vs. split GPU+CPU) is picked from
+the server policy and client env in the configs — no GPU flag.
 
 Examples:
-    uv run modal run scripts/experiments/modal_sweep.py \
-        --server-config configs/server/mock.json \
-        --client-config configs/client/mock/short.json \
-        --schedulers max-batch,dynamic-action \
-        --num-robots 2,4,6 \
-        --seeds 7 \
-        --output-dir experiments/sweeps/mock
+    # Mock policy + mock env: server + client colocated on one CPU container.
+    uv run modal run scripts/modal/modal_sweep.py \\
+        --server-config configs/server/mock.json \\
+        --client-config configs/client/mock/short.json \\
+        --server-policy config \\
+        --schedulers max-batch,dynamic-action \\
+        --num-robots 2,4 \\
+        --seeds 7 \\
+        --output-dir experiments/sweeps/modal_mock
 
-    uv run modal run scripts/experiments/modal_sweep.py \
-        --server-config configs/server/gpu.json \
-        --client-config configs/client/libero/short.json \
-        --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
-        --num-robots 2,4,6 \
-        --seeds 7,42 \
-        --max-batch-size 1,2,4 \
-        --alpha 0.0,0.25,0.5,0.75,1.0 \
-        --output-dir experiments/sweeps/gpu
+    # Real default policy on GPU + mock-env client on CPU (split, two containers).
+    uv run modal run scripts/modal/modal_sweep.py \\
+        --server-config configs/server/gpu.json \\
+        --client-config configs/client/mock/half_fast_half_slow/10.json \\
+        --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \\
+        --num-robots 10 \\
+        --seeds 7,42 \\
+        --alpha 0.0,0.25,0.5,0.75,1.0 \\
+        --output-dir experiments/sweeps/mock
 """
 
 from __future__ import annotations
@@ -28,17 +36,19 @@ import pathlib
 import sys
 from typing import Any
 
-import modal
-
-# TODO: kind of ugly, is this necessary?
 _HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))  # _setups, plot modules
+sys.path.insert(0, str(_HERE))  # _setups, _utils
 sys.path.insert(0, str(_HERE.parent))  # serve, run_libero
+sys.path.insert(0, str(_HERE.parent / "visualization"))  # plot_sweep
 
 import run_libero  # noqa: E402
 import serve  # noqa: E402
-from _setups import LIBERO, MOCK, Case, app  # noqa: E402
+from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
+
+
+def parse_list_args(value: str, *, cast=str) -> list[Any]:
+    return [cast(item.strip()) for item in value.split(",") if item.strip()]
 
 
 def _make_cases(
@@ -48,117 +58,108 @@ def _make_cases(
     schedulers: list[str],
     num_robots_list: list[int],
     seeds: list[int],
-    max_batch_size: list[int],
-    alpha: list[float],
+    max_batch_sizes: list[int],
+    alphas: list[float],
     stamp: str,
 ) -> list[Case]:
-    cases: list[Case] = []
+    if max_batch_sizes and alphas:
+        raise SystemExit("Sweep only one of --max-batch-size or --alpha at a time.")
+    if not max_batch_sizes:
+        max_batch_sizes = [server_args.max_batch_size]
+    if not alphas:
+        alphas = [server_args.alpha]
 
+    cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
             for num_robots in num_robots_list:
-                server_args_copy = dataclasses.replace(
-                    server_args, seed=seed, scheduling_algorithm=scheduler
-                )
-                client_args_copy = dataclasses.replace(
-                    client_args, seed=seed, num_robots=num_robots
-                )
-
-                # NOTE: only supports sweeping one of these
-                if len(max_batch_size) > 0:
-                    for max_batch_size in max_batch_size:
-                        server_args_copy = dataclasses.replace(
-                            server_args_copy, max_batch_size=max_batch_size
+                for max_batch_size in max_batch_sizes:
+                    for alpha in alphas:
+                        server = dataclasses.replace(
+                            server_args,
+                            seed=seed,
+                            scheduling_algorithm=scheduler,
+                            max_batch_size=max_batch_size,
+                            alpha=alpha,
                         )
-                        cases.append(
-                            Case(
-                                server_args=server_args_copy,
-                                client_args=client_args_copy,
-                                stamp=stamp,
-                            )
+                        client = dataclasses.replace(
+                            client_args,
+                            seed=seed,
+                            num_robots=num_robots,
+                            overwrite=True,
                         )
-                elif len(alpha) > 0:
-                    for alpha in alpha:
-                        server_args_copy = dataclasses.replace(server_args_copy, alpha=alpha)
-                        cases.append(
-                            Case(
-                                server_args=server_args_copy,
-                                client_args=client_args_copy,
-                                stamp=stamp,
-                            )
-                        )
-                else:
-                    cases.append(
-                        Case(
-                            server_args=server_args_copy,
-                            client_args=client_args_copy,
-                            stamp=stamp,
-                        )
-                    )
-
+                        cases.append(Case(server_args=server, client_args=client, stamp=stamp))
     return cases
 
 
-def get_worker(gpu: str) -> modal.Cls:
-    """``mock`` colocates server + client on CPU; any GPU name uses the split setup."""
-    return MOCK if gpu.lower() == "mock" else LIBERO
-
-
-def parse_list_args(value: str, *, cast=str) -> list[Any]:
-    return [cast(item.strip()) for item in value.split(",") if item.strip()]
+def _case_row(case: Case) -> dict[str, Any]:
+    return {
+        "stamp": case.stamp,
+        "run_id": case.run_id,
+        "scheduler": case.server_args.scheduling_algorithm,
+        "num_robots": case.client_args.num_robots,
+        "seed": case.client_args.seed,
+        "max_batch_size": case.server_args.max_batch_size,
+        "alpha": case.server_args.alpha,
+    }
 
 
 @app.local_entrypoint()
 def main(
     server_config: str = "configs/server/mock.json",
-    client_config: str = "configs/client/mock/short.json",
+    client_config: str = "",
     output_dir: str = "experiments/sweeps/modal",
-    schedulers: str = "max-batch,dynamic-action",
+    schedulers: str = "fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action",
     num_robots: str = "2,4,6,8,10",
     seeds: str = "7",
     max_batch_size: str = "",
     alpha: str = "",
-    gpu: str = "mock",
+    server_policy: str = "default",
 ) -> None:
-    """Run scheduler sweeps on Modal.
+    """Submit a scheduler sweep on Modal.
 
-    ``gpu`` is the single knob that picks mock vs. real: ``mock`` runs the mock
-    policy + mock client colocated on CPU; any Modal GPU name (``l40s``,
-    ``h100``, ...) runs the real ``default`` policy server on that GPU with a
-    LIBERO client. It overrides whatever ``policy``/``env`` the config files set.
+    ``server_policy='default'`` rewrites the server config's ``policy`` to a real
+    ``Default()`` checkpoint (matches sbatch's behavior). Pass ``--server-policy
+    config`` to preserve the policy as written in the JSON (useful for mock runs).
+
+    The setup is auto-picked: mock policy + mock env runs colocated on one CPU
+    container; everything else runs split (server + client in their own containers,
+    bridged by a Modal-forwarded TCP tunnel).
     """
+    if not client_config:
+        raise SystemExit("--client-config is required.")
+    if server_policy not in {"default", "config"}:
+        raise SystemExit("--server-policy must be 'default' or 'config'.")
 
-    out = pathlib.Path(output_dir)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
-    scheduler_list = parse_list_args(schedulers)
-    seed_list = parse_list_args(seeds, cast=int)
-    num_robots_list = parse_list_args(num_robots, cast=int)
+    run_root = pathlib.Path(output_dir) / stamp
+    run_root.mkdir(parents=True, exist_ok=True)
 
     server_args = serve.Args.from_json(server_config)
     client_args = run_libero.Args.from_json(client_config)
-
-    # `gpu` is the source of truth for mock vs. real; reconcile the configs to it.
-    if gpu.lower() == "mock":
-        policy = server_args.policy if isinstance(server_args.policy, serve.Mock) else serve.Mock()
-        server_args = dataclasses.replace(server_args, policy=policy)
-        client_args = dataclasses.replace(client_args, env="mock", progress_type="logging")
-    else:
+    if server_policy == "default":
         server_args = dataclasses.replace(server_args, policy=serve.Default())
-        client_args = dataclasses.replace(client_args, env="libero", progress_type="logging")
 
     cases = _make_cases(
         server_args=server_args,
         client_args=client_args,
-        schedulers=scheduler_list,
-        num_robots_list=num_robots_list,
-        seeds=seed_list,
-        max_batch_size=max_batch_size,
-        alpha=alpha,
+        schedulers=parse_list_args(schedulers),
+        num_robots_list=parse_list_args(num_robots, cast=int),
+        seeds=parse_list_args(seeds, cast=int),
+        max_batch_sizes=parse_list_args(max_batch_size, cast=int),
+        alphas=parse_list_args(alpha, cast=float),
         stamp=stamp,
     )
-    cases = [dataclasses.replace(case, gpu=gpu) for case in cases]
+    if not cases:
+        raise SystemExit("No cases produced; check sweep arguments.")
 
-    worker = get_worker(gpu)
+    # Setup is determined by policy + env, neither of which varies per case.
+    worker = select_setup(cases[0])
+    print(f"Running {len(cases)} case(s) on setup={type(worker).__name__}")
+
+    case_rows = [_case_row(case) for case in cases]
+    write_rows(run_root / f"cases_{stamp}.csv", case_rows)
+
     rows: list[dict[str, Any]] = []
     for row in worker.run.map(cases, order_outputs=False):
         rows.append(row)
@@ -166,8 +167,9 @@ def main(
         sr_str = f"{sr:.3f}" if isinstance(sr, (int, float)) else "n/a"
         print(f"{row.get('status', '?')}: {row['run_id']} starvation={sr_str}")
 
-    download_artifacts(stamp=stamp, out=out, rows=rows)
-    write_rows(out / f"sweep_results_{stamp}.csv", rows)
+    download_artifacts(stamp=stamp, out=run_root, rows=rows)
+    results_csv = run_root / f"sweep_results_{stamp}.csv"
+    write_rows(results_csv, rows)
 
     suspicious = [r for r in rows if r.get("timing_suspicious")]
     if suspicious:
@@ -175,5 +177,9 @@ def main(
         for row in suspicious:
             print(f"  {row['run_id']}: {row.get('timing_flags', '')}")
 
-    # TODO: one function
-    # plot(experiment, latest_csv, out, stamp)
+    try:
+        from plot_sweep import plot_results  # noqa: PLC0415
+
+        plot_results(results_csv, run_root / "plots")
+    except Exception as exc:  # noqa: BLE001
+        print(f"Plot generation skipped: {exc!r}")
