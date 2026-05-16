@@ -15,6 +15,12 @@ COLORS = [
     "#92C5DE",  # light blue
 ]
 
+# Model colors
+MODEL_COLORS: dict[str, str] = {
+    "pi05": "#ffd23c",
+    "gr00t": "#76B900",
+}
+
 # Model display names
 MODEL_LABELS: dict[str, str] = {
     "pi05": r"$\pi_{0.5}$",
@@ -79,6 +85,10 @@ def yonly_grid(ax: plt.Axes) -> None:
 
 def color(idx: int) -> str:
     return COLORS[idx % len(COLORS)]
+
+
+def model_color(model: str, idx: int = 0) -> str:
+    return MODEL_COLORS.get(model, color(idx))
 
 
 def model_label(model: str) -> str:

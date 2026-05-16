@@ -8,6 +8,8 @@ import pathlib
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import style
 
@@ -46,7 +48,7 @@ def plot_latency(
             batch_sizes,
             latencies,
             marker="o",
-            color=style.color(idx),
+            color=style.model_color(model, idx),
             label=style.model_label(model),
         )
 
@@ -92,7 +94,7 @@ def plot_throughput(
             batch_sizes,
             throughputs,
             marker="o",
-            color=style.color(idx),
+            color=style.model_color(model, idx),
             label=style.model_label(model),
         )
 
@@ -147,28 +149,32 @@ def plot_robot_time_ratio(
         actual = [b * (chunk_time - L) / L for b, L in zip(batch_sizes, latencies)]
         ideal = [b * chunk_time / L for b, L in zip(batch_sizes, latencies)]
 
-        color = style.color(idx)
-        label = style.model_label(model)
-        ax.plot(
-            batch_sizes,
-            actual,
-            linestyle="-",
-            color=color,
-            marker="o",
-            label=f"{label} (no action overlap)",
-        )
-        ax.plot(
-            batch_sizes,
-            ideal,
-            linestyle="--",
-            color=color,
-            marker="o",
-            label=f"{label} (perfect action overlap)",
-        )
+        color = style.model_color(model, idx)
+        ax.plot(batch_sizes, actual, linestyle="-", color=color, marker="o")
+        ax.plot(batch_sizes, ideal, linestyle="--", color=color, marker="o")
 
     ax.set_xlabel("Batch size")
     ax.set_ylabel("Robot time / GPU time")
-    ax.legend()
+
+    # Split legend: colored patches for models, gray lines for linestyles
+    model_handles = [
+        mpatches.Patch(color=style.model_color(m, i), label=style.model_label(m))
+        for i, m in enumerate(k for k in profiles if hw in profiles[k])
+    ]
+    style_handles = [
+        mlines.Line2D(
+            [], [], color="gray", linestyle="--", marker="o", label="perfect action overlap"
+        ),
+        mlines.Line2D([], [], color="gray", linestyle="-", marker="o", label="no action overlap"),
+    ]
+    ax.legend(
+        handles=list(reversed(model_handles)) + style_handles,
+        loc="lower left",
+        bbox_to_anchor=(0, 1.0),
+        ncol=2,
+        borderaxespad=0,
+        handlelength=2.5,
+    )
     style.yonly_grid(ax)
 
     if standalone:
