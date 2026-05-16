@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import shlex
 from typing import TYPE_CHECKING, Callable
 
 from armory.real.config import Robot, RobotStatus
@@ -106,6 +107,7 @@ class FleetDispatcher:
         remote_subdir: str = "armory_episodes",
         callback: Callable | None = None,
         control_hz_overrides: dict[int, int] | None = None,
+        prompt_overrides: dict[int, str] | None = None,
     ):
         """Run a bounded client trial then fetch each robot's data via SFTP.
 
@@ -116,9 +118,11 @@ class FleetDispatcher:
           4. brief settle so RealSaver flushes its background writes
           5. ``fetch_episode_data(robots, output_dir, remote_subdir, fetch_video)``
 
-        ``control_hz_overrides`` (workstation id → control_hz) is forwarded
-        per-robot as ``--ros-args -p control_hz:=<N>``. Robots not in the dict
-        use the node's compiled-in default.
+        ``control_hz_overrides`` (workstation id → control_hz) and
+        ``prompt_overrides`` (workstation id → prompt string) are forwarded
+        per-robot to ``piper_client_armory`` as ``--control-hz <N>`` and
+        ``--prompt <STRING>`` after a single leading ``--`` separator. Robots
+        not present in either dict use the node's declared defaults.
 
         Returns a Future whose result is a summary dict with keys
         ``start``, ``kill``, ``fetch``, and ``output_dir``.
@@ -127,7 +131,7 @@ class FleetDispatcher:
             self._run_trial(
                 robots, duration_sec, pathlib.Path(output_dir),
                 fetch_video, grace_sec, remote_subdir, callback,
-                control_hz_overrides,
+                control_hz_overrides, prompt_overrides,
             )
         )
 
@@ -210,41 +214,39 @@ class FleetDispatcher:
         remote_subdir: str,
         callback: Callable | None,
         control_hz_overrides: dict[int, int] | None = None,
+        prompt_overrides: dict[int, str] | None = None,
     ):
         log = self.fleet.logger
         n = len(robots)
 
-        # Use --control-hz (argparse layer in client_node_armory) rather than
-        # --ros-args -p control_hz:=N: avoids both the int/float type-mismatch
-        # against declare_parameter("control_hz", 20.0) and any precedence
-        # confusion when the node also builds parameter_overrides.
-        # The leading `--` tells `ros2 run` to stop parsing its own flags and
-        # forward everything verbatim to the node — defensive against a future
-        # ros2 release adding a flag named --control-hz.
-        extra_args_per_robot = (
-            {rid: f"-- --control-hz {float(hz)}"
-             for rid, hz in control_hz_overrides.items()}
-            if control_hz_overrides
-            else None
+        # Use --control-hz / --prompt (argparse layer in client_node_armory)
+        # rather than --ros-args -p key:=value: avoids both the int/float type
+        # mismatch against declare_parameter("control_hz", 20.0) and any
+        # precedence confusion when the node also builds parameter_overrides.
+        # The leading `--` is the conventional "end of ros2 args" separator;
+        # `ros2 run` strips it before invoking the entry point, so argparse
+        # never sees it.
+        extra_args_per_robot = self._build_extra_args(
+            control_hz_overrides, prompt_overrides
         )
         if extra_args_per_robot:
             applied = {r.id: extra_args_per_robot[r.id] for r in robots
                        if r.id in extra_args_per_robot}
             if applied:
                 log.info(
-                    "trial: control_hz overrides applied to %d robot(s): %s",
+                    "trial: per-robot launch overrides applied to %d robot(s): %s",
                     len(applied),
-                    {rid: extras for rid, extras in applied.items()},
+                    applied,
                 )
             else:
                 log.warning(
-                    "trial: control_hz_overrides was provided but no target "
-                    "robot ids matched (overrides=%s, target ids=%s)",
+                    "trial: overrides were provided but no target robot ids "
+                    "matched (override ids=%s, target ids=%s)",
                     sorted(extra_args_per_robot),
                     [r.id for r in robots],
                 )
         else:
-            log.info("trial: no control_hz overrides (using node default)")
+            log.info("trial: no per-robot launch overrides (using node defaults)")
 
         log.info(
             f"trial: start_clients on {n} robot(s); will run for {duration_sec:.1f}s"
@@ -286,3 +288,29 @@ class FleetDispatcher:
     @staticmethod
     def _result_ok(result) -> bool:
         return result is not None and not str(result).startswith("ERROR")
+
+    @staticmethod
+    def _build_extra_args(
+        control_hz_overrides: dict[int, int] | None,
+        prompt_overrides: dict[int, str] | None,
+    ) -> dict[int, str] | None:
+        """Merge per-robot overrides into a single ``--<flag> <value> …`` suffix.
+
+        Returns ``{robot_id: " -- --control-hz X --prompt 'STRING' "}`` for
+        each robot that has at least one override; ``None`` if neither dict
+        contributes anything. The prompt is shell-quoted because it may
+        contain spaces, and the whole string is interpolated verbatim into a
+        bash command in fleet.py.
+        """
+        rids = set(control_hz_overrides or {}) | set(prompt_overrides or {})
+        if not rids:
+            return None
+        out: dict[int, str] = {}
+        for rid in rids:
+            parts = ["--"]
+            if control_hz_overrides and rid in control_hz_overrides:
+                parts.append(f"--control-hz {float(control_hz_overrides[rid])}")
+            if prompt_overrides and rid in prompt_overrides:
+                parts.append(f"--prompt {shlex.quote(prompt_overrides[rid])}")
+            out[rid] = " ".join(parts)
+        return out
