@@ -220,6 +220,7 @@ class MetricsStore(JSONDataclass):
                     request_id=ack.request_id,
                     observation_step=response.observation_step,
                     action_index_start=response.action_index_start,
+                    min_execution_horizon=response.min_execution_horizon,
                     max_execution_horizon=response.max_execution_horizon,
                     request_timestamp=response.request_timestamp,
                     server_arrival_time=response.server_arrival_time,
@@ -230,6 +231,7 @@ class MetricsStore(JSONDataclass):
                 ResponseRecord(
                     request=request_record,
                     batch_id=batch.batch_id,
+                    min_execution_horizon=ack.min_execution_horizon,
                     max_execution_horizon=response.max_execution_horizon,
                     inference_start_time=batch.inference_start_time,
                     inference_end_time=batch.inference_end_time,

@@ -24,6 +24,7 @@ class RequestRecord:
     max_execution_horizon: int
     request_timestamp: float  # client: when request was created
     server_arrival_time: float  # server: when observation arrived
+    min_execution_horizon: int = 0
 
 
 @dataclass
@@ -36,6 +37,7 @@ class ResponseRecord:
     receive_time: float = 0.0  # client: ResponseAck.receive_time
     execution_start_step: int = 0  # client: ResponseAck.execution_start_step
     first_executed_index: int = 0  # client: index within chunk where execution started
+    min_execution_horizon: int = 0  # client: minimum action advance before re-serving
     max_execution_horizon: int = 0  # client: how many actions were in the response chunk
 
     def __post_init__(self) -> None:

@@ -140,7 +140,7 @@ class RequestScheduler(ABC):
         self.mirror.reset_robot(robot_id)
         # self.latency_tracker.clear(robot_id)
 
-    def clear_all(self) -> None:
+    def reset_all(self) -> None:
         """Drop all scheduler + mirror state. For use on /reset between trials.
 
         Per-robot ResetRequests (sent on websocket close) only clear per-robot

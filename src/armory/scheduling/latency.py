@@ -61,7 +61,6 @@ class LatencyTracker(ABC):
 
     def clear_all(self) -> None:
         self._observation_latency.clear()
-        self._infer_latency.clear()
         self._action_latency.clear()
 
     def __repr__(self) -> str:
