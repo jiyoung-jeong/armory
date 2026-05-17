@@ -14,7 +14,7 @@ app = modal.App("armory-serve")
 
 GPU = "l40s"
 REGION = "us-east"
-ENV_MODE = "REAL_ACT_100"
+ENV_MODE = "REAL_ACT_20"
 MAX_BATCH_SIZE = 1
 PORT = 8080
 MODEL = "PI05"
