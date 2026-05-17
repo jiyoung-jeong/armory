@@ -4,16 +4,44 @@ from __future__ import annotations
 
 import pathlib
 
-BASELINE_SCHEDULERS = ("fixed-max-batch", "greedy-deadline", "round-robin", "lookahead-actions")
-DYNAMIC_SCHEDULER = "dynamic-action"
+BASELINE_SCHEDULERS = (
+    "max-batch",
+    "fixed-max-batch",
+    "greedy-deadline",
+    "round-robin",
+    "lookahead-actions",
+)
+DYNAMIC_SCHEDULERS = ("dynamic-action", "action-deficit", "starvation-fair")
 
 BASELINE_STYLE = {
+    "max-batch": {"marker": "o", "color": "#1f77b4"},
     "fixed-max-batch": {"marker": "s", "color": "#1f77b4"},
     "greedy-deadline": {"marker": "^", "color": "#2ca02c"},
     "round-robin": {"marker": "D", "color": "#d62728"},
     "lookahead-actions": {"marker": "o", "color": "#9467bd"},
 }
+DYNAMIC_STYLE = {
+    "dynamic-action": {"marker": "o", "line_color": "0.45"},
+    "action-deficit": {"marker": "X", "line_color": "0.20"},
+    "starvation-fair": {"marker": "D", "line_color": "0.20"},
+}
 DYNAMIC_CMAP = "viridis"
+
+
+def _batch_label(value) -> str:
+    try:
+        return f"{int(float(value))}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _batch_groups(df):
+    if "max_batch_size" not in df.columns:
+        return [(None, df)]
+    unique = df["max_batch_size"].dropna().unique()
+    if len(unique) <= 1:
+        return [(None, df)]
+    return list(df.groupby("max_batch_size", dropna=False))
 
 
 def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
@@ -25,71 +53,92 @@ def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
         sub_b = sub[sub["scheduler"] == sched].dropna(subset=["mean_starvation", y_col])
         if sub_b.empty:
             continue
-        x = float(sub_b["mean_starvation"].mean())
-        y = float(sub_b[y_col].mean())
-        xerr = float(sub_b["mean_starvation"].std(ddof=0)) if len(sub_b) > 1 else 0.0
-        yerr = float(sub_b[y_col].std(ddof=0)) if len(sub_b) > 1 else 0.0
-        style = BASELINE_STYLE[sched]
-        ax.errorbar(
-            x,
-            y,
-            xerr=xerr,
-            yerr=yerr,
-            marker=style["marker"],
-            markersize=11,
-            color=style["color"],
-            linestyle="none",
-            capsize=3,
-            label=sched,
-            zorder=4,
-        )
-
-    sub_d = sub[sub["scheduler"] == DYNAMIC_SCHEDULER].dropna(subset=["mean_starvation", y_col])
-    if not sub_d.empty:
-        agg = (
-            sub_d.groupby("alpha_requested")
-            .agg(
-                mean_starvation=("mean_starvation", "mean"),
-                y_mean=(y_col, "mean"),
-                starvation_std=("mean_starvation", "std"),
-                y_std=(y_col, "std"),
-                count=("seed", "count"),
-            )
-            .reset_index()
-            .sort_values("alpha_requested")
-        )
-        xs = agg["mean_starvation"].to_numpy()
-        ys = agg["y_mean"].to_numpy()
-        alphas = agg["alpha_requested"].to_numpy()
-        ax.plot(xs, ys, "-", color="0.5", linewidth=1.2, alpha=0.7, zorder=2)
-        handle = ax.scatter(
-            xs,
-            ys,
-            c=alphas,
-            cmap=DYNAMIC_CMAP,
-            s=70,
-            edgecolors="black",
-            linewidths=0.6,
-            zorder=3,
-            label=f"{DYNAMIC_SCHEDULER} (alpha sweep)",
-            vmin=0.0,
-            vmax=1.0,
-        )
-        n_seeds = int(agg["count"].max()) if not agg.empty else 1
-        if n_seeds > 1:
-            xerr = (agg["starvation_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
-            yerr = (agg["y_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
+        for max_batch_size, sub_batch in _batch_groups(sub_b):
+            x = float(sub_batch["mean_starvation"].mean())
+            y = float(sub_batch[y_col].mean())
+            xerr = float(sub_batch["mean_starvation"].std(ddof=0)) if len(sub_batch) > 1 else 0.0
+            yerr = float(sub_batch[y_col].std(ddof=0)) if len(sub_batch) > 1 else 0.0
+            style = BASELINE_STYLE[sched]
+            label = sched
+            if max_batch_size is not None:
+                label = f"{sched} (B={_batch_label(max_batch_size)})"
             ax.errorbar(
-                xs,
-                ys,
+                x,
+                y,
                 xerr=xerr,
                 yerr=yerr,
-                fmt="none",
-                ecolor="0.6",
-                capsize=2,
-                alpha=0.6,
+                marker=style["marker"],
+                markersize=11,
+                color=style["color"],
+                linestyle="none",
+                capsize=3,
+                label=label,
+                zorder=4,
+            )
+
+    sub_d = sub[sub["scheduler"].isin(DYNAMIC_SCHEDULERS)].dropna(subset=["mean_starvation", y_col])
+    for sched, sub_sched_all in sub_d.groupby("scheduler"):
+        for max_batch_size, sub_sched in _batch_groups(sub_sched_all):
+            agg = (
+                sub_sched.groupby("alpha_requested")
+                .agg(
+                    mean_starvation=("mean_starvation", "mean"),
+                    y_mean=(y_col, "mean"),
+                    starvation_std=("mean_starvation", "std"),
+                    y_std=(y_col, "std"),
+                    count=("seed", "count"),
+                )
+                .reset_index()
+                .sort_values("alpha_requested")
+            )
+            if agg.empty:
+                continue
+
+            xs = agg["mean_starvation"].to_numpy()
+            ys = agg["y_mean"].to_numpy()
+            alphas = agg["alpha_requested"].to_numpy()
+            style = DYNAMIC_STYLE.get(sched, {"marker": "o", "line_color": "0.5"})
+            label = f"{sched} (alpha sweep)"
+            if max_batch_size is not None:
+                label = f"{sched} (B={_batch_label(max_batch_size)}, alpha sweep)"
+            ax.plot(
+                xs,
+                ys,
+                "-",
+                color=style["line_color"],
+                linewidth=1.2,
+                alpha=0.7,
                 zorder=2,
             )
+            handle = ax.scatter(
+                xs,
+                ys,
+                c=alphas,
+                cmap=DYNAMIC_CMAP,
+                marker=style["marker"],
+                s=70,
+                edgecolors="black",
+                linewidths=0.6,
+                zorder=3,
+                label=label,
+                vmin=0.0,
+                vmax=1.0,
+            )
+            n_seeds = int(agg["count"].max()) if not agg.empty else 1
+            if n_seeds > 1:
+                xerr = (agg["starvation_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
+                yerr = (agg["y_std"].fillna(0.0) / np.sqrt(n_seeds)).to_numpy()
+                ax.errorbar(
+                    xs,
+                    ys,
+                    xerr=xerr,
+                    yerr=yerr,
+                    fmt="none",
+                    ecolor="0.6",
+                    capsize=2,
+                    alpha=0.6,
+                    zorder=2,
+                )
 
     ax.set_xlabel("Mean starvation rate (lower is better)", fontsize=11)
     ax.set_ylabel(y_label, fontsize=11)

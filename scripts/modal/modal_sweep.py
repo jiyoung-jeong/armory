@@ -45,6 +45,8 @@ import serve  # noqa: E402
 from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
 
+ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit"}
+
 
 def parse_list_args(value: str, *, cast=str) -> list[Any]:
     return [cast(item.strip()) for item in value.split(",") if item.strip()]
@@ -78,8 +80,6 @@ def _make_cases(
     alphas: list[float],
     stamp: str,
 ) -> list[Case]:
-    if max_batch_sizes and alphas:
-        raise SystemExit("Sweep only one of --max-batch-size or --alpha at a time.")
     if not max_batch_sizes:
         max_batch_sizes = [server_args.max_batch_size]
     if not alphas:
@@ -88,9 +88,12 @@ def _make_cases(
     cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
+            scheduler_alphas = (
+                alphas if scheduler in ALPHA_SWEEP_SCHEDULERS else [server_args.alpha]
+            )
             for experiment_name, experiment_config in experiment_configs:
                 for max_batch_size in max_batch_sizes:
-                    for alpha in alphas:
+                    for alpha in scheduler_alphas:
                         server = dataclasses.replace(
                             server_args,
                             seed=seed,
