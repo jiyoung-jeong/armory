@@ -108,6 +108,19 @@ class ActionChunk:
     #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
     origin: str = "queued"
 
+    @classmethod
+    def from_ack(cls, ack: AckNotification) -> ActionChunk:
+        return cls(
+            chunk_id=ack.chunk_id,
+            observation_step=ack.observation_step,
+            action_index_start=ack.action_index_start,
+            min_execution_horizon=ack.min_execution_horizon,
+            max_execution_horizon=ack.max_execution_horizon,
+            execution_start_step=ack.execution_start_step,
+            first_executed_index=ack.first_executed_index,
+            origin="confirmed",
+        )
+
 
 class RequestBatch(NamedTuple):
     requests: list[SlotRequest]

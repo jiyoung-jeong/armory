@@ -224,11 +224,41 @@ class Robot:
                 first_executed_index=ctx.first_executed_index,
             )
 
-    def calculate_chunk_context(self, dispatch_time: float) -> ChunkContext:
+    def calculate_chunk_context(
+        self, dispatch_time: float, arrival_time: float | None = None
+    ) -> ChunkContext:
         # NOTE: assumes time has been simulated up until dispatch_time
         assert self.steps[-1].time + 1 / self.control_hz > dispatch_time
-        arrival_time = dispatch_time + self.latency_tracker.action_latency(self.robot_id)
-        return self._context_at_arrival(arrival_time)
+        if arrival_time is None:
+            arrival_time = dispatch_time + self.latency_tracker.action_latency(self.robot_id)
+
+        obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(self.robot_id)
+        control_step = self.get_latest_control_step_before(obs_cutoff)
+
+        observation_step = control_step.observation_step
+        action_start_index = control_step.action_step or control_step.next_action_step
+
+        step = self.steps[-1]
+        while step.time < arrival_time:
+            step = self.advance_step(step)
+
+        execution_start_step = step.observation_step
+        first_executed_index = max(
+            0,
+            step.action_step - action_start_index
+            if step.action_step is not None
+            else step.next_action_step - action_start_index,
+        )
+
+        return ChunkContext(
+            observation_step=observation_step,
+            action_index_start=action_start_index,
+            min_execution_horizon=self.min_execution_horizon,
+            max_execution_horizon=self.max_execution_horizon,
+            arrival_time=arrival_time,
+            execution_start_step=execution_start_step,
+            first_executed_index=first_executed_index,
+        )
 
     def _context_at_arrival(self, arrival_time: float) -> ChunkContext:
         """Build a chunk context for a chunk whose arrival_time is fixed.
@@ -461,7 +491,11 @@ class Mirror:
         for robot_id in batch:
             # The twin holds the simulated state at dispatch_time; the real
             # robot's clock may still be behind, so calculate against the twin.
-            chunk_context = twin.robots[robot_id].calculate_chunk_context(dispatch_time)
+            arrival_time = dispatch_time + infer_lat + self.latency_tracker.action_latency(robot_id)
+            chunk_context = twin.robots[robot_id].calculate_chunk_context(
+                dispatch_time,
+                arrival_time=arrival_time,
+            )
             chunk = ActionChunk(
                 chunk_id=next(self.chunk_id_counter),
                 observation_step=chunk_context.observation_step,
