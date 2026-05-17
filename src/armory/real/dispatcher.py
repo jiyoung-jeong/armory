@@ -108,6 +108,9 @@ class FleetDispatcher:
         callback: Callable | None = None,
         control_hz_overrides: dict[int, int] | None = None,
         prompt_overrides: dict[int, str] | None = None,
+        execution_horizon_overrides: dict[int, int] | None = None,
+        on_clients_running: Callable[[], None] | None = None,
+        on_clients_stopping: Callable[[], None] | None = None,
     ):
         """Run a bounded client trial then fetch each robot's data via SFTP.
 
@@ -118,11 +121,27 @@ class FleetDispatcher:
           4. brief settle so RealSaver flushes its background writes
           5. ``fetch_episode_data(robots, output_dir, remote_subdir, fetch_video)``
 
-        ``control_hz_overrides`` (workstation id → control_hz) and
-        ``prompt_overrides`` (workstation id → prompt string) are forwarded
-        per-robot to ``piper_client_armory`` as ``--control-hz <N>`` and
-        ``--prompt <STRING>`` after a single leading ``--`` separator. Robots
-        not present in either dict use the node's declared defaults.
+        ``control_hz_overrides`` (ws id → hz), ``prompt_overrides``
+        (ws id → prompt string), and ``execution_horizon_overrides``
+        (ws id → action-chunk horizon) are forwarded per-robot to
+        ``piper_client_armory`` as ``--control-hz <N>``,
+        ``--prompt <STRING>``, and ``--execution-horizon <N>`` respectively,
+        after a single leading ``--`` separator. Robots not present in a
+        given dict use the node's declared default for that parameter.
+
+        ``on_clients_running`` (optional) is invoked once, in the fleet event
+        loop thread, immediately after the startup barrier go signal is sent
+        and before the trial duration timer starts. Use it to kick off
+        trial-scoped side effects (e.g. webcam recording) at the moment the
+        robots actually begin executing actions. Exceptions raised inside the
+        callback are logged but don't abort the trial.
+
+        ``on_clients_stopping`` (optional) is invoked once, in the fleet event
+        loop thread, immediately before ``kill_clients``. Use it to tear down
+        the same trial-scoped side effects so they bound to the trial window
+        rather than running through the kill grace, settle, and fetch phases.
+        Should be non-blocking (or very brief) — it runs inline before the
+        SIGINT is sent. Exceptions are logged but don't abort the kill.
 
         Returns a Future whose result is a summary dict with keys
         ``start``, ``kill``, ``fetch``, and ``output_dir``.
@@ -131,7 +150,8 @@ class FleetDispatcher:
             self._run_trial(
                 robots, duration_sec, pathlib.Path(output_dir),
                 fetch_video, grace_sec, remote_subdir, callback,
-                control_hz_overrides, prompt_overrides,
+                control_hz_overrides, prompt_overrides, execution_horizon_overrides,
+                on_clients_running, on_clients_stopping,
             )
         )
 
@@ -215,19 +235,28 @@ class FleetDispatcher:
         callback: Callable | None,
         control_hz_overrides: dict[int, int] | None = None,
         prompt_overrides: dict[int, str] | None = None,
+        execution_horizon_overrides: dict[int, int] | None = None,
+        on_clients_running: Callable[[], None] | None = None,
+        on_clients_stopping: Callable[[], None] | None = None,
     ):
         log = self.fleet.logger
         n = len(robots)
 
-        # Use --control-hz / --prompt (argparse layer in client_node_armory)
-        # rather than --ros-args -p key:=value: avoids both the int/float type
-        # mismatch against declare_parameter("control_hz", 20.0) and any
-        # precedence confusion when the node also builds parameter_overrides.
-        # The leading `--` is the conventional "end of ros2 args" separator;
-        # `ros2 run` strips it before invoking the entry point, so argparse
-        # never sees it.
+        # Use --control-hz / --prompt / --barrier (argparse layer in
+        # client_node_armory) rather than --ros-args -p key:=value: avoids both
+        # the int/float type mismatch against declare_parameter("control_hz",
+        # 20.0) and any precedence confusion when the node also builds
+        # parameter_overrides. The leading `--` is the conventional "end of
+        # ros2 args" separator; `ros2 run` strips it before invoking the entry
+        # point, so argparse never sees it. ``--barrier`` is added for every
+        # target so all clients block on /tmp/armory_go.flag and don't begin
+        # publishing observations until the dispatcher signals go.
+        target_ids = {r.id for r in robots}
         extra_args_per_robot = self._build_extra_args(
-            control_hz_overrides, prompt_overrides
+            control_hz_overrides,
+            prompt_overrides,
+            execution_horizon_overrides=execution_horizon_overrides,
+            barrier_robot_ids=target_ids,
         )
         if extra_args_per_robot:
             applied = {r.id: extra_args_per_robot[r.id] for r in robots
@@ -248,6 +277,11 @@ class FleetDispatcher:
         else:
             log.info("trial: no per-robot launch overrides (using node defaults)")
 
+        # Defensive: wipe any stale barrier flags from a prior crashed trial
+        # before launching clients, so dispatcher and clients agree on a clean
+        # starting state.
+        await self.fleet._clear_barrier_flags(robots)
+
         log.info(
             f"trial: start_clients on {n} robot(s); will run for {duration_sec:.1f}s"
         )
@@ -255,7 +289,48 @@ class FleetDispatcher:
             robots, callback=None, extra_args_per_robot=extra_args_per_robot,
         )
 
+        # Rendezvous: every client should reach the --barrier and touch
+        # /tmp/armory_ready.flag; we wait for all of them, then signal go in
+        # parallel so they all start spinning on the same wall-clock tick.
+        # Laggards that miss the window get logged but don't block the trial.
+        ready_timeout = 60.0
+        log.info(
+            "trial: waiting up to %.0fs for clients to reach startup barrier",
+            ready_timeout,
+        )
+        ready = await self.fleet._await_clients_ready(robots, timeout_sec=ready_timeout)
+        not_ready = [r for r in robots if not ready.get(r.id, False)]
+        if not_ready:
+            log.warning(
+                "trial: %d/%d robot(s) did not signal ready: %s — "
+                "they'll start whenever their own barrier timeout expires",
+                len(not_ready), len(robots),
+                [f"WS-{r.id}" for r in not_ready],
+            )
+        else:
+            log.info("trial: all %d robot(s) ready", len(robots))
+        await self.fleet._signal_clients_go(robots)
+        log.info("trial: go signal sent; duration timer starts now")
+
+        # Fire the post-barrier hook before the duration sleep so trial-scoped
+        # side effects (e.g. webcam recording) line up with the moment robots
+        # actually begin executing actions, not the earlier client-spawn moment.
+        if on_clients_running is not None:
+            try:
+                on_clients_running()
+            except Exception as e:
+                log.warning("trial: on_clients_running callback raised: %s", e)
+
         await asyncio.sleep(max(0.0, float(duration_sec)))
+
+        # Tear down trial-scoped side effects (e.g. webcam recording) before
+        # kill so they bound to the trial window rather than running through
+        # the kill grace, settle, and fetch phases that follow.
+        if on_clients_stopping is not None:
+            try:
+                on_clients_stopping()
+            except Exception as e:
+                log.warning("trial: on_clients_stopping callback raised: %s", e)
 
         log.info(f"trial: killing clients (SIGINT, grace={grace_sec:.1f}s)")
         kill_results = await self.fleet._kill_clients(
@@ -293,16 +368,22 @@ class FleetDispatcher:
     def _build_extra_args(
         control_hz_overrides: dict[int, int] | None,
         prompt_overrides: dict[int, str] | None,
+        execution_horizon_overrides: dict[int, int] | None = None,
+        barrier_robot_ids: set[int] | None = None,
     ) -> dict[int, str] | None:
         """Merge per-robot overrides into a single ``--<flag> <value> …`` suffix.
 
-        Returns ``{robot_id: " -- --control-hz X --prompt 'STRING' "}`` for
-        each robot that has at least one override; ``None`` if neither dict
-        contributes anything. The prompt is shell-quoted because it may
-        contain spaces, and the whole string is interpolated verbatim into a
-        bash command in fleet.py.
+        Returns ``{robot_id: " -- --control-hz X --prompt 'STRING'
+        --execution-horizon N --barrier "}`` for each robot that has at least
+        one override (or has the barrier enabled); ``None`` if no robot has
+        anything to add. The prompt is shell-quoted because it may contain
+        spaces, and the whole string is interpolated verbatim into a bash
+        command in fleet.py.
         """
-        rids = set(control_hz_overrides or {}) | set(prompt_overrides or {})
+        rids: set[int] = set(control_hz_overrides or {})
+        rids |= set(prompt_overrides or {})
+        rids |= set(execution_horizon_overrides or {})
+        rids |= barrier_robot_ids or set()
         if not rids:
             return None
         out: dict[int, str] = {}
@@ -312,5 +393,11 @@ class FleetDispatcher:
                 parts.append(f"--control-hz {float(control_hz_overrides[rid])}")
             if prompt_overrides and rid in prompt_overrides:
                 parts.append(f"--prompt {shlex.quote(prompt_overrides[rid])}")
+            if execution_horizon_overrides and rid in execution_horizon_overrides:
+                parts.append(
+                    f"--execution-horizon {int(execution_horizon_overrides[rid])}"
+                )
+            if barrier_robot_ids and rid in barrier_robot_ids:
+                parts.append("--barrier")
             out[rid] = " ".join(parts)
         return out

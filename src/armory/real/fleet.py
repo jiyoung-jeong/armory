@@ -19,6 +19,7 @@ import pathlib
 import re
 import shlex
 import threading
+import time
 from typing import Callable
 
 import asyncssh
@@ -31,6 +32,11 @@ PIPER_WORKSPACE_DIR = "/CS4803ARM_Lab/user_data/piper_ros"
 # Default data dir written by RealSaver inside the container (bind-mounted to the
 # workstation host). Override via the run_trial(remote_subdir=...) parameter.
 DEFAULT_EPISODE_SUBDIR = "armory_episodes"
+
+# Sentinel files used by the trial startup barrier (see FleetDispatcher._run_trial
+# and piper_client_armory --barrier). They live inside the container's /tmp.
+BARRIER_READY_FLAG = "/tmp/armory_ready.flag"
+BARRIER_GO_FLAG = "/tmp/armory_go.flag"
 
 
 class FleetController:
@@ -787,6 +793,99 @@ class FleetController:
             callback=callback,
         )
 
+    # ── startup barrier (trial-level rendezvous) ────────────────
+
+    async def _clear_barrier_flags(self, robots: list[Robot]) -> None:
+        """Remove any stale barrier flags inside each robot's container.
+
+        Called before ``_start_clients`` so a crashed prior trial can't leave a
+        ``go.flag`` lying around that lets the next trial's clients race past
+        the barrier before the dispatcher has rendezvoused with them.
+        """
+        script = f"rm -f {BARRIER_READY_FLAG} {BARRIER_GO_FLAG}"
+        docker_cmd = (
+            f"docker exec {DOCKER_CONTAINER} bash -lc {shlex.quote(script)}"
+        )
+        cmd = self._bash_command(docker_cmd)
+        await asyncio.gather(
+            *(self._barrier_run(r, cmd) for r in robots),
+            return_exceptions=True,
+        )
+
+    async def _await_clients_ready(
+        self,
+        robots: list[Robot],
+        timeout_sec: float,
+        poll_interval_sec: float = 0.25,
+    ) -> dict[int, bool]:
+        """Poll each container for ``BARRIER_READY_FLAG`` until all flip or timeout.
+
+        Returns ``{robot.id: bool}``. ``True`` means the client wrote ready
+        within ``timeout_sec``; ``False`` means it didn't (caller decides
+        whether to skip that robot or abort the trial).
+        """
+        check = f"test -f {BARRIER_READY_FLAG} && echo READY || echo NOT_READY"
+        docker_cmd = (
+            f"docker exec {DOCKER_CONTAINER} bash -lc {shlex.quote(check)}"
+        )
+        cmd = self._bash_command(docker_cmd)
+
+        ready: dict[int, bool] = {r.id: False for r in robots}
+        pending: list[Robot] = list(robots)
+        deadline = time.monotonic() + timeout_sec
+        while pending and time.monotonic() < deadline:
+            outcomes = await asyncio.gather(
+                *(self._barrier_run(r, cmd) for r in pending),
+                return_exceptions=True,
+            )
+            still_pending: list[Robot] = []
+            for r, out in zip(pending, outcomes):
+                if isinstance(out, Exception):
+                    still_pending.append(r)
+                    continue
+                if str(out).strip() == "READY":
+                    ready[r.id] = True
+                else:
+                    still_pending.append(r)
+            pending = still_pending
+            if pending:
+                await asyncio.sleep(poll_interval_sec)
+        return ready
+
+    async def _signal_clients_go(
+        self,
+        robots: list[Robot],
+    ) -> dict[int, bool]:
+        """Touch ``BARRIER_GO_FLAG`` inside every container in parallel.
+
+        Returns ``{robot.id: bool}`` indicating which touches succeeded.
+        Parallel ``asyncio.gather`` so the per-robot start skew is just the
+        spread of when each ``touch`` actually returns, not N×SSH-RTT.
+        """
+        script = f"touch {BARRIER_GO_FLAG}"
+        docker_cmd = (
+            f"docker exec {DOCKER_CONTAINER} bash -lc {shlex.quote(script)}"
+        )
+        cmd = self._bash_command(docker_cmd)
+        outcomes = await asyncio.gather(
+            *(self._barrier_run(r, cmd) for r in robots),
+            return_exceptions=True,
+        )
+        return {
+            r.id: not isinstance(out, Exception)
+            for r, out in zip(robots, outcomes)
+        }
+
+    async def _barrier_run(self, robot: Robot, cmd: str) -> str:
+        """Run a short SSH command for the barrier dance.
+
+        Wrapped so callers can ``asyncio.gather`` and have failures land as
+        exceptions in the result list instead of bringing the gather down.
+        """
+        conn = await self._get_connection(robot)
+        result = await conn.run(cmd, timeout=10)
+        return result.stdout or ""
+
     async def _start_detached_docker_processes(
         self,
         robots: list[Robot],
@@ -925,7 +1024,7 @@ class FleetController:
             "fi"
         )
         cmd = self._bash_command(script)
-        logger.info("Starting %s with command: %s", label, cmd)
+        logger.info("Starting %s", label)
         self._emit(f"WS-{robot.id}: starting {label}; log {log_path}")
 
         try:
@@ -1013,7 +1112,7 @@ class FleetController:
             f"echo '{label} stopped; log: {log_path}'"
         )
         cmd = self._bash_command(script)
-        logger.info("Stopping %s with command: %s", label, cmd)
+        logger.info("Stopping %s", label)
         self._emit(f"WS-{robot.id}: stopping {label}")
 
         try:
