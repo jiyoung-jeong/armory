@@ -14,6 +14,7 @@ from armory.scheduling.baselines import (
     MaxBatchScheduler,
     RandomBatchScheduler,
     RoundRobinScheduler,
+    StarvationScheduler,
 )
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
@@ -40,6 +41,7 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "lookahead-actions": LookaheadActionsScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,
+    "starvation": StarvationScheduler,
 }
 
 
