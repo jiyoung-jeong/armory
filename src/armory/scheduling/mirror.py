@@ -26,7 +26,6 @@ Search and production both mutate Mirror through the same primitives:
 
 from __future__ import annotations
 
-import copy
 import itertools
 import logging
 import time
@@ -389,6 +388,23 @@ class Robot:
         """Action index the next queued chunk should start at, given control step ``cs``."""
         return cs.action_step if cs.action_step is not None else cs.next_action_step
 
+    def _clone_for_twin(self) -> Robot:
+        """Cheap shallow clone for speculative twins.
+
+        ``steps`` and ``chunks`` get fresh list objects so twin-side appends
+        and replacements don't leak back, but the items themselves are shared:
+        ``ActionChunk`` is frozen, and ``ControlStep`` is never mutated in
+        place anywhere in this module."""
+        twin = Robot.__new__(Robot)
+        twin.robot_id = self.robot_id
+        twin.control_hz = self.control_hz
+        twin.min_execution_horizon = self.min_execution_horizon
+        twin.max_execution_horizon = self.max_execution_horizon
+        twin.latency_tracker = self.latency_tracker
+        twin.steps = list(self.steps)
+        twin.chunks = list(self.chunks)
+        return twin
+
     def to_dict(self, now: float) -> dict:
         step = self.steps[-1] if self.steps else None
         return {
@@ -605,8 +621,21 @@ class Mirror:
             self.last_batch_completed_time = completed.completion_time
 
     def get_twin(self) -> Mirror:
-        # FIXME: probably don't need to copy latency tracker
-        return copy.deepcopy(self)
+        """Shallow twin for speculative planning.
+
+        ``in_flight_batches`` and each robot's ``steps`` / ``chunks`` lists
+        are copied so twin-side mutations don't leak back, but the items
+        inside are shared. ``Batch.completion_time`` is mutated only by
+        ``update_batch_completion`` on the real Mirror, never via a twin,
+        so sharing ``Batch`` references is safe. ``latency_tracker`` and
+        ``chunk_id_counter`` are read/never-touched on the twin path."""
+        twin = Mirror.__new__(Mirror)
+        twin.latency_tracker = self.latency_tracker
+        twin.in_flight_batches = deque(self.in_flight_batches)
+        twin.last_batch_completed_time = self.last_batch_completed_time
+        twin.chunk_id_counter = self.chunk_id_counter
+        twin.robots = {rid: robot._clone_for_twin() for rid, robot in self.robots.items()}
+        return twin
 
     def deadlines(self) -> dict[RobotID, float]:
         deadlines = {rid: robot.deadline() for rid, robot in self.robots.items()}
