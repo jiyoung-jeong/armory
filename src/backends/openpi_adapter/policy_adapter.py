@@ -21,7 +21,7 @@ from armory.serving.schemas import InternalRequest
 from armory_client.messages import InferType, RTCParams
 
 logger = logging.getLogger(__name__)
-
+logger.setLevel(logging.DEBUG)
 
 def _recursive_stack(list_of_dicts: list[dict]) -> dict:
     """Recursively stack a list of dicts-of-arrays into a single dict-of-batched-arrays."""
@@ -267,6 +267,9 @@ class OpenPiPolicyAdapter:
                 and not self._is_triton_optimized
                 and req.infer_type == InferType.INFERENCE_TIME_RTC
                 and isinstance(req.params, RTCParams)
+            )
+            logger.debug(
+                f"can_rtc: {can_rtc}, pytorch_model: {self._is_pytorch_model}, triton_optimized: {self._is_triton_optimized}, infer_type: {req.infer_type}, params: {req.params}"
             )
             grouped[can_rtc].append(i)
 

@@ -76,6 +76,8 @@ class Args(JsonArgs):
 
     min_execution_horizon: int = 0
 
+    min_observation_step_diff: int = 0
+
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
     lookahead_control_hz: int = 20
@@ -102,6 +104,7 @@ class Args(JsonArgs):
             "scheduling_algorithm": self.scheduling_algorithm,
             "alpha": self.alpha,
             "min_execution_horizon": self.min_execution_horizon,
+            "min_observation_step_diff": self.min_observation_step_diff,
             "lookahead_horizon_ms": self.lookahead_horizon_ms,
             "lookahead_timestep_ms": self.lookahead_timestep_ms,
             "lookahead_control_hz": self.lookahead_control_hz,
@@ -131,6 +134,7 @@ class Args(JsonArgs):
             scheduling_algorithm=data.get("scheduling_algorithm", "greedy-deadline"),
             alpha=data.get("alpha", 1.0),
             min_execution_horizon=data.get("min_execution_horizon", 0),
+            min_observation_step_diff=data.get("min_observation_step_diff", 0),
             lookahead_horizon_ms=data.get("lookahead_horizon_ms", 500),
             lookahead_timestep_ms=data.get("lookahead_timestep_ms", 50),
             lookahead_control_hz=data.get("lookahead_control_hz", 20),
@@ -150,6 +154,10 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
             "timestep_ms": args.lookahead_timestep_ms,
             "action_horizon_steps": action_horizon_steps,
             "control_hz": args.lookahead_control_hz,
+        }
+    if args.scheduling_algorithm == "starvation":
+        return {
+            "min_observation_step_diff": args.min_observation_step_diff,
         }
     return None
 

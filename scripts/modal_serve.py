@@ -12,14 +12,16 @@ log = logging.getLogger(__name__)
 
 app = modal.App("armory-serve")
 
-GPU = "h100"
+GPU = "l40s"
 REGION = "us-east"
-ENV_MODE = "LIBERO"
-MAX_BATCH_SIZE = 4
+ENV_MODE = "REAL_ACT_100"
+MAX_BATCH_SIZE = 1
 PORT = 8080
 MODEL = "PI05"
-SCHEDULING_ALGORITHM = "greedy-deadline"
+SCHEDULING_ALGORITHM = "max-batch"
 ALPHA = 1.0
+MIN_EXECUTION_HORIZON = 10
+MIN_OBSERVATION_STEP_DIFF = 20
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 
@@ -54,7 +56,7 @@ def generate_requirements() -> None:
         *[arg for pkg in _MODAL_EXCLUDE for arg in ("--no-emit-package", pkg)],
         "-o",
         str(REQUIREMENTS_FILE),
-        "-q"
+        "-q",
     ]
     subprocess.run(cmd, check=True, cwd=REPO_ROOT)
     print(f"Written {REQUIREMENTS_FILE}")
@@ -101,7 +103,15 @@ image = (
         }
     )
     .add_local_python_source(
-        "armory", "armory_client", "openpi", "openpi_client", "libero", "gr00t", "openpi_adapter", "gr00t_adapter"
+        "armory",
+        "armory_client",
+        "openpi",
+        "openpi_client",
+        "libero",
+        "gr00t",
+        "openpi_adapter",
+        "gr00t_adapter",
+        "sims",
     )
     .add_local_dir(str(REPO_ROOT / "scripts"), remote_path="/root/scripts")
     .add_local_dir(str(REPO_ROOT / "configs"), remote_path="/root/configs")
@@ -140,6 +150,10 @@ class ModalPolicyServer:
             SCHEDULING_ALGORITHM,
             "--alpha",
             str(ALPHA),
+            "--min-execution-horizon",
+            str(MIN_EXECUTION_HORIZON),
+            "--min-observation-step-diff",
+            str(MIN_OBSERVATION_STEP_DIFF),
         ]
 
         def _stream_logs(proc: subprocess.Popen) -> None:
