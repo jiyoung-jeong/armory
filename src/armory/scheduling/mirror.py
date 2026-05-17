@@ -359,8 +359,13 @@ class Robot:
     def deadline(self) -> float:
         step = self.steps[-1]
         if step.next_action_step < self.max_overall_action_step:
+            TIMEOUT = 1000
+            i = 0
             while step.next_action_step <= self.max_overall_action_step:
                 step = self.advance_step(step)
+                i += 1
+                if i > TIMEOUT:
+                    raise ValueError(f"Timeout while advancing step: {step}")
             return step.time
         elif step.next_action_step == self.max_overall_action_step:
             for prev_step in reversed(self.steps):
@@ -370,11 +375,17 @@ class Robot:
 
             assert False, "should not happen"
         else:
+            # next_action_step == max_overall + 1 is the legitimate "just executed
+            # the final action of the last chunk, now idle" state; anything beyond
+            # that means we skipped indices.
             if (
-                step.action_step is not None
-                and step.next_action_step != 0
+                step.next_action_step > self.max_overall_action_step + 1
                 and self.max_overall_action_step != -1
             ):
+                logger.warning(f"self.steps: {self.steps}")
+                logger.warning(f"step: {step}")
+                logger.warning(f"self.max_overall_action_step: {self.max_overall_action_step}")
+                logger.warning(f"self.chunks: {self.chunks}")
                 raise ValueError(
                     f"step.next_action_step {step.next_action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
                 )
