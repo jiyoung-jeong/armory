@@ -16,14 +16,20 @@ code parses the real output without modification.
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime
 import json
 import logging
 import pathlib
+import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 
+import imageio_ffmpeg
 import requests
+import tqdm
+import tqdm.contrib.logging
 import tyro
 import yaml
 
@@ -31,6 +37,12 @@ from armory.real import FleetConfig, FleetController, FleetDispatcher, RobotStat
 from armory_client.schemas import RuntimeMetadata
 
 logger = logging.getLogger("run_real")
+
+# Mirrors the publisher URL the workstation-side ffmpeg writes to
+# (src/armory/real/fleet.py:_webcam_rtsp_url). Per-robot path is
+# ``{base}/workstation{robot.id}``.
+WEBCAM_RTSP_BASE_URL = "rtsp://130.207.121.217:8554"
+WEBCAM_RECORDER_GRACE_SEC = 3.0
 
 
 @dataclass
@@ -59,6 +71,16 @@ class Args:
     fetch_video: bool = False
     """Pull MP4s back too. Adds ~50–500MB per episode."""
 
+    save_videos: bool = False
+    """Record each workstation's RTSP webcam stream to videos/workstationN.mp4
+    for the duration of the trial. The workstation-side publisher must already
+    be streaming (W key in the TUI). Off by default because mp4s are large."""
+
+    debug: bool = False
+    """Enable verbose logging: per-workstation SSH/Docker chatter and asyncssh
+    transport events. Off by default; only the dispatcher's trial-phase
+    messages and run_real's own status lines are shown."""
+
     remote_subdir: str = "armory_episodes"
     """Subdir under the workstation's user_data bind mount where RealSaver writes."""
 
@@ -66,9 +88,22 @@ class Args:
     """If true, skip robots that aren't BOOTED before starting."""
 
     het_config_path: str | None = None
-    """Optional YAML mapping workstation id → control_hz. If set, each
-    matching robot is launched with ``--ros-args -p control_hz:=<N>``.
-    See configs/heterogeneous_*.yaml for examples."""
+    """Optional YAML with per-workstation launch overrides. Supports three
+    top-level sections, all optional (must have at least one):
+
+    ``control_hz: {<station_id>: <hz>, ...}`` — forwarded as ``--control-hz``.
+    ``language_index: {<station_id>: <idx>, ...}`` — looked up in
+    ``configs/real_task_index.json`` (override path with --task-index-path)
+    and forwarded as ``--prompt <STRING>``.
+    ``execution_horizon: {<station_id>: <N>, ...}`` — forwarded as
+    ``--execution-horizon <N>``.
+
+    See configs/experiments/edge_cases_real/*.yaml for examples."""
+
+    task_index_path: str | None = None
+    """Path to the language-index → prompt JSON. Defaults to
+    <armory>/configs/real_task_index.json. Only consulted when the het
+    config contains a ``language_index:`` section."""
 
     #################################################################################
     # Server metrics (optional)
@@ -94,30 +129,104 @@ class Args:
     resize_size: int = 224
 
 
+class _SuppressWSChatter(logging.Filter):
+    """Drop per-workstation INFO chatter from the ``armory.real`` logger.
+
+    Every per-WS line in fleet.py is emitted via ``_emit`` and starts with
+    ``WS-{id}: ...``; the dispatcher's trial-phase messages start with
+    ``trial: ...`` and we want to keep those. WARNINGs and ERRORs always pass
+    through regardless of prefix.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno > logging.INFO:
+            return True
+        return not record.getMessage().startswith("WS-")
+
+
+def _setup_logging(debug: bool) -> None:
+    """Default: clean log stream + tqdm-friendly. ``--debug``: full verbosity."""
+    fmt = "%(asctime)s [%(name)s] %(message)s"
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, format=fmt)
+        logging.getLogger("asyncssh").setLevel(logging.INFO)
+        return
+    logging.basicConfig(level=logging.INFO, format=fmt)
+    logging.getLogger("armory.real").addFilter(_SuppressWSChatter())
+    logging.getLogger("asyncssh").setLevel(logging.WARNING)
+
+
 def _default_config_path() -> str:
     """Locate configs/armory-tui.yaml relative to this script."""
     here = pathlib.Path(__file__).resolve().parent
     return str(here.parent / "configs" / "armory-tui.yaml")
 
 
-def _load_het_config(path: str) -> dict[int, int]:
-    """Parse the heterogeneous control-rate YAML.
+def _default_task_index_path() -> str:
+    """Locate configs/real_task_index.json relative to this script."""
+    here = pathlib.Path(__file__).resolve().parent
+    return str(here.parent / "configs" / "real_task_index.json")
 
-    Schema: ``control_hz: {<station_id>: <hz>, ...}``. Returns
-    ``{station_id: hz}`` with ints on both sides; raises on malformed input.
+
+def _load_het_config(
+    path: str,
+) -> tuple[dict[int, int], dict[int, int], dict[int, int]]:
+    """Parse the heterogeneous per-robot launch YAML.
+
+    Schema (all sections optional, at least one required):
+      ``control_hz: {<station_id>: <hz>, ...}``
+      ``language_index: {<station_id>: <task_idx>, ...}``
+      ``execution_horizon: {<station_id>: <N>, ...}``
+
+    Returns ``(control_hz_map, language_index_map, execution_horizon_map)``
+    with ints on both sides. Language indices are returned as-is here;
+    resolution against real_task_index.json happens in ``main()``.
     """
     raw = yaml.safe_load(pathlib.Path(path).read_text())
-    if not isinstance(raw, dict) or "control_hz" not in raw:
-        sys.exit(f"het config {path}: missing top-level 'control_hz' mapping")
-    mapping = raw["control_hz"]
-    if not isinstance(mapping, dict):
-        sys.exit(f"het config {path}: 'control_hz' must be a mapping")
-    out: dict[int, int] = {}
-    for k, v in mapping.items():
+    if not isinstance(raw, dict):
+        sys.exit(f"het config {path}: top-level must be a mapping")
+    known_sections = ("control_hz", "language_index", "execution_horizon")
+    if not any(s in raw for s in known_sections):
+        sys.exit(
+            f"het config {path}: must define at least one of "
+            f"{', '.join(repr(s) for s in known_sections)}"
+        )
+
+    def _parse_int_int(section: str) -> dict[int, int]:
+        mapping = raw.get(section)
+        if mapping is None:
+            return {}
+        if not isinstance(mapping, dict):
+            sys.exit(f"het config {path}: '{section}' must be a mapping")
+        out: dict[int, int] = {}
+        for k, v in mapping.items():
+            try:
+                out[int(k)] = int(v)
+            except (TypeError, ValueError):
+                sys.exit(
+                    f"het config {path}: bad {section} entry "
+                    f"{k!r}: {v!r} (need int → int)"
+                )
+        return out
+
+    return (
+        _parse_int_int("control_hz"),
+        _parse_int_int("language_index"),
+        _parse_int_int("execution_horizon"),
+    )
+
+
+def _load_task_index(path: str) -> dict[int, str]:
+    """Parse configs/real_task_index.json into ``{index: prompt}``."""
+    raw = json.loads(pathlib.Path(path).read_text())
+    if not isinstance(raw, dict):
+        sys.exit(f"task index {path}: top-level must be a JSON object")
+    out: dict[int, str] = {}
+    for k, v in raw.items():
         try:
-            out[int(k)] = int(v)
+            out[int(k)] = str(v)
         except (TypeError, ValueError):
-            sys.exit(f"het config {path}: bad entry {k!r}: {v!r} (need int → int)")
+            sys.exit(f"task index {path}: bad entry {k!r}: {v!r}")
     return out
 
 
@@ -184,12 +293,173 @@ def _reset_server_metrics(args: Args) -> None:
         logger.warning("could not reset server metrics: %s", e)
 
 
+def _start_webcam_recorders(
+    targets: list,
+    out_dir: pathlib.Path,
+    rtsp_base: str = WEBCAM_RTSP_BASE_URL,
+) -> list[tuple]:
+    """Spawn one host-side ffmpeg per robot to record its mediamtx RTSP stream.
+
+    The workstation-side publisher (started via the TUI ``W`` key /
+    ``FleetDispatcher.start_webcam``) must already be live; these consumers
+    fail fast if the path isn't being published. ``-c copy`` skips re-encoding,
+    so the recorder is cheap.
+
+    Returns ``[(robot, popen, log_file), ...]`` for ``_stop_webcam_recorders``.
+    """
+    videos_dir = out_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    procs: list[tuple] = []
+    for robot in targets:
+        url = f"{rtsp_base}/workstation{robot.id}"
+        mp4 = videos_dir / f"workstation{robot.id}.mp4"
+        cmd = [
+            ffmpeg,
+            "-nostdin", "-hide_banner", "-loglevel", "warning",
+            "-rtsp_transport", "udp",
+            "-i", url,
+            "-c", "copy",
+            "-y", str(mp4),
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        procs.append((robot, proc))
+        logger.info("recording WS-%d: %s -> %s", robot.id, url, mp4)
+    return procs
+
+
+def _request_recorder_stop(procs: list) -> None:
+    """Send SIGTERM to each running ffmpeg recorder. Non-blocking.
+
+    ffmpeg flushes the mp4 trailer on SIGTERM but takes a moment to actually
+    exit; pair with ``_stop_webcam_recorders`` (idempotent on already-signaled
+    procs) to actually wait for them and SIGKILL stragglers. Splitting the
+    two lets the trial-end callback fire SIGTERM at the kill instant without
+    blocking the fleet event loop on ffmpeg's grace period.
+    """
+    for _, proc in procs:
+        if proc.poll() is None:
+            proc.terminate()
+
+
+def _stop_webcam_recorders(
+    procs: list,
+    grace_sec: float = WEBCAM_RECORDER_GRACE_SEC,
+) -> None:
+    """SIGTERM each recorder so ffmpeg flushes the mp4 trailer; SIGKILL on timeout.
+
+    ffmpeg writes the moov atom on graceful exit; a SIGKILL would leave the
+    file un-finalized, so we give each process ``grace_sec`` to wind down.
+    """
+    if not procs:
+        return
+    for _, proc in procs:
+        if proc.poll() is None:
+            proc.terminate()
+    deadline = time.monotonic() + grace_sec
+    for robot, proc in procs:
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "recorder WS-%d did not stop in %.1fs, sending SIGKILL",
+                robot.id, grace_sec,
+            )
+            proc.kill()
+            proc.wait()
+        # ffmpeg returns 255 on signal-driven exit; treat that as success too.
+        if proc.returncode in (0, 255):
+            logger.info("recorder WS-%d finished (rc=%d)", robot.id, proc.returncode)
+        else:
+            logger.warning(
+                "recorder WS-%d exited rc=%d (publisher likely wasn't streaming)",
+                robot.id, proc.returncode,
+            )
+
+
+def _stop_clients_after_interrupt(
+    fleet: FleetController,
+    dispatcher: FleetDispatcher,
+    targets: list,
+    grace_sec: float,
+    trial_future: concurrent.futures.Future | None,
+) -> None:
+    """SIGINT/KeyboardInterrupt path: stop Piper clients before ``fleet.stop()`` closes SSH.
+
+    Without this, ``fut.result()`` unwinds while ``_run_trial`` is still in
+    ``asyncio.sleep(duration)``, so robots never get ``kill_clients`` and the
+    next ``run_real`` can wedge against still-running clients. After the kill,
+    we also send the robots back to init so the next trial starts from a
+    known pose rather than wherever the policy happened to leave them.
+    """
+    if not targets:
+        return
+    logger.warning(
+        "interrupt received — sending client stop (SIGINT + grace) to %d robot(s)",
+        len(targets),
+    )
+    kill_timeout = max(90.0, grace_sec * 4 + 30.0)
+    try:
+        fleet.kill_clients(targets, grace_sec=grace_sec).result(timeout=kill_timeout)
+    except Exception as e:
+        logger.warning("emergency kill_clients failed: %s", e)
+    if trial_future is not None and not trial_future.done():
+        trial_future.cancel()
+        try:
+            trial_future.result(timeout=5.0)
+        except (concurrent.futures.CancelledError, concurrent.futures.TimeoutError, Exception):
+            pass
+    # chunx_client owns the joint topic during a trial; only safe to issue
+    # ``p goto init`` once kill_clients has actually torn it down.
+    try:
+        logger.warning("sending %d robot(s) to init after interrupt", len(targets))
+        dispatcher.goto_init(targets).result(timeout=60.0)
+    except Exception as e:
+        logger.warning("post-interrupt goto init failed: %s", e)
+
+
+def _await_trial_with_progress(
+    trial_future: concurrent.futures.Future,
+    total_timeout_sec: float,
+) -> object:
+    """Block on ``trial_future`` with a tqdm progress line and clean log redirect.
+
+    Uses ``logging_redirect_tqdm`` so log records appear above the progress
+    line instead of overwriting it. The bar tracks elapsed time only — phase
+    transitions show up as log lines from the dispatcher.
+    """
+    deadline = time.monotonic() + total_timeout_sec
+    with tqdm.contrib.logging.logging_redirect_tqdm():
+        with tqdm.tqdm(
+            desc="Trial",
+            bar_format="{desc}: {elapsed} elapsed",
+            leave=False,
+        ) as bar:
+            while not trial_future.done():
+                if time.monotonic() > deadline:
+                    raise concurrent.futures.TimeoutError(
+                        f"trial future did not complete in {total_timeout_sec:.0f}s"
+                    )
+                time.sleep(0.5)
+                bar.refresh()
+    return trial_future.result(timeout=1.0)
+
+
 def main(args: Args) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
+    _setup_logging(args.debug)
 
     cfg = FleetConfig(args.config_path or _default_config_path())
     fleet = FleetController(cfg, logger=logging.getLogger("armory.real"))
     fleet.start()
+    targets: list = []
+    trial_future: concurrent.futures.Future | None = None
+    recorders: list = []
     try:
         dispatcher = FleetDispatcher(fleet)
 
@@ -215,26 +485,111 @@ def main(args: Args) -> None:
         if args.fetch_server_metrics and args.server_host:
             _reset_server_metrics(args)
 
-        het_overrides = _load_het_config(args.het_config_path) if args.het_config_path else None
-        if het_overrides:
-            applied = {r.id: het_overrides[r.id] for r in targets if r.id in het_overrides}
-            unmatched = sorted(set(het_overrides) - {r.id for r in targets})
+        het_hz: dict[int, int] = {}
+        het_lang: dict[int, int] = {}
+        het_exec: dict[int, int] = {}
+        if args.het_config_path:
+            het_hz, het_lang, het_exec = _load_het_config(args.het_config_path)
+
+        target_ids = {r.id for r in targets}
+        if het_hz:
+            applied = {rid: het_hz[rid] for rid in het_hz if rid in target_ids}
+            unmatched = sorted(set(het_hz) - target_ids)
             logger.info("control_hz overrides applied: %s", applied)
             if unmatched:
-                logger.warning("control_hz config has entries for non-target ids: %s", unmatched)
+                logger.warning(
+                    "control_hz config has entries for non-target ids: %s", unmatched
+                )
+        if het_exec:
+            applied_exec = {
+                rid: het_exec[rid] for rid in het_exec if rid in target_ids
+            }
+            unmatched_exec = sorted(set(het_exec) - target_ids)
+            logger.info("execution_horizon overrides applied: %s", applied_exec)
+            if unmatched_exec:
+                logger.warning(
+                    "execution_horizon config has entries for non-target ids: %s",
+                    unmatched_exec,
+                )
+
+        prompt_overrides: dict[int, str] = {}
+        if het_lang:
+            task_index = _load_task_index(
+                args.task_index_path or _default_task_index_path()
+            )
+            bad = sorted(
+                (rid, idx) for rid, idx in het_lang.items() if idx not in task_index
+            )
+            if bad:
+                sys.exit(
+                    f"language_index entries refer to unknown task ids "
+                    f"(not in {args.task_index_path or _default_task_index_path()}): "
+                    f"{bad}"
+                )
+            prompt_overrides = {rid: task_index[idx] for rid, idx in het_lang.items()}
+            applied_lang = {rid: het_lang[rid] for rid in het_lang if rid in target_ids}
+            unmatched_lang = sorted(set(het_lang) - target_ids)
+            logger.info(
+                "language_index overrides applied: %s -> %s",
+                applied_lang,
+                {rid: task_index[idx] for rid, idx in applied_lang.items()},
+            )
+            if unmatched_lang:
+                logger.warning(
+                    "language_index config has entries for non-target ids: %s",
+                    unmatched_lang,
+                )
+
+        # Webcam recorders bracket the actual action-execution window:
+        # _on_clients_running starts them after barrier release;
+        # _on_clients_stopping SIGTERMs them right before kill_clients so
+        # they don't bleed through the kill grace, settle, and fetch phases.
+        def _on_clients_running() -> None:
+            if not args.save_videos:
+                return
+            recorders.extend(_start_webcam_recorders(targets, out))
+
+        def _on_clients_stopping() -> None:
+            _request_recorder_stop(recorders)
 
         # Run the trial — start, wait, kill, fetch.
-        fut = dispatcher.run_trial(
+        trial_future = dispatcher.run_trial(
             targets,
             duration_sec=args.duration_sec,
             output_dir=out,
             fetch_video=args.fetch_video,
             grace_sec=args.grace_sec,
             remote_subdir=args.remote_subdir,
-            control_hz_overrides=het_overrides,
+            control_hz_overrides=het_hz or None,
+            prompt_overrides=prompt_overrides or None,
+            execution_horizon_overrides=het_exec or None,
+            on_clients_running=_on_clients_running,
+            on_clients_stopping=_on_clients_stopping,
         )
         # Total time: trial duration + grace + fetch overhead. Add a 60s buffer.
-        summary = fut.result(timeout=args.duration_sec + args.grace_sec * 2 + 120)
+        try:
+            summary = _await_trial_with_progress(
+                trial_future,
+                total_timeout_sec=args.duration_sec + args.grace_sec * 2 + 120,
+            )
+        except KeyboardInterrupt:
+            # Same bracketing as the normal path: SIGTERM recorders at the
+            # moment we issue the emergency client stop, not in the finally
+            # block after fleet teardown.
+            _request_recorder_stop(recorders)
+            _stop_clients_after_interrupt(
+                fleet, dispatcher, targets, args.grace_sec, trial_future,
+            )
+            raise
+
+        # Reset robots to init now that the trial is over. Safe here because
+        # the dispatcher already ran kill_clients before returning, so
+        # chunx_client is no longer publishing to the joint topic.
+        try:
+            logger.info("sending %d robot(s) to init", len(targets))
+            dispatcher.goto_init(targets).result(timeout=60.0)
+        except Exception as e:
+            logger.warning("post-trial goto init failed: %s", e)
 
         logger.info("trial summary:")
         for stage, results in summary.items():
@@ -265,6 +620,7 @@ def main(args: Args) -> None:
 
         print(f"trial complete: {out.resolve()}")
     finally:
+        _stop_webcam_recorders(recorders)
         fleet.stop()
 
 
