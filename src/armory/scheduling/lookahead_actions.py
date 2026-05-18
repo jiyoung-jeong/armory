@@ -107,7 +107,7 @@ class IncrementalSearch:
 
         root_node = self.snapshot.get_twin()
         self.frontier: deque[tuple[tuple[ScheduledBatch, ...], float, Mirror, int]] = deque(
-            [((), (), 0, root_node)]
+            [((), (), start_time, root_node)]
         )
 
     def is_done(self) -> bool:
@@ -127,12 +127,17 @@ class IncrementalSearch:
 
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
         schedulable_robot_ids = mirror.schedulable_robot_ids()
-        return tuple(
-            itertools.chain.from_iterable(
-                itertools.combinations(schedulable_robot_ids, size)
-                for size in range(self.max_batch_size, 0, -1)
-            )
-        )
+        deadlines = mirror.deadlines()
+        sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
+        # just prefixes
+        return tuple([sorted_robot_ids[:size] for size in range(self.max_batch_size, 0, -1)])
+
+        # return tuple(
+        #     itertools.chain.from_iterable(
+        #         itertools.combinations(schedulable_robot_ids, size)
+        #         for size in range(self.max_batch_size, 0, -1)
+        #     )
+        # )
 
     def _expand(
         self,
@@ -142,6 +147,8 @@ class IncrementalSearch:
         parent_node: Mirror,
     ):
         next_time = gpu_end_time + self.latency_tracker.infer_latency(len(queued_batch))
+        if next_time > self.end_time:
+            return
 
         t0 = time.perf_counter()
         node = parent_node.get_twin()
@@ -154,7 +161,7 @@ class IncrementalSearch:
         node.fast_forward(next_time)
         t3 = time.perf_counter()
 
-        self._evaluate(schedule, gpu_end_time, node)
+        self._evaluate(schedule, next_time, node)
         t4 = time.perf_counter()
 
         node_total = t4 - t0
@@ -174,8 +181,10 @@ class IncrementalSearch:
         for batch in candidate_batches:
             self.frontier.append((schedule, batch, next_time, node))
 
-    def _evaluate(self, schedule: tuple[ScheduledBatch, ...], now: float, node: Mirror) -> None:
-        gpu_time = now - self.start_time
+    def _evaluate(
+        self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
+    ) -> None:
+        gpu_time = gpu_end_time - self.start_time
         if gpu_time <= 0:
             return
         new_times = _action_times(node)
@@ -184,8 +193,8 @@ class IncrementalSearch:
             * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
             for rid in new_times
         )
-        objective = gained / gpu_time
-        # objective = gained
+        # objective = gained / gpu_time
+        objective = gained
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
