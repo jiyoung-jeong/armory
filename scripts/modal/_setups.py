@@ -77,6 +77,7 @@ class Case:
     experiment_name: str
     stream_logs: bool
     stamp: str
+    server_variant: str = ""
 
     def __post_init__(self) -> None:
         # serve.Args has no output_dir; only the client needs it for metrics.
@@ -105,6 +106,8 @@ class Case:
             f"max_batch_size={self.server_args.max_batch_size}",
             f"alpha={self.server_args.alpha}",
         ]
+        if self.server_variant:
+            parts.append(f"server_variant={self.server_variant}")
         return "__".join(parts)
 
     # Run path is separate from artifact path because Modal Volumes don't love
@@ -360,6 +363,7 @@ class CpuMockClient:
 # --------------------------------------------------------------------------
 @app.cls(
     image=cpu_mock_image,
+    cpu=8,
     timeout=2 * 60 * 60,
     memory=16384,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},

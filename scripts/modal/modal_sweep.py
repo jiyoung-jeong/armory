@@ -23,6 +23,14 @@ Examples:
         --seeds 7,42 \\
         --alpha 0.0,0.25,0.5,0.75,1.0 \\
         --output-dir experiments/sweeps/mock
+
+    # Baselines once, lookahead-actions across several server configs.
+    uv run modal run scripts/modal/modal_sweep.py \\
+        --server-config configs/server/lookahead_actions_short_horizon_ratio_0_25.json,configs/server/lookahead_actions_short_horizon_ratio_0_5.json,configs/server/lookahead_actions_short_horizon_ratio_1.json \\
+        --client-config configs/client/mock/heterogeneous_10_1_fast.json \\
+        --schedulers max-batch,round-robin,lookahead-actions \\
+        --seeds 7,8,9 \\
+        --output-dir experiments/sweeps/lookahead_actions_ratios
 """
 
 from __future__ import annotations
@@ -46,6 +54,7 @@ from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
 
 ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit"}
+SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
 
 
 def parse_list_args(value: str, *, cast=str) -> list[Any]:
@@ -63,14 +72,28 @@ def _client_config_paths(path: str) -> list[pathlib.Path]:
     raise SystemExit(f"--client-config must be a JSON/JSONC file or directory: {path}")
 
 
+def _server_config_paths(value: str) -> list[pathlib.Path]:
+    paths = [pathlib.Path(item) for item in parse_list_args(value)]
+    if not paths:
+        raise SystemExit("--server-config is required.")
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        raise SystemExit(f"--server-config file(s) not found: {', '.join(missing)}")
+    return paths
+
+
 def _experiment_name(path: pathlib.Path, *, root: pathlib.Path | None = None) -> str:
     rel = path.relative_to(root) if root is not None else pathlib.Path(path.name)
     return str(rel.with_suffix("")).replace("/", "_")
 
 
+def _server_variant_name(path: pathlib.Path) -> str:
+    return path.stem.removeprefix("lookahead_actions_short_horizon_")
+
+
 def _make_cases(
     *,
-    server_args: serve.Args,
+    server_variants: list[tuple[str, serve.Args]],
     client_args: run_libero.Args,
     experiment_configs: list[tuple[str, dict[str, Any]]],
     stream_logs: bool,
@@ -81,54 +104,68 @@ def _make_cases(
     stamp: str,
 ) -> list[Case]:
     if not max_batch_sizes:
-        max_batch_sizes = [server_args.max_batch_size]
+        max_batch_sizes = [server_variants[0][1].max_batch_size]
     if not alphas:
-        alphas = [server_args.alpha]
+        alphas = [server_variants[0][1].alpha]
 
     cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
-            scheduler_alphas = (
-                alphas if scheduler in ALPHA_SWEEP_SCHEDULERS else [server_args.alpha]
+            selected_server_variants = (
+                server_variants
+                if scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
+                else [("", server_variants[0][1])]
             )
-            for experiment_name, experiment_config in experiment_configs:
-                for max_batch_size in max_batch_sizes:
-                    for alpha in scheduler_alphas:
-                        server = dataclasses.replace(
-                            server_args,
-                            seed=seed,
-                            scheduling_algorithm=scheduler,
-                            max_batch_size=max_batch_size,
-                            alpha=alpha,
-                        )
-                        client = dataclasses.replace(
-                            client_args,
-                            seed=seed,
-                            overwrite=True,
-                        )
-                        cases.append(
-                            Case(
-                                server_args=server,
-                                client_args=client,
-                                experiment_config=experiment_config,
-                                experiment_name=experiment_name,
-                                stream_logs=stream_logs,
-                                stamp=stamp,
+            scheduler_alphas = (
+                alphas
+                if scheduler in ALPHA_SWEEP_SCHEDULERS
+                else [selected_server_variants[0][1].alpha]
+            )
+            for server_variant, server_args in selected_server_variants:
+                for experiment_name, experiment_config in experiment_configs:
+                    for max_batch_size in max_batch_sizes:
+                        for alpha in scheduler_alphas:
+                            server = dataclasses.replace(
+                                server_args,
+                                seed=seed,
+                                scheduling_algorithm=scheduler,
+                                max_batch_size=max_batch_size,
+                                alpha=alpha,
                             )
-                        )
+                            client = dataclasses.replace(
+                                client_args,
+                                seed=seed,
+                                overwrite=True,
+                            )
+                            cases.append(
+                                Case(
+                                    server_args=server,
+                                    client_args=client,
+                                    experiment_config=experiment_config,
+                                    experiment_name=experiment_name,
+                                    stream_logs=stream_logs,
+                                    stamp=stamp,
+                                    server_variant=server_variant,
+                                )
+                            )
     return cases
 
 
 def _case_row(case: Case) -> dict[str, Any]:
+    action_horizon_multipliers = case.server_args.action_horizon_multipliers
     return {
         "stamp": case.stamp,
         "run_id": case.run_id,
         "scheduler": case.server_args.scheduling_algorithm,
+        "server_variant": case.server_variant,
         "experiment": case.experiment_name,
         "num_robots": case.num_robots,
         "seed": case.client_args.seed,
         "max_batch_size": case.server_args.max_batch_size,
         "alpha": case.server_args.alpha,
+        "action_horizon_multipliers": (
+            "" if not action_horizon_multipliers else dict(action_horizon_multipliers)
+        ),
     }
 
 
@@ -146,9 +183,15 @@ def main(
 ) -> None:
     """Submit a scheduler sweep on Modal.
 
+    ``--server-config`` accepts one path or a comma-separated list of paths. When
+    multiple configs are provided, config-sensitive schedulers such as
+    ``lookahead-actions`` run once per config, while ordinary baselines run only
+    against the first config.
+
     ``server_policy='default'`` rewrites the server config's ``policy`` to a real
     ``Default()`` checkpoint (matches sbatch's behavior). Pass ``--server-policy
-    config`` to preserve the policy as written in the JSON (useful for mock runs).
+    config`` to preserve the policy as written in the JSON, or ``--server-policy
+    mock`` to run the same server configs with the lightweight mock policy.
 
     The setup is auto-picked: mock policy + mock env runs colocated on one CPU
     container; everything else runs split (server + client in their own containers,
@@ -156,14 +199,17 @@ def main(
     """
     if not client_config:
         raise SystemExit("--client-config is required.")
-    if server_policy not in {"default", "config"}:
-        raise SystemExit("--server-policy must be 'default' or 'config'.")
+    if server_policy not in {"default", "config", "mock"}:
+        raise SystemExit("--server-policy must be 'default', 'config', or 'mock'.")
 
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
     run_root = pathlib.Path(output_dir) / stamp
     run_root.mkdir(parents=True, exist_ok=True)
 
-    server_args = serve.Args.from_json(server_config)
+    server_paths = _server_config_paths(server_config)
+    server_variants = [
+        (_server_variant_name(path), serve.Args.from_json(path)) for path in server_paths
+    ]
     client_paths = _client_config_paths(client_config)
     config_root = pathlib.Path(client_config) if pathlib.Path(client_config).is_dir() else None
     experiment_configs = [
@@ -172,10 +218,29 @@ def main(
     ]
     client_args = run_libero.Args(experiment_config="", progress_type="logging", overwrite=True)
     if server_policy == "default":
-        server_args = dataclasses.replace(server_args, policy=serve.Default())
+        server_variants = [
+            (variant, dataclasses.replace(server_args, policy=serve.Default()))
+            for variant, server_args in server_variants
+        ]
+    elif server_policy == "mock":
+        server_variants = [
+            (
+                variant,
+                dataclasses.replace(
+                    server_args,
+                    policy=serve.Mock(
+                        action_horizon=20,
+                        action_dim=7,
+                        model=server_args.model.value,
+                        gpu="l40s",
+                    ),
+                ),
+            )
+            for variant, server_args in server_variants
+        ]
 
     cases = _make_cases(
-        server_args=server_args,
+        server_variants=server_variants,
         client_args=client_args,
         experiment_configs=experiment_configs,
         stream_logs=stream_logs,

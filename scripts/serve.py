@@ -154,7 +154,7 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
             "action_horizon_steps": action_horizon_steps,
             "control_hz": args.lookahead_control_hz,
         }
-    if args.scheduling_algorithm == "lookahead-actions":
+    if args.scheduling_algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
         return {
             "action_horizon_multipliers": args.action_horizon_multipliers,
         }

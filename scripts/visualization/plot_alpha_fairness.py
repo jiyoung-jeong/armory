@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import pathlib
 
 BASELINE_SCHEDULERS = (
@@ -12,6 +13,7 @@ BASELINE_SCHEDULERS = (
     "lookahead-actions",
 )
 DYNAMIC_SCHEDULERS = ("dynamic-action", "action-deficit", "starvation-fair")
+LOOKAHEAD_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
 
 BASELINE_STYLE = {
     "max-batch": {"marker": "o", "color": "#1f77b4"},
@@ -20,6 +22,15 @@ BASELINE_STYLE = {
     "round-robin": {"marker": "D", "color": "#d62728"},
     "lookahead-actions": {"marker": "o", "color": "#9467bd"},
 }
+LOOKAHEAD_COLORS = (
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
+    "#ff7f0e",
+)
 DYNAMIC_STYLE = {
     "dynamic-action": {"marker": "o", "line_color": "0.45"},
     "action-deficit": {"marker": "X", "line_color": "0.20"},
@@ -44,6 +55,78 @@ def _batch_groups(df):
     return list(df.groupby("max_batch_size", dropna=False))
 
 
+def _has_value(value) -> bool:
+    try:
+        if value != value:
+            return False
+    except TypeError:
+        pass
+    return value is not None and str(value).strip() != ""
+
+
+def _ratio_text(value) -> str | None:
+    if not _has_value(value):
+        return None
+    text = str(value).strip()
+    if text.startswith("ratio_"):
+        text = text.removeprefix("ratio_").replace("_", ".")
+        return f"ratio={text}"
+    return text.replace("_", ".")
+
+
+def _ratio_from_multipliers(value) -> str | None:
+    if not _has_value(value):
+        return None
+    try:
+        parsed = ast.literal_eval(str(value))
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(parsed, dict) or len(parsed) < 2:
+        return None
+    multipliers = {int(k): float(v) for k, v in parsed.items()}
+    horizons = sorted(multipliers)
+    base = multipliers[horizons[-1]]
+    if base == 0:
+        return None
+    ratio = multipliers[horizons[0]] / base
+    return f"ratio={ratio:g}"
+
+
+def _lookahead_label(sched: str, sub) -> str:
+    if "server_variant" in sub.columns:
+        variants = [v for v in sub["server_variant"].dropna().unique() if _has_value(v)]
+        if variants:
+            ratio = _ratio_text(variants[0])
+            if ratio is not None:
+                return f"{sched} ({ratio})"
+    if "action_horizon_multipliers" in sub.columns:
+        for value in sub["action_horizon_multipliers"].dropna().unique():
+            ratio = _ratio_from_multipliers(value)
+            if ratio is not None:
+                return f"{sched} ({ratio})"
+    return sched
+
+
+def _baseline_groups_for_scheduler(sched: str, df):
+    group_cols = []
+    if "max_batch_size" in df.columns and len(df["max_batch_size"].dropna().unique()) > 1:
+        group_cols.append("max_batch_size")
+    if sched in LOOKAHEAD_SCHEDULERS:
+        if "server_variant" in df.columns and any(_has_value(v) for v in df["server_variant"]):
+            group_cols.append("server_variant")
+        elif (
+            "action_horizon_multipliers" in df.columns
+            and len(
+                [v for v in df["action_horizon_multipliers"].dropna().unique() if _has_value(v)]
+            )
+            > 1
+        ):
+            group_cols.append("action_horizon_multipliers")
+    if not group_cols:
+        return [(None, df)]
+    return list(df.groupby(group_cols, dropna=False))
+
+
 def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
     """Scatter (mean_starvation, y_col) onto ``ax`` with baselines + alpha curve."""
     import numpy as np  # noqa: PLC0415
@@ -53,15 +136,24 @@ def _plot_one_yaxis(ax, sub, *, y_col: str, y_label: str, title: str):
         sub_b = sub[sub["scheduler"] == sched].dropna(subset=["mean_starvation", y_col])
         if sub_b.empty:
             continue
-        for max_batch_size, sub_batch in _batch_groups(sub_b):
+        for group_index, (_group_key, sub_batch) in enumerate(
+            _baseline_groups_for_scheduler(sched, sub_b)
+        ):
             x = float(sub_batch["mean_starvation"].mean())
             y = float(sub_batch[y_col].mean())
             xerr = float(sub_batch["mean_starvation"].std(ddof=0)) if len(sub_batch) > 1 else 0.0
             yerr = float(sub_batch[y_col].std(ddof=0)) if len(sub_batch) > 1 else 0.0
-            style = BASELINE_STYLE[sched]
-            label = sched
-            if max_batch_size is not None:
-                label = f"{sched} (B={_batch_label(max_batch_size)})"
+            style = dict(BASELINE_STYLE[sched])
+            label = _lookahead_label(sched, sub_batch) if sched in LOOKAHEAD_SCHEDULERS else sched
+            batch_varies = (
+                "max_batch_size" in sub_b.columns
+                and len(sub_b["max_batch_size"].dropna().unique()) > 1
+            )
+            if batch_varies:
+                max_batch_size = sub_batch["max_batch_size"].iloc[0]
+                label = f"{label} (B={_batch_label(max_batch_size)})"
+            if sched in LOOKAHEAD_SCHEDULERS:
+                style["color"] = LOOKAHEAD_COLORS[group_index % len(LOOKAHEAD_COLORS)]
             ax.errorbar(
                 x,
                 y,

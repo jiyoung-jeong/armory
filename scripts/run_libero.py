@@ -499,9 +499,17 @@ def _normalize_metrics_times(history: dict) -> dict:
         d["next_server_available"] = shift(d.get("next_server_available", 0.0))
         d["deadlines"] = {k: shift(v) for k, v in d.get("deadlines", {}).items()}
         notes = d.get("notes")
-        if isinstance(notes, dict) and "next_server_available" in notes:
+        if isinstance(notes, dict):
             notes = dict(notes)
-            notes["next_server_available"] = shift(notes["next_server_available"])
+            if "next_server_available" in notes:
+                notes["next_server_available"] = shift(notes["next_server_available"])
+            phases = notes.get("phases")
+            if isinstance(phases, list):
+                notes["phases"] = [
+                    {**ph, "start": shift(ph.get("start", 0.0)), "end": shift(ph.get("end", 0.0))}
+                    for ph in phases
+                    if isinstance(ph, dict)
+                ]
             d["notes"] = notes
         normalized_decisions.append(d)
     history["scheduler_decisions"] = normalized_decisions
