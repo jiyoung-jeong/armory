@@ -127,17 +127,22 @@ class IncrementalSearch:
 
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
         schedulable_robot_ids = mirror.schedulable_robot_ids()
-        deadlines = mirror.deadlines()
-        sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
-        # just prefixes
-        return tuple([sorted_robot_ids[:size] for size in range(self.max_batch_size, 0, -1)])
-
+        # deadlines = mirror.deadlines()
+        # sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
+        # # just prefixes
         # return tuple(
-        #     itertools.chain.from_iterable(
-        #         itertools.combinations(schedulable_robot_ids, size)
-        #         for size in range(self.max_batch_size, 0, -1)
-        #     )
+        #     [
+        #         sorted_robot_ids[:size]
+        #         for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+        #     ]
         # )
+
+        return tuple(
+            itertools.chain.from_iterable(
+                itertools.combinations(schedulable_robot_ids, size)
+                for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
+            )
+        )
 
     def _expand(
         self,
@@ -193,8 +198,8 @@ class IncrementalSearch:
             * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
             for rid in new_times
         )
-        # objective = gained / gpu_time
-        objective = gained
+        objective = gained / gpu_time
+        # objective = gained
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
@@ -221,8 +226,8 @@ class LookaheadActionsScheduler(RequestScheduler):
         max_batch_size: int = 1,
         *,
         horizon: float = 1.0,
-        max_depth: int = 6,
-        max_in_flight: int = 5,
+        max_depth: int = 3,
+        max_in_flight: int = 3,
         step_budget_nodes: int = 8,
         scheduling_buffer: float = 0.05,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,
