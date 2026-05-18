@@ -18,7 +18,7 @@ class LatencyTracker(ABC):
 
     def __init__(self) -> None:
         self._observation_latency: dict[str, float] = {}
-        self._infer_latency: dict[int, float] = {}
+        self._infer_latency: dict[int, float] = {0: 0.0}
         self._action_latency: dict[str, float] = {}
 
     @abstractmethod

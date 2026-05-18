@@ -86,12 +86,23 @@ class RequestScheduler(ABC):
         )
 
         batches, notes = self.get_next_batches(candidates)
+        post_return = time.time()
         logger.debug(
             "schedule stage=get_next_batches_done batches=%d mode=%s",
             len(batches),
             notes.get("mode") if isinstance(notes, dict) else None,
         )
 
+        dispatch_start = time.time()
+        # Phases recorded by the inner scheduler use timestamps captured before
+        # `return`. The window between the last in-function phase and now covers
+        # function return + local-variable dealloc (which can be slow when the
+        # search held large frontiers) + this logger.debug. Surface it.
+        if isinstance(notes, dict):
+            phases = notes.setdefault("phases", [])
+            last_end = max((float(p.get("end", 0.0)) for p in phases), default=0.0)
+            if 0.0 < last_end < post_return:
+                phases.append({"name": "return_overhead", "start": last_end, "end": post_return})
         decisions: list[SchedulerDecision] = []
         for batch in batches:
             batch_id = next(self.next_batch_id)
@@ -123,6 +134,10 @@ class RequestScheduler(ABC):
                     notes=dict(notes),
                 )
             )
+
+        if batches and isinstance(notes, dict):
+            phases = notes.setdefault("phases", [])
+            phases.append({"name": "dispatch", "start": dispatch_start, "end": time.time()})
 
         return decisions
 

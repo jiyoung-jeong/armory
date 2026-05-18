@@ -13,6 +13,30 @@ from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Sc
 ROBOT_ID = "test"
 
 
+class _StubLatencyTracker(LatencyTracker):
+    """Constant-latency tracker for testing mirror timing."""
+
+    def __init__(
+        self, *, observation: float = 0.0, infer: float = 0.0, action: float = 0.0
+    ) -> None:
+        super().__init__()
+        self._observation = observation
+        self._action = action
+        self._infer = infer
+
+    def _update_measurement(self, d: dict, key: object, value: float) -> None:  # noqa: ARG002
+        pass
+
+    def observation_latency(self, robot_id: str) -> float:  # noqa: ARG002
+        return self._observation
+
+    def infer_latency(self, batch_size: int) -> float:  # noqa: ARG002
+        return self._infer
+
+    def action_latency(self, robot_id: str) -> float:  # noqa: ARG002
+        return self._action
+
+
 def _make_request(
     observation_step: int,
     action_index_start: int,
@@ -40,11 +64,10 @@ def _make_request(
 def _make_robot(scenario: Scenario) -> Robot:
     """Create a Robot seeded with the initial obs=0 control step and acked chunks."""
     horizon = scenario.chunks[0].max_execution_horizon
-    robot = Robot(CONTROL_HZ, 0, horizon)
+    robot = Robot(ROBOT_ID, CONTROL_HZ, 0, horizon, _StubLatencyTracker())
     robot.step(_make_request(0, 0, 0.0, horizon))
     for chunk in scenario.chunks:
-        robot.queue_chunk(chunk)
-        robot.update_chunk(replace(chunk, origin="confirmed"))
+        robot.queue_chunk(replace(chunk, origin="confirmed"))
     return robot
 
 
@@ -89,8 +112,8 @@ def test_deadline(scenario: Scenario) -> None:
 
 def _seeded_mirror(scenario: Scenario) -> Mirror:
     horizon = scenario.chunks[0].max_execution_horizon
-    mirror = Mirror()
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror = Mirror(_StubLatencyTracker())
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
     return mirror
 
 
@@ -137,10 +160,10 @@ def test_mirror_fast_forward_multiple_robots() -> None:
     from tests.scheduling._cases import LONG_RUN
 
     rids = ["a", "b"]
-    mirror = Mirror()
+    mirror = Mirror(_StubLatencyTracker())
     horizon = LONG_RUN.chunks[0].max_execution_horizon
     for rid in rids:
-        mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
+        mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid))
 
     for chunk in LONG_RUN.chunks:
         # Send the same chunk to both robots so they stay in lockstep.
@@ -157,10 +180,10 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     """A robot not named in the chunk list still gets stepped forward."""
 
     rids = ["a", "b"]
-    mirror = Mirror()
+    mirror = Mirror(_StubLatencyTracker())
     horizon = LONG_RUN.chunks[0].max_execution_horizon
     for rid in rids:
-        mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid), CONTROL_HZ)
+        mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id=rid))
     # Only "a" gets the chunk, but both should advance.
     mirror.robots["a"].queue_chunk(LONG_RUN.chunks[0])
     mirror.fast_forward(LONG_RUN.chunks[0].arrival_time + EPS)
@@ -171,35 +194,13 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     assert all(s.action_step is None for s in mirror.robots["b"].steps)
 
 
-class _StubLatencyTracker(LatencyTracker):
-    """Constant-latency tracker for testing get_chunks / update_completion."""
-
-    def __init__(self, *, observation: float, infer: float, action: float) -> None:
-        super().__init__()
-        self._observation = observation
-        self._action = action
-        self._infer = infer
-
-    def _update_measurement(self, d: dict, key: object, value: float) -> None:  # noqa: ARG002
-        pass
-
-    def observation_latency(self, robot_id: str) -> float:  # noqa: ARG002
-        return self._observation
-
-    def infer_latency(self, batch_size: int) -> float:  # noqa: ARG002
-        return self._infer
-
-    def action_latency(self, robot_id: str) -> float:  # noqa: ARG002
-        return self._action
-
-
-def test_mirror_checkpoint_roundtrip() -> None:
-    """Mutate via fast_forward, restore from checkpoint, state should match pre-mutation."""
+def test_mirror_twin_roundtrip() -> None:
+    """A twin captures independent mirror state before later mutations."""
     horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror = Mirror()
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror = Mirror(_StubLatencyTracker())
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
 
-    ckpt = mirror.checkpoint()
+    twin = mirror.get_twin()
     pre_steps = list(mirror.robots[ROBOT_ID].steps)
     pre_chunks = list(mirror.robots[ROBOT_ID].chunks)
 
@@ -211,44 +212,39 @@ def test_mirror_checkpoint_roundtrip() -> None:
     assert len(mirror.robots[ROBOT_ID].steps) > len(pre_steps)
     assert len(mirror.robots[ROBOT_ID].chunks) > len(pre_chunks)
 
-    mirror.restore(ckpt)
-    assert mirror.robots[ROBOT_ID].steps == pre_steps
-    assert mirror.robots[ROBOT_ID].chunks == pre_chunks
+    assert twin.robots[ROBOT_ID].steps == pre_steps
+    assert twin.robots[ROBOT_ID].chunks == pre_chunks
 
 
-def test_mirror_checkpoint_drops_robots_added_after() -> None:
-    """A robot added after the checkpoint is dropped on restore."""
+def test_mirror_twin_does_not_include_robots_added_after() -> None:
+    """A twin does not observe robots added after it was created."""
     horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror = Mirror()
-    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="a"), CONTROL_HZ)
-    ckpt = mirror.checkpoint()
-    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="b"), CONTROL_HZ)
+    mirror = Mirror(_StubLatencyTracker())
+    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="a"))
+    twin = mirror.get_twin()
+    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="b"))
 
     assert "b" in mirror.robots
-    mirror.restore(ckpt)
-    assert "b" not in mirror.robots
-    assert "a" in mirror.robots
+    assert "b" not in twin.robots
+    assert "a" in twin.robots
 
 
-def test_mirror_checkpoint_restores_divergent_branch_contents() -> None:
-    """Restore must recover branch contents, not just truncate lists to branch lengths."""
+def test_mirror_twin_preserves_divergent_branch_contents() -> None:
+    """A twin preserves branch contents independent of later mirror mutations."""
     horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror = Mirror()
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror = Mirror(_StubLatencyTracker())
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
     mirror.robots[ROBOT_ID].queue_chunk(LONG_RUN.chunks[0])
-    parent_ckpt = mirror.checkpoint()
 
     branch_a_chunk = replace(LONG_RUN.chunks[1], chunk_id=101, action_index_start=5)
     mirror.robots[ROBOT_ID].queue_chunk(branch_a_chunk)
-    branch_a_ckpt = mirror.checkpoint()
+    branch_a_twin = mirror.get_twin()
 
-    mirror.restore(parent_ckpt)
+    mirror.robots[ROBOT_ID].chunks = [LONG_RUN.chunks[0]]
     branch_b_chunk = replace(LONG_RUN.chunks[1], chunk_id=202, action_index_start=4)
     mirror.robots[ROBOT_ID].queue_chunk(branch_b_chunk)
 
-    mirror.restore(branch_a_ckpt)
-
-    assert mirror.robots[ROBOT_ID].chunks == [LONG_RUN.chunks[0], branch_a_chunk]
+    assert branch_a_twin.robots[ROBOT_ID].chunks == [LONG_RUN.chunks[0], branch_a_chunk]
 
 
 def test_mirror_update_completion_refines_arrival() -> None:
@@ -256,7 +252,7 @@ def test_mirror_update_completion_refines_arrival() -> None:
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
     mirror = Mirror(tracker)
     horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
     chunk = LONG_RUN.chunks[0]
     mirror.robots[ROBOT_ID].queue_chunk(chunk)
     mirror.fast_forward(chunk.arrival_time + EPS)
@@ -295,8 +291,8 @@ def test_mirror_update_completion_refines_arrival() -> None:
 def test_mirror_confirm_chunk_by_chunk_id() -> None:
     """confirm_chunk matches by chunk_id and sets arrival_time=ack.receive_time."""
     horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror = Mirror()
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror = Mirror(_StubLatencyTracker())
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
     chunk = LONG_RUN.chunks[1]  # chunk_id=1
     mirror.robots[ROBOT_ID].queue_chunk(chunk)
     mirror.fast_forward(chunk.arrival_time + EPS)
@@ -330,7 +326,7 @@ def test_mirror_get_chunks_basic() -> None:
     tracker = _StubLatencyTracker(observation=0.05, infer=0.1, action=0.02)
     mirror = Mirror(tracker)
     horizon = 5
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon), CONTROL_HZ)
+    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
     # Step the snapshot forward so a control step exists before the obs cutoff.
     mirror.fast_forward(2.0)
 

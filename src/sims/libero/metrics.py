@@ -1938,21 +1938,65 @@ def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
                 alpha=0.9,
             )
 
+    PHASE_COLORS = {
+        "setup": "#bdbdbd",
+        "gc": "#7b3294",
+        "search_init": "#fdae61",
+        "search_step": "#4292c6",
+        "search": "#4292c6",
+        "postprocess": "#9ecae1",
+        "return_overhead": "#d62728",
+        "greedy": "#fc8d59",
+        "dispatch": "#41ab5d",
+    }
     if has_decisions:
-        # Whisker = decision duration; marker = decision outcome (green=dispatched, red=skipped).
-        scheduled_t, scheduled_dur = [], []
-        skipped_t, skipped_dur = [], []
+        # If notes include per-phase records, draw colored phase segments on the
+        # Decisions lane. Otherwise fall back to a flat whisker per decision.
+        # Dedupe by started_at — multi-batch calls produce one decision per
+        # batch but share a single phases list.
+        seen_phase_calls: set[float] = set()
+        flat_scheduled_t, flat_scheduled_dur = [], []
+        flat_skipped_t, flat_skipped_dur = [], []
+        phase_kinds_seen: set[str] = set()
         for d in decisions:
+            phases = (
+                ((d.get("notes") or {}).get("phases")) if isinstance(d.get("notes"), dict) else None
+            )
             t = float(d["started_at"]) - t0
             dur = float(d.get("duration") or 0.0)
-            if d.get("batch_id") is not None:
-                scheduled_t.append(t)
-                scheduled_dur.append(dur)
+            if phases:
+                started_at = float(d["started_at"])
+                if started_at in seen_phase_calls:
+                    continue
+                seen_phase_calls.add(started_at)
+                for ph in phases:
+                    name = ph.get("name", "")
+                    p_start = float(ph.get("start", 0.0)) - t0
+                    p_end = float(ph.get("end", 0.0)) - t0
+                    if p_end <= p_start:
+                        continue
+                    phase_kinds_seen.add(name)
+                    # search_step gets a thicker edge so consecutive tiles
+                    # render as visibly distinct segments.
+                    edge_lw = 0.6 if name == "search_step" else 0.2
+                    ax.barh(
+                        decision_y,
+                        p_end - p_start,
+                        left=p_start,
+                        height=0.5,
+                        color=PHASE_COLORS.get(name, "#888888"),
+                        edgecolor="black",
+                        linewidth=edge_lw,
+                        alpha=0.9,
+                    )
+            elif d.get("batch_id") is not None:
+                flat_scheduled_t.append(t)
+                flat_scheduled_dur.append(dur)
             else:
-                skipped_t.append(t)
-                skipped_dur.append(dur)
+                flat_skipped_t.append(t)
+                flat_skipped_dur.append(dur)
 
-        for t, dur in zip(scheduled_t, scheduled_dur):
+        for t, dur in zip(flat_scheduled_t, flat_scheduled_dur):
             ax.plot(
                 [t, t + dur],
                 [decision_y, decision_y],
@@ -1961,7 +2005,7 @@ def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
                 alpha=0.85,
                 solid_capstyle="butt",
             )
-        for t, dur in zip(skipped_t, skipped_dur):
+        for t, dur in zip(flat_skipped_t, flat_skipped_dur):
             ax.plot(
                 [t, t + dur],
                 [decision_y, decision_y],
@@ -1970,6 +2014,9 @@ def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
                 alpha=0.55,
                 solid_capstyle="butt",
             )
+        # Keep variable names from changing for the marker code below.
+        scheduled_t, _ = flat_scheduled_t, flat_scheduled_dur
+        skipped_t, _ = flat_skipped_t, flat_skipped_dur
         if scheduled_t:
             ax.scatter(
                 scheduled_t,
@@ -2044,6 +2091,32 @@ def generate_server_batch_gantt_plot(output_path: pathlib.Path) -> None:
             ax.legend(loc="lower right", fontsize=8, frameon=False)
     elif has_decisions:
         ax.legend(loc="lower right", fontsize=8, frameon=False)
+
+    if has_decisions and phase_kinds_seen:
+        phase_handles = [
+            Patch(facecolor=PHASE_COLORS.get(name, "#888888"), label=name)
+            for name in [
+                "setup",
+                "gc",
+                "search_init",
+                "search_step",
+                "search",
+                "postprocess",
+                "return_overhead",
+                "greedy",
+                "dispatch",
+            ]
+            if name in phase_kinds_seen
+        ]
+        phase_legend = ax.legend(
+            handles=phase_handles,
+            loc="upper left",
+            fontsize=8,
+            frameon=False,
+            title="Scheduler phases",
+            title_fontsize=8,
+        )
+        ax.add_artist(phase_legend)
 
     fig.tight_layout()
 

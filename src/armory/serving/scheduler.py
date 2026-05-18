@@ -19,6 +19,7 @@ from armory.scheduling.baselines import (
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
+from armory.scheduling.lookahead_actions_cpp import LookaheadActionsCppScheduler
 from armory.scheduling.starvation_fair import StarvationFairScheduler
 from armory.serving.schemas import (
     AckNotification,
@@ -42,6 +43,7 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "starvation-fair": StarvationFairScheduler,
     "lookahead": LookaheadScheduler,
     "lookahead-actions": LookaheadActionsScheduler,
+    "lookahead-actions-cpp": LookaheadActionsCppScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,
 }

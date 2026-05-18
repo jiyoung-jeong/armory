@@ -120,4 +120,4 @@ class DynamicActionScheduler(RequestScheduler):
             ** self._alpha
             for r in batch
         )
-        return (fits, weighted_priority / infer_latency, base, -earliest)
+        return (weighted_priority / infer_latency, base, -earliest)

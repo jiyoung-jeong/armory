@@ -77,11 +77,11 @@ class SimpleMirror:
         self.last_batch_completed_time = 0.0
         self.chunk_id_counter = itertools.count(1)
 
-    def receive_request(self, request: SlotRequest, control_hz: float) -> bool:
+    def receive_request(self, request: SlotRequest) -> bool:
         robot = self.robots.get(request.robot_id)
         if robot is None:
             self.robots[request.robot_id] = _Robot(
-                control_hz=control_hz,
+                control_hz=request.control_hz,
                 max_execution_horizon=request.max_execution_horizon,
                 deadline=request.request_timestamp,
             )
