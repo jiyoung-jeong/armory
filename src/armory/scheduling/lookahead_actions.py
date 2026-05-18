@@ -115,9 +115,11 @@ class IncrementalSearch:
         self.max_node_time: float = 0.0
 
         root_node = self.snapshot.get_twin()
-        self.frontier: deque[tuple[tuple[ScheduledBatch, ...], float, Mirror, int]] = deque(
-            [((), (), start_time, root_node)]
-        )
+        self.frontier: deque[
+            tuple[tuple[ScheduledBatch, ...], tuple[RobotID, ...], float, Mirror]
+        ] = deque()
+        for batch in self._candidate_batches(root_node):
+            self.frontier.append(((), batch, start_time, root_node))
 
     def is_done(self) -> bool:
         return not self.frontier
@@ -140,10 +142,8 @@ class IncrementalSearch:
         sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
         # just prefixes
         return tuple(
-            [
-                sorted_robot_ids[:size]
-                for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
-            ]
+            tuple(sorted_robot_ids[:size])
+            for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
         )
 
         # return tuple(
@@ -208,6 +208,9 @@ class IncrementalSearch:
             for rid in new_times
         )
         objective = gained / gpu_time
+        logger.debug(
+            "evaluate: schedule=%s objective=%.4f", [b.robot_ids for b in schedule], objective
+        )
         # objective = gained
         if objective > self.best_objective:
             self.best_objective = objective
