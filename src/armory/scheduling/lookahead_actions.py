@@ -85,12 +85,15 @@ class IncrementalSearch:
         horizon: float,
         max_depth: int = 5,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,
+        starvation_alpha: float = 0.5,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = start_time
         self.end_time = start_time + horizon
         self.max_depth = max_depth
-        self.action_horizon_multipliers = action_horizon_multipliers
+        self.starvation_alpha = starvation_alpha
+        # NOTE: hack
+        self.action_horizon_multipliers = {10: 100.0, 20: 1.0}
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -138,20 +141,20 @@ class IncrementalSearch:
 
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
         schedulable_robot_ids = mirror.schedulable_robot_ids()
-        deadlines = mirror.deadlines()
-        sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
-        # just prefixes
-        return tuple(
-            tuple(sorted_robot_ids[:size])
-            for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
-        )
-
+        # deadlines = mirror.deadlines()
+        # sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
+        # # just prefixes
         # return tuple(
-        #     itertools.chain.from_iterable(
-        #         itertools.combinations(schedulable_robot_ids, size)
-        #         for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
-        #     )
+        #     tuple(sorted_robot_ids[:size])
+        #     for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
         # )
+
+        return tuple(
+            itertools.chain.from_iterable(
+                itertools.combinations(schedulable_robot_ids, size)
+                for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
+            )
+        )
 
     def _expand(
         self,
@@ -195,42 +198,80 @@ class IncrementalSearch:
         for batch in candidate_batches:
             self.frontier.append((schedule, batch, next_time, node))
 
+    # def _evaluate(
+    #     self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
+    # ) -> None:
+    #     # Clone before walking to horizon — _expand reuses ``node`` for child
+    #     # expansion, so we must not advance its time here.
+    #     eval_node = node.get_twin()
+    #     eval_node.fast_forward(self.end_time)
+    #     starvation_times = _starvation_times(eval_node)
+    #     # logger.debug(
+    #     #     "multipliers=%s",
+    #     #     [
+    #     #         self.action_horizon_multipliers.get(eval_node.robots[rid].max_execution_horizon)
+    #     #         for rid in eval_node.robots
+    #     #     ],
+    #     # )
+    #     objective = -sum(
+    #         self.action_horizon_multipliers.get(eval_node.robots[rid].max_execution_horizon, 1.0)
+    #         * starvation_times[rid]
+    #         for rid in starvation_times
+    #     )
+    #     logger.debug(
+    #         "evaluate: schedule=%s objective=%.4f", [b.robot_ids for b in schedule], objective
+    #     )
+    #     if objective > self.best_objective:
+    #         self.best_objective = objective
+    #         self.best_schedule = list(schedule)
+    #         logger.debug(
+    #             "new best: depth=%d objective=%.4f schedule=%s",
+    #             len(schedule),
+    #             objective,
+    #             [b.robot_ids for b in schedule],
+    #         )
+
     def _evaluate(
         self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
     ) -> None:
-        gpu_time = gpu_end_time - self.start_time
-        if gpu_time <= 0:
+        # Alpha-blended starvation: alpha=1 minimizes worst-case (max) starved
+        # steps; alpha=0 minimizes average starved steps; in between is convex
+        # combination. Walked to ``end_time`` on a clone so child expansion in
+        # _expand still sees the un-advanced node.
+        self.starvation_alpha = 1.0
+        eval_node = node.get_twin()
+        eval_node.fast_forward(self.end_time)
+        weighted = [robot.starved_steps() for robot in eval_node.robots.values()]
+        if not weighted:
             return
-        new_times = _action_times(node)
-        gained = sum(
-            self.action_horizon_multipliers.get(node.robots[rid].max_execution_horizon, 1.0)
-            * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
-            for rid in new_times
-        )
-        objective = gained / gpu_time
-        logger.debug(
-            "evaluate: schedule=%s objective=%.4f", [b.robot_ids for b in schedule], objective
-        )
-        # objective = gained
+        worst = max(weighted)
+        average = sum(weighted) / len(weighted)
+        objective = -(self.starvation_alpha * worst + (1.0 - self.starvation_alpha) * average)
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
             logger.debug(
-                "new best: depth=%d objective=%.4f schedule=%s",
+                "new best: depth=%d objective=%.4f worst=%.2f avg=%.2f schedule=%s",
                 len(schedule),
                 objective,
+                worst,
+                average,
                 [b.robot_ids for b in schedule],
             )
 
     # def _evaluate(
     #     self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
     # ) -> None:
-    #     new_starvation_times = _starvation_times(node)
-    #     objective = -sum(
-    #         self.action_multipliers.get(rid, 1.0)
-    #         * (new_starvation_times[rid] - self.initial_starvation_times.get(rid, 0.0))
-    #         for rid in new_starvation_times
+    #     gpu_time = gpu_end_time - self.start_time
+    #     if gpu_time <= 0:
+    #         return
+    #     new_times = _action_times(node)
+    #     gained = sum(
+    #         self.action_horizon_multipliers.get(node.robots[rid].max_execution_horizon, 1.0)
+    #         * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
+    #         for rid in new_times
     #     )
+    #     objective = gained / gpu_time
     #     if objective > self.best_objective:
     #         self.best_objective = objective
     #         self.best_schedule = list(schedule)
@@ -262,6 +303,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         step_budget_nodes: int = 8,
         scheduling_buffer: float = 0.05,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,
+        starvation_alpha: float = 0.5,
     ) -> None:
         super().__init__(batch_queue, max_batch_size)
         self.horizon = horizon
@@ -270,6 +312,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
+        self.starvation_alpha = starvation_alpha
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
@@ -380,6 +423,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.horizon,
             self.max_depth,
             self.action_horizon_multipliers,
+            self.starvation_alpha,
         )
         search_started_at = time.time()
         _phase("search_init", gc_end, search_started_at)
