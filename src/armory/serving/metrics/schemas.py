@@ -21,9 +21,10 @@ class RequestRecord:
     request_id: int
     observation_step: int
     action_index_start: int
-    execution_horizon: int
+    max_execution_horizon: int
     request_timestamp: float  # client: when request was created
     server_arrival_time: float  # server: when observation arrived
+    min_execution_horizon: int = 0
 
 
 @dataclass
@@ -36,7 +37,8 @@ class ResponseRecord:
     receive_time: float = 0.0  # client: ResponseAck.receive_time
     execution_start_step: int = 0  # client: ResponseAck.execution_start_step
     first_executed_index: int = 0  # client: index within chunk where execution started
-    execution_horizon: int = 0  # client: how many actions were in the response chunk
+    min_execution_horizon: int = 0  # client: minimum action advance before re-serving
+    max_execution_horizon: int = 0  # client: how many actions were in the response chunk
 
     def __post_init__(self) -> None:
         if isinstance(self.request, dict):
@@ -110,9 +112,9 @@ class Episode:
         actions_left_history = np.zeros(self.num_steps, dtype=np.int32)
         for response in self.responses:
             # At execution_start_step the robot is on action first_executed_index of the chunk,
-            # so it has (execution_horizon - first_executed_index) actions remaining, counting
+            # so it has (max_execution_horizon - first_executed_index) actions remaining, counting
             # down by 1 each step until the chunk is exhausted or the episode ends.
-            remaining = response.execution_horizon - response.first_executed_index
+            remaining = response.max_execution_horizon - response.first_executed_index
             execution_end_step = min(response.execution_start_step + remaining, self.num_steps)
             n = execution_end_step - response.execution_start_step
             actions_left = np.arange(remaining, remaining - n, -1)

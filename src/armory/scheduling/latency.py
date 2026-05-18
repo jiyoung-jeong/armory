@@ -18,7 +18,7 @@ class LatencyTracker(ABC):
 
     def __init__(self) -> None:
         self._observation_latency: dict[str, float] = {}
-        self._infer_latency: dict[int, float] = {}
+        self._infer_latency: dict[int, float] = {0: 0.0}
         self._action_latency: dict[str, float] = {}
 
     @abstractmethod
@@ -58,6 +58,10 @@ class LatencyTracker(ABC):
     def clear(self, robot_id: RobotID) -> None:
         self._observation_latency.pop(robot_id, None)
         self._action_latency.pop(robot_id, None)
+
+    def clear_all(self) -> None:
+        self._observation_latency.clear()
+        self._action_latency.clear()
 
     def __repr__(self) -> str:
         return f"LatencyTracker(observation_latency={self._observation_latency}, infer_latency={self._infer_latency}, action_latency={self._action_latency})"

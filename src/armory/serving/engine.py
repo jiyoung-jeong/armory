@@ -56,7 +56,6 @@ class GpuWorker:
         gpu_out_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
-        min_execution_horizon: int = 10,
     ) -> None:
         self.policy_factory = policy_factory
         self.max_batch_size = max_batch_size
@@ -66,7 +65,6 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
-        self._min_execution_horizon = min_execution_horizon
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -94,7 +92,6 @@ class GpuWorker:
         # Per-robot inference state — initialised here (post-fork, not in __init__)
         self._latency_tracker = EMALatencyTracker()
         self._last_served_action_index: dict[RobotID, int] = {}
-        self._prev_infer_start: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
 
         self._profile_and_send(policy, result_sock)
@@ -114,7 +111,13 @@ class GpuWorker:
             slot_requests = []
             for sr, chunk_id in zip(slot_reqs, batch.chunk_ids, strict=True):
                 sd = self.slots.read(sr.slot_index)
-                if self._should_serve(sr, sd):
+                if (
+                    sr.is_padding
+                    or sr.robot_id not in self._last_served_action_index
+                    or sr.can_serve(
+                        self._last_served_action_index[sr.robot_id], sd.action_index_start
+                    )
+                ):
                     slot_datas.append(sd)
                     chunk_ids.append(chunk_id)
                     slot_requests.append(sr)
@@ -156,7 +159,8 @@ class GpuWorker:
                     observation_step=sd.observation_step,
                     action_index_start=sd.action_index_start,
                     request_timestamp=sd.request_timestamp,
-                    execution_horizon=sd.execution_horizon,
+                    min_execution_horizon=sd.min_execution_horizon,
+                    max_execution_horizon=sd.max_execution_horizon,
                     actions=action_dict["actions"],
                     noise=action_dict["noise"],
                     server_arrival_time=sd.arrival_timestamp,
@@ -252,9 +256,9 @@ class GpuWorker:
     ) -> RTCParams | VlashParams | TrainTimeRTCParams | None:
         if (
             slot_data.infer_type == InferType.INFERENCE_TIME_RTC
-            and slot_data.robot_id in self._prev_infer_start
+            and slot_data.robot_id in self._last_served_action_index
         ):
-            s = slot_data.action_index_start - self._prev_infer_start[slot_data.robot_id]
+            s = slot_data.action_index_start - self._last_served_action_index[slot_data.robot_id]
             d = (
                 self._latency_tracker.total_latency(slot_data.robot_id, batch_size)
                 * slot_data.control_hz
@@ -263,13 +267,6 @@ class GpuWorker:
                 prev_action=self._prev_actions[slot_data.robot_id], s_param=s, d_param=d
             )
         return None
-
-    def _should_serve(self, sr: SlotRequest, sd: SlotData) -> bool:
-        return (
-            sr.is_padding
-            or sd.robot_id not in self._last_served_action_index
-            or sd.action_index_start > self._last_served_action_index[sd.robot_id] + self._min_execution_horizon
-        )
 
     def _update_state(
         self,

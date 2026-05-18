@@ -32,14 +32,14 @@ def load_homogeneous_robot_profile(path: pathlib.Path) -> dict[str, Any]:
     uplink_sigma = float(profile["uplink_sigma"])
     downlink_median = float(profile["downlink_median_ms"])
     downlink_sigma = float(profile["downlink_sigma"])
-    execution_horizon = int(profile["execution_horizon"])
+    max_execution_horizon = int(profile["max_execution_horizon"])
 
     normalized = dict(profile)
     normalized["uplink_median_ms"] = uplink_median
     normalized["uplink_sigma"] = uplink_sigma
     normalized["downlink_median_ms"] = downlink_median
     normalized["downlink_sigma"] = downlink_sigma
-    normalized["execution_horizon"] = execution_horizon
+    normalized["max_execution_horizon"] = max_execution_horizon
     return normalized
 
 
@@ -60,14 +60,14 @@ def _build_max_profile(
     max_uplink_sigma: float,
     max_downlink_median_ms: float,
     max_downlink_sigma: float,
-    max_execution_horizon: int,
+    max_max_execution_horizon: int,
 ) -> dict[str, Any]:
     max_profile = {
         "uplink_median_ms": float(max_uplink_median_ms),
         "uplink_sigma": float(max_uplink_sigma),
         "downlink_median_ms": float(max_downlink_median_ms),
         "downlink_sigma": float(max_downlink_sigma),
-        "execution_horizon": int(max_execution_horizon),
+        "max_execution_horizon": int(max_max_execution_horizon),
     }
 
     return max_profile
@@ -121,13 +121,13 @@ def build_output_config(
             target_max_hetero = _lerp(homo_val, max_val, position)
             robot_out[field] = _lerp(homo_val, target_max_hetero, k)
 
-        homo_horizon = float(homogeneous_profile["execution_horizon"])
-        max_horizon = float(max_profile["execution_horizon"])
+        homo_horizon = float(homogeneous_profile["max_execution_horizon"])
+        max_horizon = float(max_profile["max_execution_horizon"])
         target_horizon_at_max_hetero = _lerp(homo_horizon, max_horizon, position)
-        robot_out["execution_horizon"] = int(
+        robot_out["max_execution_horizon"] = int(
             round(_lerp(homo_horizon, target_horizon_at_max_hetero, k))
         )
-        robot_out["execution_horizon"] = max(1, robot_out["execution_horizon"])
+        robot_out["max_execution_horizon"] = max(1, robot_out["max_execution_horizon"])
         robot_out["seed"] = int(sampling_default_seed) + robot_idx
 
         output["robots"][robot_id] = robot_out
@@ -148,7 +148,7 @@ def _parse_args() -> argparse.Namespace:
         required=True,
         help=(
             "Path to homogeneous robot profile JSON/JSONC containing: "
-            "uplink_median_ms, uplink_sigma, downlink_median_ms, downlink_sigma, execution_horizon"
+            "uplink_median_ms, uplink_sigma, downlink_median_ms, downlink_sigma, max_execution_horizon"
         ),
     )
     parser.add_argument("--max-uplink-median-ms", type=float, required=True)
@@ -219,7 +219,7 @@ def main() -> None:
         max_uplink_sigma=float(args.max_uplink_sigma),
         max_downlink_median_ms=float(args.max_downlink_median_ms),
         max_downlink_sigma=float(args.max_downlink_sigma),
-        max_execution_horizon=int(args.max_execution_horizon),
+        max_max_execution_horizon=int(args.max_max_execution_horizon),
     )
     output = build_output_config(
         num_robots=int(args.num_robots),

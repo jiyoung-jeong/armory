@@ -157,7 +157,8 @@ class ActionChunk(ParquetDataclass):
     action_index_start: int
     execution_start_step: int  # which observation step the execution started on
     actions: np.ndarray
-    execution_horizon: int
+    min_execution_horizon: int
+    max_execution_horizon: int
     request_timestamp: float
     response_timestamp: float
     request_id: int = -1
@@ -176,7 +177,8 @@ class ActionChunk(ParquetDataclass):
             action_index_start=infer_response.action_index_start,
             execution_start_step=execution_start_step,
             actions=infer_response.actions,
-            execution_horizon=infer_response.execution_horizon,
+            min_execution_horizon=infer_response.min_execution_horizon,
+            max_execution_horizon=infer_response.max_execution_horizon,
             request_timestamp=infer_response.request_timestamp,
             response_timestamp=time.time(),
             request_id=infer_response.request_id,
@@ -255,9 +257,6 @@ class ServerMetadata(JSONDataclass):
     # Per-algorithm scheduler kwargs (e.g., {"alpha": 1.0} for dynamic-action).
     scheduler_kwargs: dict | None = None
 
-    # Minimum action-index gap between serves for a robot (GPU worker throttle).
-    min_execution_horizon: int = 0
-
     # Set by Modal when running behind a tunnel; clients should use this for WebSocket
     tunnel_url: str | None = None
     location: str | None = None
@@ -292,4 +291,4 @@ class RuntimeMetadata(JSONDataclass):
 
     # Other
     episodes: list[str] = field(default_factory=list)
-    execution_horizon: list[int] = field(default_factory=list)
+    max_execution_horizon: list[int] = field(default_factory=list)

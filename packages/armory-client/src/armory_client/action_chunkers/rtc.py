@@ -12,7 +12,8 @@ class InferenceTimeRTCBroker(ActionChunkBroker):
         ws_client: BidirectionalWebsocket,
         control_hz: int,
         realtime: bool = True,
-        execution_horizon: int = 0,
+        min_execution_horizon: int = 0,
+        max_execution_horizon: int = 0,
         real: bool = False,
     ):
         """
@@ -20,14 +21,15 @@ class InferenceTimeRTCBroker(ActionChunkBroker):
             ws_client: the websocket client to use for inference
             control_hz: the control frequency of the environment
             realtime: whether to run in realtime mode, setting this False essentially means inference latency is 0
-            execution_horizon: how many steps in the predicted chunk the robot is willing to execute
+            max_execution_horizon: how many steps in the predicted chunk the robot is willing to execute
             real: whether null actions should hold the observed robot state
         """
         super().__init__(
             ws_client=ws_client,
             control_hz=control_hz,
             realtime=realtime,
-            execution_horizon=execution_horizon,
+            min_execution_horizon=min_execution_horizon,
+            max_execution_horizon=max_execution_horizon,
             real=real,
         )
 
@@ -38,5 +40,6 @@ class InferenceTimeRTCBroker(ActionChunkBroker):
             self.deadline,
             self._next_action_step,
             infer_type=messages.InferType.INFERENCE_TIME_RTC,
-            execution_horizon=self.execution_horizon,
+            min_execution_horizon=self.min_execution_horizon,
+            max_execution_horizon=self.max_execution_horizon,
         )

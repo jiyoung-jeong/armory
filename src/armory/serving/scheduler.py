@@ -7,6 +7,7 @@ from multiprocessing.synchronize import Event
 
 import zmq
 
+from armory.scheduling.action_deficit import ActionDeficitScheduler
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.baselines import (
     FixedMaxBatchScheduler,
@@ -19,6 +20,8 @@ from armory.scheduling.baselines import (
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
+from armory.scheduling.lookahead_actions_cpp import LookaheadActionsCppScheduler
+from armory.scheduling.starvation_fair import StarvationFairScheduler
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -37,8 +40,11 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
     "dynamic-action": DynamicActionScheduler,
+    "action-deficit": ActionDeficitScheduler,
+    "starvation-fair": StarvationFairScheduler,
     "lookahead": LookaheadScheduler,
     "lookahead-actions": LookaheadActionsScheduler,
+    "lookahead-actions-cpp": LookaheadActionsCppScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,
     "starvation": StarvationScheduler,
@@ -63,7 +69,6 @@ class SchedulerWorker:
         scheduler_kwargs: dict | None,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
-        min_execution_horizon: int = 0,
     ) -> None:
         self.sched_in_ep = sched_in_ep
         self.result_ep = result_ep
@@ -74,7 +79,6 @@ class SchedulerWorker:
         self.scheduler_kwargs = scheduler_kwargs
         self.ready_event = ready_event
         self.log_queue = log_queue
-        self.min_execution_horizon = min_execution_horizon
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -106,9 +110,10 @@ class SchedulerWorker:
         scheduler = cls(
             self.batch_queue,
             max_batch_size=self.max_batch_size,
-            min_execution_horizon=self.min_execution_horizon,
             **extra_kwargs,
         )
+
+        scheduler._drain_fn = lambda: self._process_engine_messages(scheduler, result_sock)
 
         batch_profile = self._recv_batch_profile(result_sock)
         for batch_size, latency in batch_profile.items():

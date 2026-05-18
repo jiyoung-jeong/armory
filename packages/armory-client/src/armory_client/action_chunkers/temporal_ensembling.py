@@ -47,11 +47,11 @@ class TemporalEnsemblingBroker(ActionChunkBroker):
                 start_step = existing_actions[0].step
                 end_step = max(
                     existing_actions[-1].step,
-                    action_chunk.action_index_start + action_chunk.execution_horizon - 1,
+                    action_chunk.action_index_start + action_chunk.max_execution_horizon - 1,
                 )
             else:
                 start_step = action_chunk.action_index_start
-                end_step = action_chunk.action_index_start + action_chunk.execution_horizon - 1
+                end_step = action_chunk.action_index_start + action_chunk.max_execution_horizon - 1
 
             # For each step, collect all predictions and ensemble them
             for step in range(start_step, end_step + 1):
