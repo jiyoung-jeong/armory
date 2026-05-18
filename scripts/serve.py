@@ -75,9 +75,6 @@ class Args(JsonArgs):
 
     alpha: float = 1.0
 
-    lookahead_horizon_ms: int = 500
-    lookahead_timestep_ms: int = 50
-    lookahead_control_hz: int = 20
     action_horizon_multipliers: dict[int, float] = field(default_factory=dict)
 
     seed: int = 7
@@ -101,9 +98,6 @@ class Args(JsonArgs):
             "log_dir": self.log_dir,
             "scheduling_algorithm": self.scheduling_algorithm,
             "alpha": self.alpha,
-            "lookahead_horizon_ms": self.lookahead_horizon_ms,
-            "lookahead_timestep_ms": self.lookahead_timestep_ms,
-            "lookahead_control_hz": self.lookahead_control_hz,
             "action_horizon_multipliers": self.action_horizon_multipliers,
             "seed": self.seed,
             "log_level": self.log_level,
@@ -130,9 +124,6 @@ class Args(JsonArgs):
             log_dir=data.get("log_dir", "logs/server"),
             scheduling_algorithm=data.get("scheduling_algorithm", "greedy-deadline"),
             alpha=data.get("alpha", 1.0),
-            lookahead_horizon_ms=data.get("lookahead_horizon_ms", 500),
-            lookahead_timestep_ms=data.get("lookahead_timestep_ms", 50),
-            lookahead_control_hz=data.get("lookahead_control_hz", 20),
             action_horizon_multipliers={
                 int(horizon): float(multiplier)
                 for horizon, multiplier in data.get("action_horizon_multipliers", {}).items()
@@ -146,13 +137,6 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
     if args.scheduling_algorithm == "dynamic-action":
         return {
             "alpha": args.alpha,
-        }
-    if args.scheduling_algorithm == "lookahead":
-        return {
-            "horizon_ms": args.lookahead_horizon_ms,
-            "timestep_ms": args.lookahead_timestep_ms,
-            "action_horizon_steps": action_horizon_steps,
-            "control_hz": args.lookahead_control_hz,
         }
     if args.scheduling_algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
         return {

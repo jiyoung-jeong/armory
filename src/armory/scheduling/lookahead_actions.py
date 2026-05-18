@@ -30,6 +30,14 @@ def _action_times(mirror: Mirror) -> dict[RobotID, float]:
     return {rid: _action_time(robot) for rid, robot in mirror.robots.items()}
 
 
+def _starvation_time(robot: Robot) -> float:
+    return robot.starved_steps() / robot.control_hz
+
+
+def _starvation_times(mirror: Mirror) -> dict[RobotID, float]:
+    return {rid: _starvation_time(robot) for rid, robot in mirror.robots.items()}
+
+
 def _coerce_horizon_multipliers(
     multipliers: Mapping[int | str, float] | None,
 ) -> dict[int, float]:
@@ -90,6 +98,7 @@ class IncrementalSearch:
         self.snapshot.chunk_id_counter = itertools.count(1)
         self.snapshot.fast_forward(start_time)
         self.initial_action_times = _action_times(self.snapshot)
+        self.initial_starvation_times = _starvation_times(self.snapshot)
         self._search_batch_id = itertools.count(1)
 
         self.best_objective = -float("inf")
@@ -186,20 +195,39 @@ class IncrementalSearch:
         for batch in candidate_batches:
             self.frontier.append((schedule, batch, next_time, node))
 
+    # def _evaluate(
+    #     self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
+    # ) -> None:
+    #     gpu_time = gpu_end_time - self.start_time
+    #     if gpu_time <= 0:
+    #         return
+    #     new_times = _action_times(node)
+    #     gained = sum(
+    #         self.action_multipliers.get(rid, 1.0)
+    #         * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
+    #         for rid in new_times
+    #     )
+    #     objective = gained / gpu_time
+    #     # objective = gained
+    #     if objective > self.best_objective:
+    #         self.best_objective = objective
+    #         self.best_schedule = list(schedule)
+    #         logger.debug(
+    #             "new best: depth=%d objective=%.4f schedule=%s",
+    #             len(schedule),
+    #             objective,
+    #             [b.robot_ids for b in schedule],
+    #         )
+
     def _evaluate(
         self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
     ) -> None:
-        gpu_time = gpu_end_time - self.start_time
-        if gpu_time <= 0:
-            return
-        new_times = _action_times(node)
-        gained = sum(
+        new_starvation_times = _starvation_times(node)
+        objective = -sum(
             self.action_multipliers.get(rid, 1.0)
-            * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
-            for rid in new_times
+            * (new_starvation_times[rid] - self.initial_starvation_times.get(rid, 0.0))
+            for rid in new_starvation_times
         )
-        objective = gained / gpu_time
-        # objective = gained
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
