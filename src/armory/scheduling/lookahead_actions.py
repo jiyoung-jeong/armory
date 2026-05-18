@@ -75,14 +75,12 @@ class IncrementalSearch:
         latency_tracker: LatencyTracker,
         start_time: float,
         horizon: float,
-        candidate_robot_ids: tuple[RobotID, ...],
         action_multipliers: Mapping[RobotID, float] | None = None,
         max_depth: int = 5,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = start_time
         self.end_time = start_time + horizon
-        self.candidate_robot_ids = tuple(rid for rid in candidate_robot_ids if rid in mirror.robots)
         self.action_multipliers = dict(action_multipliers or {})
         self.max_depth = max_depth
         # FIXME: don't access private
@@ -93,7 +91,6 @@ class IncrementalSearch:
         self.snapshot.fast_forward(start_time)
         self.initial_action_times = _action_times(self.snapshot)
         self._search_batch_id = itertools.count(1)
-        self.candidate_batches = self._candidate_batches()
 
         self.best_objective = -float("inf")
         self.best_schedule: list[ScheduledBatch] = []
@@ -110,78 +107,72 @@ class IncrementalSearch:
 
         root_node = self.snapshot.get_twin()
         self.frontier: deque[tuple[tuple[ScheduledBatch, ...], float, Mirror, int]] = deque(
-            [((), start_time, root_node, 0)]
+            [((), (), 0, root_node)]
         )
 
     def is_done(self) -> bool:
         return not self.frontier
 
     def step(self, budget_nodes: int = 32) -> None:
-        remaining = max(1, budget_nodes)
-        while remaining > 0 and self.frontier:
-            schedule, end_time, node, next_candidate = self.frontier.popleft()
-            remaining -= self._expand(schedule, end_time, node, next_candidate, remaining)
+        for _ in range(budget_nodes):
+            if self.is_done():
+                return
+            parent_schedule, queued_batch, parent_gpu_end_time, parent_node = (
+                self.frontier.popleft()
+            )
+            self._expand(parent_schedule, queued_batch, parent_gpu_end_time, parent_node)
 
     def best(self) -> list[ScheduledBatch]:
         return list(self.best_schedule)
 
-    def _candidate_batches(self) -> tuple[tuple[RobotID, ...], ...]:
-        sorted_ids = sorted(self.candidate_robot_ids)
-        max_size = min(self.max_batch_size, len(sorted_ids))
+    def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
+        schedulable_robot_ids = mirror.schedulable_robot_ids()
         return tuple(
             itertools.chain.from_iterable(
-                itertools.combinations(sorted_ids, size) for size in range(max_size, 0, -1)
+                itertools.combinations(schedulable_robot_ids, size)
+                for size in range(self.max_batch_size, 0, -1)
             )
         )
 
     def _expand(
         self,
-        schedule: tuple[ScheduledBatch, ...],
-        end_time: float,
+        parent_schedule: tuple[ScheduledBatch, ...],
+        queued_batch: tuple[RobotID, ...],
+        gpu_end_time: float,
         parent_node: Mirror,
-        start_candidate: int,
-        budget_nodes: int,
-    ) -> int:
-        count = 0
-        candidate_index = start_candidate
-        while candidate_index < len(self.candidate_batches) and count < budget_nodes:
-            batch = self.candidate_batches[candidate_index]
-            candidate_index += 1
-            next_time = end_time + self.latency_tracker.infer_latency(len(batch))
-            if next_time > self.end_time:
-                continue
+    ):
+        next_time = gpu_end_time + self.latency_tracker.infer_latency(len(queued_batch))
 
-            t0 = time.perf_counter()
-            node = parent_node.get_twin()
-            t1 = time.perf_counter()
-            chunks = tuple(
-                node.queue_batch(list(batch), next(self._search_batch_id), origin="searched")
-            )
-            t2 = time.perf_counter()
-            node.fast_forward(next_time)
-            t3 = time.perf_counter()
+        t0 = time.perf_counter()
+        node = parent_node.get_twin()
+        t1 = time.perf_counter()
+        chunks = tuple[ActionChunk, ...](
+            node.queue_batch(list(queued_batch), next(self._search_batch_id), origin="searched")
+        )
+        schedule = parent_schedule + (ScheduledBatch(queued_batch, chunks),)
+        t2 = time.perf_counter()
+        node.fast_forward(next_time)
+        t3 = time.perf_counter()
 
-            new_schedule = schedule + (ScheduledBatch(batch, chunks),)
-            self.nodes_visited += 1
-            count += 1
-            self._evaluate(new_schedule, next_time, node)
-            t4 = time.perf_counter()
+        self._evaluate(schedule, gpu_end_time, node)
+        t4 = time.perf_counter()
 
-            self.op_time["twin"] += t1 - t0
-            self.op_time["queue"] += t2 - t1
-            self.op_time["fastforward"] += t3 - t2
-            self.op_time["evaluate"] += t4 - t3
-            node_total = t4 - t0
-            if node_total > self.max_node_time:
-                self.max_node_time = node_total
+        node_total = t4 - t0
+        if node_total > self.max_node_time:
+            self.max_node_time = node_total
 
-            if len(new_schedule) < self.max_depth:
-                self.frontier.append((new_schedule, next_time, node, 0))
+        self.op_time["twin"] += t1 - t0
+        self.op_time["queue"] += t2 - t1
+        self.op_time["fastforward"] += t3 - t2
+        self.op_time["evaluate"] += t4 - t3
 
-        if candidate_index < len(self.candidate_batches):
-            self.frontier.appendleft((schedule, end_time, parent_node, candidate_index))
+        self.nodes_visited += 1
+        if len(schedule) == self.max_depth:
+            return
 
-        return count
+        candidate_batches = self._candidate_batches(node)
+        for batch in candidate_batches:
+            self.frontier.append((schedule, batch, next_time, node))
 
     def _evaluate(self, schedule: tuple[ScheduledBatch, ...], now: float, node: Mirror) -> None:
         gpu_time = now - self.start_time
@@ -194,6 +185,7 @@ class IncrementalSearch:
             for rid in new_times
         )
         objective = gained / gpu_time
+        # objective = gained
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
@@ -264,7 +256,6 @@ class LookaheadActionsScheduler(RequestScheduler):
         slack = next_avail - time.time()
         in_flight = self.mirror.in_flight_batches_count
         dispatch_budget = max(0, self.max_in_flight - in_flight)
-        candidate_robot_ids = tuple(sorted(r.robot_id for r in candidates))
         action_multipliers = {
             r.robot_id: self.action_horizon_multipliers.get(r.max_execution_horizon, 1.0)
             for r in candidates
@@ -347,7 +338,6 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.latency_tracker,
             next_avail,
             self.horizon,
-            candidate_robot_ids,
             action_multipliers,
             self.max_depth,
         )
@@ -379,7 +369,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             "lookahead search inter_call=%+.3fs slack_in=%+.3fs slack_out=%+.3fs buffer=%.3fs "
             "iters=%d nodes=%d budget=%d total=%.4fs max_step=%.4fs avg_step=%.4fs "
             "per_node=%.4fs max_node=%.4fs ops twin=%.4f queue=%.4f ff=%.4f eval=%.4f "
-            "candidate_batches=%d in_flight=%d candidates=%d done=%s gc_before=%s gc_after=%s",
+            "in_flight=%d candidates=%d done=%s gc_before=%s gc_after=%s",
             inter_call_gap,
             slack,
             remaining_slack,
@@ -396,7 +386,6 @@ class LookaheadActionsScheduler(RequestScheduler):
             search.op_time["queue"],
             search.op_time["fastforward"],
             search.op_time["evaluate"],
-            len(search.candidate_batches),
             in_flight,
             len(candidates),
             search.is_done(),

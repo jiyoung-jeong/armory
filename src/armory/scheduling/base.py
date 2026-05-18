@@ -74,8 +74,8 @@ class RequestScheduler(ABC):
         logger.debug(
             "schedule stage=mirror_schedulable latest_requests=%d", len(self._latest_requests)
         )
-        candidates = self.mirror.schedulable_requests(self._latest_requests)
-        candidate_ids = [r.robot_id for r in candidates]
+        candidate_ids = self.mirror.schedulable_robot_ids()
+        candidates = [self._latest_requests[robot_id] for robot_id in candidate_ids]
         logger.debug("schedule stage=mirror_deadlines robots=%d", len(self.mirror.robots))
         deadlines = self.mirror.deadlines() if self.mirror.robots else {}
 

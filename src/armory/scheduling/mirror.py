@@ -475,6 +475,7 @@ class Robot:
         twin.latency_tracker = self.latency_tracker
         twin.steps = list(self.steps)
         twin.chunks = list(self.chunks)
+        twin.last_request = self.last_request  # NOTE: bad hack
         return twin
 
     def to_dict(self, now: float) -> dict:
@@ -689,24 +690,23 @@ class Mirror:
             return
         robot.apply_ack(ack)
 
-    def schedulable_requests(
+    def schedulable_robot_ids(
         self,
-        requests: dict[RobotID, SlotRequest],
-    ) -> list[SlotRequest]:
-        schedulable_requests: list[SlotRequest] = []
+    ) -> list[RobotID]:
+        schedulable_robot_ids: list[RobotID] = []
 
         twin = self.get_twin()
         dispatch_time = twin.next_time_server_available()
         twin.fast_forward(dispatch_time)
-        for robot_id, request in requests.items():
+        for robot_id in self.robots.keys():
             robot = twin.robots[robot_id]
             anticipated_chunk = robot.calculate_chunk_context(dispatch_time)
-            if len(robot.chunks) == 0 or request.can_serve(
+            if len(robot.chunks) == 0 or robot.last_request.can_serve(
                 robot.chunks[-1].action_index_start, anticipated_chunk.action_index_start
             ):
-                schedulable_requests.append(request)
+                schedulable_robot_ids.append(robot_id)
 
-        return schedulable_requests
+        return schedulable_robot_ids
 
     def fast_forward(
         self,

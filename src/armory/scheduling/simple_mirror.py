@@ -97,15 +97,10 @@ class SimpleMirror:
     def deadlines(self) -> dict[RobotID, float]:
         return {rid: r.deadline for rid, r in self.robots.items()}
 
-    def schedulable_requests(
+    def schedulable_robot_ids(
         self,
-        requests: dict[RobotID, SlotRequest],
-    ) -> list[SlotRequest]:
-        return [
-            req
-            for rid, req in requests.items()
-            if rid in self.robots and self.robots[rid].pending_chunks == 0
-        ]
+    ) -> list[RobotID]:
+        return [rid for rid in self.robots.keys() if self.robots[rid].pending_chunks == 0]
 
     def queue_batch(
         self,
