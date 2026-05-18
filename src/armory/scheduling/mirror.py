@@ -67,10 +67,11 @@ class ChunkContext:
 class Robot:
     """Mirror of a single robot's control steps and action chunks.
 
-    Invariant: once constructed, callers must seed the robot with an initial
-    control step (``observation_step=0``, ``action_index_start=0``) via
-    ``step()`` before invoking any other method. ``Mirror.receive_request``
-    enforces this by calling ``step()`` immediately after construction.
+    The first ``step()`` after construction seeds the robot's clock from the
+    request's ``observation_step`` and ``action_index_start`` — these need
+    not be zero. A per-robot reset on the scheduler side wipes the mirror's
+    Robot, but the real client keeps incrementing its own counters; when it
+    re-registers we just pick up from wherever it is.
     """
 
     def __init__(
@@ -98,12 +99,11 @@ class Robot:
         if not self.steps:
             self.min_execution_horizon = request.min_execution_horizon
             self.max_execution_horizon = request.max_execution_horizon
-            assert request.action_index_start == 0
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
                 action_step=None,
-                next_action_step=0,
+                next_action_step=request.action_index_start,
             )
         else:
             latest = self.steps[-1]
@@ -541,7 +541,25 @@ class Mirror:
         return self.in_flight_batches[-1].completion_time
 
     def reset_robot(self, robot_id: RobotID) -> None:
-        self.robots.pop(robot_id, None)
+        if self.robots.pop(robot_id, None) is None:
+            return
+        # Strip the robot's chunks from any in-flight batches so that a late
+        # ResponseBatch (or downstream bump_arrival) doesn't look up a chunk_id
+        # that no longer exists on the robot. The batch entries themselves are
+        # kept (even if they end up empty) so GPU timing accounting —
+        # next_time_server_available, batch_id matching in
+        # update_batch_completion — stays consistent with the work the GPU is
+        # actually still doing.
+        for in_flight in self.in_flight_batches:
+            kept_robots: list[RobotID] = []
+            kept_chunks: list[int] = []
+            for rid, cid in zip(in_flight.robot_ids, in_flight.chunk_ids):
+                if rid == robot_id:
+                    continue
+                kept_robots.append(rid)
+                kept_chunks.append(cid)
+            in_flight.robot_ids = kept_robots
+            in_flight.chunk_ids = kept_chunks
 
     def clear_all(self) -> None:
         self.robots.clear()
@@ -658,6 +676,16 @@ class Mirror:
         robot = self.robots.get(ack.robot_id)
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
+            return
+        # The chunk may have been wiped by an intervening reset_robot (and the
+        # robot since re-registered with a fresh empty chunks list). Acks are
+        # advisory arrival-time refinements, so dropping a stale one is safe.
+        if not any(c.chunk_id == ack.chunk_id for c in robot.chunks):
+            logger.debug(
+                "Ignoring ack for unknown chunk: robot=%s chunk_id=%s",
+                ack.robot_id,
+                ack.chunk_id,
+            )
             return
         robot.apply_ack(ack)
 
