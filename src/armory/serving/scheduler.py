@@ -111,6 +111,8 @@ class SchedulerWorker:
             **extra_kwargs,
         )
 
+        scheduler._drain_fn = lambda: self._process_engine_messages(scheduler, result_sock)
+
         batch_profile = self._recv_batch_profile(result_sock)
         for batch_size, latency in batch_profile.items():
             scheduler.latency_tracker.update_infer(batch_size, latency)

@@ -13,8 +13,8 @@
   "lookahead_timestep_ms": 50,
   "lookahead_control_hz": 20,
   "action_horizon_multipliers": {
-    "5": 0.25,
-    "10": 1.0
+    "10": 0.25,
+    "20": 1.0
   },
   "log_level": "INFO"
 }

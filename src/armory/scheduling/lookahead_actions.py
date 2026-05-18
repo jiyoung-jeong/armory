@@ -356,7 +356,12 @@ class LookaheadActionsScheduler(RequestScheduler):
         search_iters = 0
         step_durations: list[float] = []
         step_end = search_started_at
-        while not search.is_done() and (next_avail - time.time()) > self.scheduling_buffer:
+        while (
+            not search.is_done()
+            and (self.mirror.next_time_server_available() - time.time()) > self.scheduling_buffer
+        ):
+            if self._drain_fn is not None:
+                self._drain_fn()
             step_start = step_end
             search.step(self.step_budget_nodes)
             step_end = time.time()
@@ -365,7 +370,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             search_iters += 1
         search_end = step_end
         search_duration = search_end - search_started_at
-        remaining_slack = next_avail - search_end
+        remaining_slack = self.mirror.next_time_server_available() - search_end
         max_step = max(step_durations, default=0.0)
         avg_step = (sum(step_durations) / len(step_durations)) if step_durations else 0.0
         nodes = search.nodes_visited

@@ -108,6 +108,34 @@ ACTION_FATE_COLORS = {
     "cutoff_by_max_steps": "#72B7B2",
 }
 ACTION_FATE_HATCHES = ["", "///", "\\\\\\", "xx", "...", "++", "oo", "**"]
+ACTION_FATE_CASE_METADATA_COLS = [
+    "scheduler",
+    "server_variant",
+    "experiment",
+    "num_robots",
+    "seed",
+    "max_batch_size",
+    "alpha",
+    "starvation_rate",
+    "post_first_starvation_rate",
+]
+ACTION_FATE_CASE_SORT_COLS = [
+    "scheduler",
+    "alpha",
+    "max_batch_size",
+    "server_variant",
+    "experiment",
+    "seed",
+    "run_id",
+]
+ACTION_FATE_CASE_LABELS = {
+    "alpha": "alpha",
+    "experiment": "exp",
+    "max_batch_size": "B",
+    "num_robots": "robots",
+    "seed": "seed",
+    "server_variant": "variant",
+}
 
 
 def _discover_action_chunk_files(paths: list[pathlib.Path]) -> list[pathlib.Path]:
@@ -293,11 +321,10 @@ def _load_action_fate_sweep(results: pathlib.Path, *, x_col: str, line_col: str)
         return pd.DataFrame()
 
     rows = []
-    extra_cols = [
-        col
-        for col in ["max_batch_size", "starvation_rate", "post_first_starvation_rate"]
-        if col in df.columns
-    ]
+    metadata_cols = []
+    for col in [x_col, line_col, "run_id", *ACTION_FATE_CASE_METADATA_COLS]:
+        if col in df.columns and col not in metadata_cols:
+            metadata_cols.append(col)
     for _, row in df.iterrows():
         artifact_path = pathlib.Path(str(row["artifact_path"]))
         chunk_files = _artifact_action_chunk_files(artifact_path)
@@ -307,10 +334,7 @@ def _load_action_fate_sweep(results: pathlib.Path, *, x_col: str, line_col: str)
         counts = _counts_from_action_chunk_files(chunk_files)
         rows.append(
             {
-                x_col: row[x_col],
-                line_col: row[line_col],
-                "run_id": row.get("run_id", ""),
-                **{col: row[col] for col in extra_cols},
+                **{col: row[col] for col in metadata_cols},
                 **counts,
             }
         )
@@ -324,6 +348,10 @@ def _load_action_fate_sweep(results: pathlib.Path, *, x_col: str, line_col: str)
         fate[x_col] = numeric_x
     if "max_batch_size" in fate.columns:
         fate["max_batch_size"] = pd.to_numeric(fate["max_batch_size"], errors="coerce")
+    if "alpha" in fate.columns:
+        fate["alpha"] = pd.to_numeric(fate["alpha"], errors="coerce")
+    if "seed" in fate.columns:
+        fate["seed"] = pd.to_numeric(fate["seed"], errors="coerce")
     if "starvation_rate" in fate.columns:
         fate["starvation_rate"] = pd.to_numeric(fate["starvation_rate"], errors="coerce")
     return fate
@@ -337,6 +365,73 @@ def _aggregate_action_fate_sweep(fate: pd.DataFrame, *, x_col: str, line_col: st
         .sort_values([x_col, line_col], key=lambda s: s.map(str) if s.dtype == object else s)
     )
     return agg
+
+
+def _sort_action_fate_cases(fate: pd.DataFrame, *, x_col: str, line_col: str) -> pd.DataFrame:
+    order_cols = []
+    for col in [x_col, line_col, *ACTION_FATE_CASE_SORT_COLS]:
+        if col in fate.columns and col not in order_cols:
+            order_cols.append(col)
+
+    sorted_fate = fate.copy()
+    sort_keys = []
+    for col in order_cols:
+        key_col = f"__sort_{col}"
+        numeric = pd.to_numeric(sorted_fate[col], errors="coerce")
+        sorted_fate[key_col] = numeric if numeric.notna().all() else sorted_fate[col].map(str)
+        sort_keys.append(key_col)
+
+    if sort_keys:
+        sorted_fate = sorted_fate.sort_values(sort_keys, kind="stable").drop(columns=sort_keys)
+    return sorted_fate.reset_index(drop=True)
+
+
+def _format_case_value(value: object) -> str:
+    if pd.isna(value):
+        return "NA"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _action_fate_case_label_columns(fate: pd.DataFrame, *, x_col: str, line_col: str) -> list[str]:
+    label_cols = []
+    for col in [
+        x_col,
+        line_col,
+        "scheduler",
+        "alpha",
+        "max_batch_size",
+        "server_variant",
+        "experiment",
+        "seed",
+    ]:
+        if col not in fate.columns or col in label_cols:
+            continue
+        if col == line_col or fate[col].nunique(dropna=False) > 1:
+            label_cols.append(col)
+
+    if not label_cols and "run_id" in fate.columns:
+        label_cols.append("run_id")
+
+    labels = fate.apply(lambda row: _format_action_fate_case_label(row, label_cols), axis=1)
+    if labels.duplicated().any() and "run_id" in fate.columns and "run_id" not in label_cols:
+        label_cols.append("run_id")
+    return label_cols
+
+
+def _format_action_fate_case_label(row: pd.Series, label_cols: list[str]) -> str:
+    parts = []
+    for col in label_cols:
+        value = _format_case_value(row[col])
+        if col == "run_id":
+            parts.append(value)
+        elif col in {"scheduler"}:
+            parts.append(value)
+        else:
+            prefix = ACTION_FATE_CASE_LABELS.get(col, col)
+            parts.append(f"{prefix}={value}")
+    return "\n".join(parts)
 
 
 def _best_starvation_param_rows(fate: pd.DataFrame, *, x_col: str, line_col: str) -> pd.DataFrame:
@@ -374,7 +469,7 @@ def _best_starvation_param_rows(fate: pd.DataFrame, *, x_col: str, line_col: str
 
 
 def _plot_action_fate_sweep(
-    agg: pd.DataFrame,
+    fate: pd.DataFrame,
     *,
     x_col: str,
     line_col: str,
@@ -382,45 +477,57 @@ def _plot_action_fate_sweep(
     normalize: bool,
     best_starvation: bool = False,
 ) -> pathlib.Path:
-    fig, ax = plt.subplots(figsize=(9.6, 5.2))
+    fate = _sort_action_fate_cases(fate, x_col=x_col, line_col=line_col)
+    label_cols = _action_fate_case_label_columns(fate, x_col=x_col, line_col=line_col)
+    case_labels = [_format_action_fate_case_label(row, label_cols) for _, row in fate.iterrows()]
+    bar_count = len(fate)
+    fig_width = min(max(9.6, 0.34 * bar_count + 3.4), 30.0)
+    fig, ax = plt.subplots(figsize=(fig_width, 5.8))
 
-    x_values = sorted(agg[x_col].dropna().unique())
-    line_values = sorted(agg[line_col].dropna().unique(), key=str)
+    line_values = sorted(fate[line_col].dropna().unique(), key=str)
     hatches = {
         line_value: ACTION_FATE_HATCHES[idx % len(ACTION_FATE_HATCHES)]
         for idx, line_value in enumerate(line_values)
     }
-    width = min(0.8 / max(len(line_values), 1), 0.28)
-    x_positions = {value: i for i, value in enumerate(x_values)}
+    xs = list(range(bar_count))
+    bottoms = [0.0] * bar_count
+    produced = fate["produced"].replace(0, pd.NA)
 
-    for line_idx, line_value in enumerate(line_values):
-        group = agg[agg[line_col] == line_value].sort_values(x_col)
-        offset = (line_idx - (len(line_values) - 1) / 2) * width
-        bottoms = [0.0] * len(group)
-        xs = [x_positions[value] + offset for value in group[x_col]]
-        produced = group["produced"].replace(0, pd.NA)
-
-        for key in ACTION_FATE_KEYS:
-            values = group[key] / produced if normalize else group[key]
-            values = values.fillna(0.0).to_numpy(dtype=float)
+    for key in ACTION_FATE_KEYS:
+        values = fate[key] / produced if normalize else fate[key]
+        values = values.fillna(0.0).to_numpy(dtype=float)
+        for idx, value in enumerate(values):
+            line_value = fate.iloc[idx][line_col]
             ax.bar(
-                xs,
-                values,
-                bottom=bottoms,
-                width=width,
+                xs[idx],
+                value,
+                bottom=bottoms[idx],
+                width=0.74,
                 color=ACTION_FATE_COLORS[key],
                 edgecolor="#222222",
                 linewidth=0.35,
-                hatch=hatches[line_value],
-                label=ACTION_FATE_LABELS[key] if line_idx == 0 else "_nolegend_",
+                hatch=hatches.get(line_value, ""),
+                label=ACTION_FATE_LABELS[key] if idx == 0 else "_nolegend_",
             )
-            bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
+            bottoms[idx] += value
 
-    ax.set_xticks(range(len(x_values)))
-    ax.set_xticklabels([str(value) for value in x_values])
-    ax.set_xlabel(x_col.replace("_", " ").title())
+    if x_col in fate.columns:
+        previous_value = None
+        for idx, value in enumerate(fate[x_col]):
+            if idx > 0 and value != previous_value:
+                ax.axvline(idx - 0.5, color="#777777", linewidth=0.5, alpha=0.5)
+            previous_value = value
+        # Mark the x grouping in the axis label; individual tick labels identify cases.
+
+    ax.set_xticks(xs)
+    ax.set_xticklabels(case_labels, rotation=90, ha="center", fontsize=7)
+    label_bits = []
+    for col in [x_col, *label_cols]:
+        if col not in label_bits:
+            label_bits.append(col)
+    ax.set_xlabel("Cases grouped by " + ", ".join(col.replace("_", " ") for col in label_bits))
     ax.set_ylabel("Share of produced actions" if normalize else "Actions")
-    title = "Action Fate by Scheduler"
+    title = "Action Fate by Run"
     if best_starvation:
         title += " (best starvation max_batch_size)"
     if normalize:
@@ -453,7 +560,7 @@ def _plot_action_fate_sweep(
 
     suffix = "fraction" if normalize else "counts"
     best_suffix = "_best_starvation_param" if best_starvation else ""
-    output_path = output_dir / f"action_fate_{suffix}{best_suffix}_by_{x_col}.png"
+    output_path = output_dir / f"action_fate_{suffix}{best_suffix}_by_case.png"
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
     plt.close(fig)
     return output_path
@@ -479,9 +586,11 @@ def plot_action_fate_sweep(
     agg.to_csv(agg_csv, index=False)
 
     written = [
-        _plot_action_fate_sweep(agg, x_col=x, line_col=line, output_dir=output_dir, normalize=True),
         _plot_action_fate_sweep(
-            agg, x_col=x, line_col=line, output_dir=output_dir, normalize=False
+            fate, x_col=x, line_col=line, output_dir=output_dir, normalize=True
+        ),
+        _plot_action_fate_sweep(
+            fate, x_col=x, line_col=line, output_dir=output_dir, normalize=False
         ),
         run_csv,
         agg_csv,
@@ -498,7 +607,7 @@ def plot_action_fate_sweep(
         written.extend(
             [
                 _plot_action_fate_sweep(
-                    best_agg,
+                    best_fate,
                     x_col=x,
                     line_col=line,
                     output_dir=output_dir,
@@ -506,7 +615,7 @@ def plot_action_fate_sweep(
                     best_starvation=True,
                 ),
                 _plot_action_fate_sweep(
-                    best_agg,
+                    best_fate,
                     x_col=x,
                     line_col=line,
                     output_dir=output_dir,

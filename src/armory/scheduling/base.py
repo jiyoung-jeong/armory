@@ -3,6 +3,7 @@ import logging
 import multiprocessing as mp
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from armory.scheduling.latency import EMALatencyTracker
@@ -34,6 +35,7 @@ class RequestScheduler(ABC):
 
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
+        self._drain_fn: Callable[[], None] | None = None
 
     def update(self, request: SlotRequest) -> None:
         self.latency_tracker.update_obs(
