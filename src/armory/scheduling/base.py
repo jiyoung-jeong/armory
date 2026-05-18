@@ -141,6 +141,25 @@ class RequestScheduler(ABC):
             phases = notes.setdefault("phases", [])
             phases.append({"name": "dispatch", "start": dispatch_start, "end": time.time()})
 
+        if not decisions:
+            # Always emit at least one record per call so empty-batch ticks
+            # (no_requests, dispatch_budget==0, search-with-no-commit, etc.)
+            # show up in metrics instead of silently vanishing.
+            decisions.append(
+                SchedulerDecision(
+                    scheduler_name=type(self).__name__,
+                    started_at=started_at,
+                    duration=time.time() - started_at,
+                    next_server_available=next_avail,
+                    in_flight_batches=in_flight,
+                    candidates=candidate_ids,
+                    deadlines=dict(deadlines),
+                    batch_id=None,
+                    scheduled=[],
+                    notes=dict(notes) if isinstance(notes, dict) else {},
+                )
+            )
+
         return decisions
 
     @abstractmethod

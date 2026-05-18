@@ -83,14 +83,14 @@ class IncrementalSearch:
         latency_tracker: LatencyTracker,
         start_time: float,
         horizon: float,
-        action_multipliers: Mapping[RobotID, float] | None = None,
         max_depth: int = 5,
+        action_horizon_multipliers: Mapping[int | str, float] | None = None,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = start_time
         self.end_time = start_time + horizon
-        self.action_multipliers = dict(action_multipliers or {})
         self.max_depth = max_depth
+        self.action_horizon_multipliers = action_horizon_multipliers
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -136,22 +136,22 @@ class IncrementalSearch:
 
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
         schedulable_robot_ids = mirror.schedulable_robot_ids()
-        # deadlines = mirror.deadlines()
-        # sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
-        # # just prefixes
-        # return tuple(
-        #     [
-        #         sorted_robot_ids[:size]
-        #         for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
-        #     ]
-        # )
-
+        deadlines = mirror.deadlines()
+        sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
+        # just prefixes
         return tuple(
-            itertools.chain.from_iterable(
-                itertools.combinations(schedulable_robot_ids, size)
-                for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
-            )
+            [
+                sorted_robot_ids[:size]
+                for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+            ]
         )
+
+        # return tuple(
+        #     itertools.chain.from_iterable(
+        #         itertools.combinations(schedulable_robot_ids, size)
+        #         for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
+        #     )
+        # )
 
     def _expand(
         self,
@@ -195,39 +195,20 @@ class IncrementalSearch:
         for batch in candidate_batches:
             self.frontier.append((schedule, batch, next_time, node))
 
-    # def _evaluate(
-    #     self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
-    # ) -> None:
-    #     gpu_time = gpu_end_time - self.start_time
-    #     if gpu_time <= 0:
-    #         return
-    #     new_times = _action_times(node)
-    #     gained = sum(
-    #         self.action_multipliers.get(rid, 1.0)
-    #         * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
-    #         for rid in new_times
-    #     )
-    #     objective = gained / gpu_time
-    #     # objective = gained
-    #     if objective > self.best_objective:
-    #         self.best_objective = objective
-    #         self.best_schedule = list(schedule)
-    #         logger.debug(
-    #             "new best: depth=%d objective=%.4f schedule=%s",
-    #             len(schedule),
-    #             objective,
-    #             [b.robot_ids for b in schedule],
-    #         )
-
     def _evaluate(
         self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
     ) -> None:
-        new_starvation_times = _starvation_times(node)
-        objective = -sum(
-            self.action_multipliers.get(rid, 1.0)
-            * (new_starvation_times[rid] - self.initial_starvation_times.get(rid, 0.0))
-            for rid in new_starvation_times
+        gpu_time = gpu_end_time - self.start_time
+        if gpu_time <= 0:
+            return
+        new_times = _action_times(node)
+        gained = sum(
+            self.action_horizon_multipliers.get(node.robots[rid].max_execution_horizon, 1.0)
+            * (new_times[rid] - self.initial_action_times.get(rid, 0.0))
+            for rid in new_times
         )
+        objective = gained / gpu_time
+        # objective = gained
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
@@ -237,6 +218,25 @@ class IncrementalSearch:
                 objective,
                 [b.robot_ids for b in schedule],
             )
+
+    # def _evaluate(
+    #     self, schedule: tuple[ScheduledBatch, ...], gpu_end_time: float, node: Mirror
+    # ) -> None:
+    #     new_starvation_times = _starvation_times(node)
+    #     objective = -sum(
+    #         self.action_multipliers.get(rid, 1.0)
+    #         * (new_starvation_times[rid] - self.initial_starvation_times.get(rid, 0.0))
+    #         for rid in new_starvation_times
+    #     )
+    #     if objective > self.best_objective:
+    #         self.best_objective = objective
+    #         self.best_schedule = list(schedule)
+    #         logger.debug(
+    #             "new best: depth=%d objective=%.4f schedule=%s",
+    #             len(schedule),
+    #             objective,
+    #             [b.robot_ids for b in schedule],
+    #         )
 
 
 class LookaheadActionsScheduler(RequestScheduler):
@@ -288,20 +288,16 @@ class LookaheadActionsScheduler(RequestScheduler):
             phases.append({"name": name, "start": start, "end": end})
 
         if not self._latest_requests:
-            logger.debug("lookahead stage=exit reason=no_requests")
+            # logger.debug("lookahead stage=exit reason=no_requests")
             return [], {"reason": "no_requests", "phases": phases}
-        if not candidates:
-            logger.debug("lookahead stage=exit reason=no_candidates")
-            return [], {"reason": "no_candidates", "phases": phases}
+        # if not candidates:
+        #     # logger.debug("lookahead stage=exit reason=no_candidates")
+        #     return [], {"reason": "no_candidates", "phases": phases}
 
         next_avail = self.mirror.next_time_server_available()
         slack = next_avail - time.time()
         in_flight = self.mirror.in_flight_batches_count
         dispatch_budget = max(0, self.max_in_flight - in_flight)
-        action_multipliers = {
-            r.robot_id: self.action_horizon_multipliers.get(r.max_execution_horizon, 1.0)
-            for r in candidates
-        }
 
         logger.debug(
             "search start: robots=%d slack=%+.3fs in_flight=%d budget=%d | %s",
@@ -320,7 +316,6 @@ class LookaheadActionsScheduler(RequestScheduler):
             "step_budget_nodes": self.step_budget_nodes,
             "scheduling_buffer": self.scheduling_buffer,
             "action_horizon_multipliers": dict(self.action_horizon_multipliers),
-            "action_multipliers": action_multipliers,
             "slack_s": slack,
             "next_server_available": next_avail,
             "in_flight": in_flight,
@@ -329,20 +324,20 @@ class LookaheadActionsScheduler(RequestScheduler):
             "phases": phases,
         }
 
-        if dispatch_budget == 0:
-            logger.debug(
-                "lookahead exit=at_in_flight_cap inter_call=%+.3fs slack=%+.3fs in_flight=%d max=%d",
-                inter_call_gap,
-                slack,
-                in_flight,
-                self.max_in_flight,
-            )
-            _phase("setup", entry_time, time.time())
-            notes["mode"] = "at_in_flight_cap"
-            return [], notes
+        # if dispatch_budget == 0:
+        #     logger.debug(
+        #         "lookahead exit=at_in_flight_cap inter_call=%+.3fs slack=%+.3fs in_flight=%d max=%d",
+        #         inter_call_gap,
+        #         slack,
+        #         in_flight,
+        #         self.max_in_flight,
+        #     )
+        #     _phase("setup", entry_time, time.time())
+        #     notes["mode"] = "at_in_flight_cap"
+        #     return [], notes
 
         if slack < self.scheduling_buffer:
-            logger.debug(
+            logger.warning(
                 "lookahead exit=greedy_no_slack inter_call=%+.3fs slack=%+.3fs buffer=%.3fs in_flight=%d candidates=%d",
                 inter_call_gap,
                 slack,
@@ -380,8 +375,8 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.latency_tracker,
             next_avail,
             self.horizon,
-            action_multipliers,
             self.max_depth,
+            self.action_horizon_multipliers,
         )
         search_started_at = time.time()
         _phase("search_init", gc_end, search_started_at)
@@ -450,7 +445,7 @@ class LookaheadActionsScheduler(RequestScheduler):
 
         best = search.best()
         if not best:
-            logger.debug("lookahead stage=exit reason=greedy_search_empty")
+            logger.error("lookahead stage=exit reason=greedy_search_empty")
             greedy_batch = self._greedy(candidates)
             _phase("postprocess", search_end, time.time())
             notes["mode"] = "greedy_search_empty"

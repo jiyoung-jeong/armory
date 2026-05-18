@@ -15,7 +15,7 @@
   "alpha": 1.0,
   "log_level": "INFO",
   "action_horizon_multipliers": {
-    "10": 10.0,
+    "10": 1.0,
     "20": 1.0
   }
 }

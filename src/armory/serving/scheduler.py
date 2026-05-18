@@ -128,7 +128,7 @@ class SchedulerWorker:
         while True:
             tick += 1
             logger.debug("tick=%d stage=poll_wait", tick)
-            events = poller.poll()
+            events = poller.poll(timeout=1)
             ready = {
                 "req": any(s is req_sock for s, _ in events),
                 "result": any(s is result_sock for s, _ in events),
