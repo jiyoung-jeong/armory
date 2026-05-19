@@ -320,7 +320,7 @@ class Robot:
     def max_overall_action_step(self) -> int:
         if not self.chunks:
             return -1
-        return self.chunks[-1].action_index_start + self.chunks[-1].max_execution_horizon - 1
+        return max(c.action_index_start + c.max_execution_horizon - 1 for c in self.chunks)
 
     def get_latest_control_step_before(self, time: float) -> ControlStep | None:
         for step in reversed(self.steps):
