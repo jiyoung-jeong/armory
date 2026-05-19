@@ -228,10 +228,20 @@ gpu_libero_client_image = _add_libero_data(
 )
 
 # --- CPU mock: mock policy server + mock client in one container --------------
+# build-essential + cmake are present so the C++ lookahead extension
+# (armory-lookahead-cpp) can be compiled inside the image. The build step has
+# to land before any non-copy add_local_* call — Modal forbids run_commands
+# after a runtime mount — so it's chained directly on the base image here.
 cpu_mock_image = _add_repo_sources(
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")
+    .apt_install("git", "build-essential", "cmake")
     .pip_install_from_requirements(str(MOCK_REQUIREMENTS_FILE))
+    .add_local_dir(
+        str(REPO_ROOT / "packages/armory-lookahead-cpp"),
+        remote_path="/build/armory-lookahead-cpp",
+        copy=True,
+    )
+    .run_commands("pip install /build/armory-lookahead-cpp")
     .workdir(str(REMOTE_ROOT))
     .env({"MPLBACKEND": "Agg"}),
     py_source=_MOCK_PY_SOURCE,

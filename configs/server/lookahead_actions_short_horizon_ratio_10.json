@@ -9,11 +9,8 @@
   "num_steps": 10,
   "scheduling_algorithm": "lookahead-actions",
   "alpha": 1.0,
-  "lookahead_horizon_ms": 500,
-  "lookahead_timestep_ms": 50,
-  "lookahead_control_hz": 20,
   "action_horizon_multipliers": {
-    "10": 3.0,
+    "10": 10.0,
     "20": 1.0
   },
   "log_level": "INFO"

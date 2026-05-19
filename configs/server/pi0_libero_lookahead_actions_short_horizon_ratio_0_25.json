@@ -1,5 +1,5 @@
 {
-  "env": "libero",
+  "env": "libero_pi0",
   "model": "pi05",
   "port": 8080,
   "policy": {
