@@ -446,11 +446,11 @@ class LookaheadActionsScheduler(RequestScheduler):
             search_iters += 1
         search_end = step_end
         search_duration = search_end - search_started_at
-        remaining_slack = self.mirror.next_time_server_available() - search_end
-        max_step = max(step_durations, default=0.0)
-        avg_step = (sum(step_durations) / len(step_durations)) if step_durations else 0.0
-        nodes = search.nodes_visited
-        per_node = (search_duration / nodes) if nodes else 0.0
+        # remaining_slack = self.mirror.next_time_server_available() - search_end
+        # max_step = max(step_durations, default=0.0)
+        # avg_step = (sum(step_durations) / len(step_durations)) if step_durations else 0.0
+        # nodes = search.nodes_visited
+        # per_node = (search_duration / nodes) if nodes else 0.0
         # logger.debug(
         #     "lookahead search inter_call=%+.3fs slack_in=%+.3fs slack_out=%+.3fs buffer=%.3fs "
         #     "iters=%d nodes=%d budget=%d total=%.4fs max_step=%.4fs avg_step=%.4fs "
