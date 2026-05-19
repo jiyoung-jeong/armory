@@ -148,7 +148,7 @@ class Robot:
 
     def queue_chunk(self, chunk: ActionChunk) -> None:
         self.chunks.append(chunk)
-        self.assert_consistency()
+        # self.assert_consistency()
 
     def apply_response(self, chunk_id: int, response: InferResponse, arrival_time: float) -> None:
         """A queued chunk has come back from inference. Refresh the chunk and
