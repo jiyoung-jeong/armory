@@ -219,7 +219,7 @@ class OpenPiPolicyAdapter:
             prev_actions = np.stack([np.asarray(p.prev_action) for p in rtc_params], axis=0)
             s_values = np.asarray([p.s_param for p in rtc_params], dtype=np.int32)
             d_values = np.asarray([p.d_param for p in rtc_params], dtype=np.int32)
-            eh_values = np.asarray([req.execution_horizon for req in requests], dtype=np.int32)
+            eh_values = np.asarray([req.max_execution_horizon for req in requests], dtype=np.int32)
             logger.debug(
                 "RTC sub-batch: size=%d s=%s d=%s eh=%s",
                 batch_size,
