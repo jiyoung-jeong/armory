@@ -13,7 +13,7 @@ BASELINE_SCHEDULERS = (
     "lookahead-actions",
     "lookahead-actions-cpp",
 )
-DYNAMIC_SCHEDULERS = ("dynamic-action", "action-deficit", "starvation-fair")
+DYNAMIC_SCHEDULERS = ("dynamic-action", "action-deficit", "starvation-fair", "lookahead-actions")
 LOOKAHEAD_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
 
 BASELINE_STYLE = {
@@ -40,6 +40,7 @@ DYNAMIC_STYLE = {
     "dynamic-action": {"marker": "o", "line_color": "0.45"},
     "action-deficit": {"marker": "X", "line_color": "0.20"},
     "starvation-fair": {"marker": "D", "line_color": "0.20"},
+    "lookahead-actions": {"marker": "o", "line_color": "0.45"},
 }
 DYNAMIC_CMAP = "viridis"
 

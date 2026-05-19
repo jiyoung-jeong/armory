@@ -279,8 +279,7 @@ class IncrementalSearch:
         new_times = _action_times(node)
         avg_time = sum(new_times.values()) / len(new_times)
         worst_time = min(new_times.values())
-        alpha = 0
-        objective = alpha * avg_time + (1 - alpha) * worst_time
+        objective = self.starvation_alpha * avg_time + (1 - self.starvation_alpha) * worst_time
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
