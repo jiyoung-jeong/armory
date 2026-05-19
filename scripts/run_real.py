@@ -111,7 +111,7 @@ class Args:
     fetch_server_metrics: bool = True
     """Pull /save-metrics from the running server too (enables Gantt + scheduler plots)."""
 
-    server_host: str | None = "localhost"
+    server_host: str | None = "https://vvla--armory-serve-modalpolicyserver-stable-endpoint-dev.modal.run/"
     """Server host for /save-metrics. Set to None to skip the server fetch."""
 
     server_port: int = 8080
