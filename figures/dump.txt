@@ -1,0 +1,9 @@
+	Dynamic Task				Static Task			
+min_execution_horizon	Trial 1	Trial 2	Trial 3	Dynamic TPR	Trial 1	Trial 2	Trial 3	Static TPR
+5	7	8	6	0.23	7	6	5	0.20
+10	7	8	8	0.26	6	6	7	0.21
+20	6	4	5	0.17	7	7	5	0.21
+30	4	2	3	0.10	5	6	6	0.19
+40	4	2	3	0.10	5	5	6	0.18
+50	0	1	2	0.03	5	6	6	0.19
+60	1	0	1	0.02	6	6	6	0.20
