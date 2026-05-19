@@ -152,7 +152,7 @@ class Gr00tPolicyAdapter:
             action_index_start=0,
             request_timestamp=time.time(),
             deadline=time.time() + 60.0,
-            execution_horizon=0,
+            max_execution_horizon=0,
             infer_type=InferType.SYNC,
             params=None,
             noise=None,

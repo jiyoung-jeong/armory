@@ -9,7 +9,7 @@ Two parallel sequences track a robot's progress:
   index — if any — was executed at that tick (``action_step``).
 - Action indexes are positions in the global, monotonically increasing
   sequence of actions produced by inference. Each ``ActionChunk`` covers
-  ``[action_index_start, action_index_start + execution_horizon)``.
+  ``[action_index_start, action_index_start + max_execution_horizon)``.
 
 The two sequences are decoupled: a control step may execute no action (when
 the next action index is not yet available on the robot), and a single chunk
@@ -22,10 +22,6 @@ Search and production both mutate Mirror through the same primitives:
   dispatched at ``dispatch_time``.
 - ``fast_forward(time, robot_ids, chunks)`` queues those chunks and advances
   every robot's clock to ``time``.
-
-Because both ``Robot.steps`` and ``Robot.chunks`` are append-only during
-simulation, search uses ``checkpoint`` / ``restore`` to revert mutations
-instead of deep-copying the mirror per DFS frame.
 """
 
 from __future__ import annotations
@@ -34,7 +30,7 @@ import itertools
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import (
@@ -44,6 +40,7 @@ from armory.serving.schemas import (
     RobotID,
     SlotRequest,
 )
+from armory_client.messages import InferResponse
 
 logger = logging.getLogger(__name__)
 
@@ -56,49 +53,57 @@ class ControlStep:
     next_action_step: int
 
 
-# TODO: another source of inconsistency is that we do not directly verify chunks against control steps on acks, we may need to just track which observation step it arrived before
+@dataclass
+class ChunkContext:
+    observation_step: int  # step when observation was captured
+    action_index_start: int  # action index of the first action in the chunk
+    min_execution_horizon: int
+    max_execution_horizon: int
+    arrival_time: float  # estimated/actual time the chunk lands on the robot
+    execution_start_step: int = 0  # client step when new chunk became available
+    first_executed_index: int = 0  # index within chunk where actual execution started
+
+
 class Robot:
     """Mirror of a single robot's control steps and action chunks.
 
-    Invariant: once constructed, callers must seed the robot with an initial
-    control step (``observation_step=0``, ``action_index_start=0``) via
-    ``step()`` before invoking any other method. ``Mirror.receive_request``
-    enforces this by calling ``step()`` immediately after construction.
+    The first ``step()`` after construction seeds the robot's clock from the
+    request's ``observation_step`` and ``action_index_start`` — these need
+    not be zero. A per-robot reset on the scheduler side wipes the mirror's
+    Robot, but the real client keeps incrementing its own counters; when it
+    re-registers we just pick up from wherever it is.
     """
 
-    def __init__(self, control_hz: float, execution_horizon: int):
+    def __init__(
+        self,
+        robot_id: RobotID,
+        control_hz: float,
+        min_execution_horizon: int,
+        max_execution_horizon: int,
+        latency_tracker: LatencyTracker,
+    ):
+        # NOTE: saving some things here for convenience, pattern is quite bad
+        self.robot_id = robot_id
         self.control_hz = control_hz
-        self.execution_horizon = execution_horizon
+        self.min_execution_horizon = min_execution_horizon
+        self.max_execution_horizon = max_execution_horizon
+        self.latency_tracker = latency_tracker
 
         # Both lists are sorted increasing by time by assertion.
         self.steps: list[ControlStep] = []
         # Includes chunks that are in-transit.
         self.chunks: list[ActionChunk] = []
+        self.last_request: SlotRequest | None = None
 
     def step(self, request: SlotRequest) -> bool:
-        """Apply ``request`` to the control-step history. Returns False if the
-        request is stale and was dropped.
-
-        ``request.action_index_start`` is the action the *robot* wants to execute
-        next — it does not advance until the robot actually consumes a chunk and
-        moves on. Across multiple observations while the robot waits, the same
-        ``action_index_start`` repeats. So this method just records the robot's
-        reported state; it does not infer execution from a "match" between the
-        request and the mirror's prediction. Simulated execution happens in
-        ``advance_step`` via ``fast_forward``, not here.
-
-        Drops fire when the request would either:
-        - revisit an already-seen ``observation_step`` (out-of-order delivery), or
-        - move ``next_action_step`` backward (a real regression; the robot
-          shouldn't ever ask for a lower action index than it last reported).
-        """
         if not self.steps:
-            assert request.action_index_start == 0
+            self.min_execution_horizon = request.min_execution_horizon
+            self.max_execution_horizon = request.max_execution_horizon
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
                 action_step=None,
-                next_action_step=0,
+                next_action_step=request.action_index_start,
             )
         else:
             latest = self.steps[-1]
@@ -120,67 +125,219 @@ class Robot:
                     latest.next_action_step,
                     request.observation_step,
                 )
+                logger.warning(f"self.steps: {self.steps}")
+                logger.warning(f"request: {request}")
                 return False
+            stepped_forward = request.action_index_start > self.last_request.action_index_start
+            action_step = self.last_request.action_index_start if stepped_forward else None
+            next_action_step = (
+                action_step + 1 if action_step is not None else latest.next_action_step
+            )
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
-                action_step=None,
-                next_action_step=request.action_index_start,
+                action_step=action_step,
+                next_action_step=next_action_step,
             )
 
         self.steps.append(control_step)
+        self.assert_step_consistency()
+        self.last_request = request
         return True
 
     def queue_chunk(self, chunk: ActionChunk) -> None:
         self.chunks.append(chunk)
+        self.assert_consistency()
 
-        # NOTE: chunk check
-        for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
-            if prev.action_index_start + prev.execution_horizon < curr.action_index_start:
-                raise ValueError(
-                    f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
-                )
+    def apply_response(self, chunk_id: int, response: InferResponse, arrival_time: float) -> None:
+        """A queued chunk has come back from inference. Refresh the chunk and
+        re-derive downstream chunks since this chunk's arrival time shifted."""
+        i = self._find_index(chunk_id)
+        self.chunks[i] = ActionChunk(
+            chunk_id=chunk_id,
+            observation_step=response.observation_step,
+            action_index_start=response.action_index_start,
+            min_execution_horizon=response.min_execution_horizon,
+            max_execution_horizon=response.max_execution_horizon,
+            arrival_time=arrival_time,
+            origin="completed",
+        )
+        self._recompute_from(i)
+        self.assert_consistency()
 
-    def update_chunk(
-        self,
-        new_chunk: ActionChunk,
-    ) -> None:
+    def bump_arrival(self, chunk_id: int, arrival_time: float) -> None:
+        """An in-flight chunk's projected arrival shifted (e.g. an upstream
+        batch finished earlier/later than expected). Re-derive this chunk's
+        execution fields from the new arrival, then cascade downstream."""
+        i = self._find_index(chunk_id)
+        self.chunks[i] = replace(self.chunks[i], arrival_time=arrival_time)
+        self._recompute_from(i)
+        self.assert_consistency()
+
+    def apply_ack(self, ack: AckNotification) -> None:
+        """Client confirmed receipt: trust the ack's fields exactly, re-derive
+        downstream chunks from the actual receive time."""
+        i = self._find_index(ack.chunk_id)
+        self.chunks[i] = ActionChunk(
+            chunk_id=ack.chunk_id,
+            observation_step=ack.observation_step,
+            action_index_start=ack.action_index_start,
+            min_execution_horizon=ack.min_execution_horizon,
+            max_execution_horizon=ack.max_execution_horizon,
+            arrival_time=ack.receive_time,
+            execution_start_step=ack.execution_start_step,
+            first_executed_index=ack.first_executed_index,
+            origin="confirmed",
+        )
+        self._recompute_from(i + 1)
+        self.assert_consistency()
+
+    def drop_chunk(self, chunk_id: int) -> None:
+        i = self._find_index(chunk_id)
+        del self.chunks[i]
+        self._recompute_from(i)
+        self.assert_consistency()
+
+    def get_chunk(self, chunk_id: int) -> ActionChunk:
+        return self.chunks[self._find_index(chunk_id)]
+
+    def _find_index(self, chunk_id: int) -> int:
         for i, chunk in enumerate(self.chunks):
-            if chunk.chunk_id == new_chunk.chunk_id:
-                self.chunks[i] = new_chunk
-                return
+            if chunk.chunk_id == chunk_id:
+                return i
+        raise KeyError(f"chunk_id {chunk_id} not found")
 
-        # NOTE: chunk check
+    def _recompute_from(self, start: int) -> None:
+        """Re-derive observation_step, action_index_start, execution_start_step,
+        and first_executed_index for self.chunks[start:] using each chunk's
+        already-set arrival_time. Preserves chunk_id, origin, arrival_time,
+        and min/max_execution_horizon."""
+        for i in range(start, len(self.chunks)):
+            chunk = self.chunks[i]
+            ctx = self._context_at_arrival(chunk.arrival_time)
+            self.chunks[i] = replace(
+                chunk,
+                observation_step=ctx.observation_step,
+                action_index_start=ctx.action_index_start,
+                execution_start_step=ctx.execution_start_step,
+                first_executed_index=ctx.first_executed_index,
+            )
+
+    def calculate_chunk_context(
+        self, dispatch_time: float, arrival_time: float | None = None
+    ) -> ChunkContext:
+        # NOTE: assumes time has been simulated up until dispatch_time
+        assert self.steps[-1].time + 1 / self.control_hz > dispatch_time
+        if arrival_time is None:
+            arrival_time = dispatch_time + self.latency_tracker.action_latency(self.robot_id)
+
+        obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(self.robot_id)
+        control_step = self.get_latest_control_step_before(obs_cutoff)
+
+        observation_step = control_step.observation_step
+        action_start_index = control_step.action_step or control_step.next_action_step
+
+        step = self.steps[-1]
+        while step.time < arrival_time:
+            step = self.advance_step(step)
+
+        execution_start_step = step.observation_step
+        first_executed_index = max(
+            0,
+            step.action_step - action_start_index
+            if step.action_step is not None
+            else step.next_action_step - action_start_index,
+        )
+
+        return ChunkContext(
+            observation_step=observation_step,
+            action_index_start=action_start_index,
+            min_execution_horizon=self.min_execution_horizon,
+            max_execution_horizon=self.max_execution_horizon,
+            arrival_time=arrival_time,
+            execution_start_step=execution_start_step,
+            first_executed_index=first_executed_index,
+        )
+
+    def _context_at_arrival(self, arrival_time: float) -> ChunkContext:
+        """Build a chunk context for a chunk whose arrival_time is fixed.
+
+        obs_cutoff is rolled back from arrival_time through both action and
+        observation latency, mirroring how the GPU saw the world when it
+        produced this chunk."""
+        action_latency = self.latency_tracker.action_latency(self.robot_id)
+        obs_cutoff = (
+            arrival_time - action_latency - self.latency_tracker.observation_latency(self.robot_id)
+        )
+        control_step = self.get_latest_control_step_before(obs_cutoff)
+
+        observation_step = control_step.observation_step
+        action_start_index = control_step.action_step or control_step.next_action_step
+
+        step = self.steps[-1]
+        while step.time < arrival_time:
+            step = self.advance_step(step)
+
+        execution_start_step = step.observation_step
+        first_executed_index = max(
+            0,
+            step.action_step - action_start_index
+            if step.action_step is not None
+            else step.next_action_step - action_start_index,
+        )
+
+        return ChunkContext(
+            observation_step=observation_step,
+            action_index_start=action_start_index,
+            min_execution_horizon=self.min_execution_horizon,
+            max_execution_horizon=self.max_execution_horizon,
+            arrival_time=arrival_time,
+            execution_start_step=execution_start_step,
+            first_executed_index=first_executed_index,
+        )
+
+    def assert_consistency(self) -> None:
+        """Debug-time invariant checks. Remove the call sites once we're
+        confident the producers can't violate them."""
         for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
-            if prev.action_index_start + prev.execution_horizon < curr.action_index_start:
+            if prev.action_index_start + prev.max_execution_horizon < curr.action_index_start:
                 raise ValueError(
                     f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
                 )
 
-        raise ValueError(f"chunk {new_chunk.chunk_id} not found")
+    def assert_step_consistency(self) -> None:
+        for prev, curr in zip(self.steps[:-1], self.steps[1:]):
+            if curr.action_step is not None and curr.action_step != prev.next_action_step:
+                logger.warning(f"self.steps: {self.steps}")
+                logger.warning(f"prev: {prev}")
+                logger.warning(f"curr: {curr}")
+                raise ValueError(
+                    f"Gap in steps between {prev.observation_step} and {curr.observation_step}: {prev.next_action_step} != {curr.action_step}"
+                )
 
     @property
     def max_overall_action_step(self) -> int:
-        return self.chunks[-1].action_index_start + self.chunks[-1].execution_horizon - 1
+        if not self.chunks:
+            return -1
+        return self.chunks[-1].action_index_start + self.chunks[-1].max_execution_horizon - 1
 
     def get_latest_control_step_before(self, time: float) -> ControlStep | None:
         for step in reversed(self.steps):
             if step.time < time:
                 return step
-        return None
-
-    def actions_executed(self) -> int:
-        steps = [s for s in self.steps if s.action_step is not None]
-        if not steps:
-            return 0
-        return steps[-1].action_step - steps[0].action_step + 1
+        # NOTE: might be very wrong, but just returning first step as a hack
+        return step
 
     def action_is_available(self, action_step: int, time: float) -> bool:
+        # Chunks are sorted by action_index_start (assert_consistency forbids
+        # gaps), so we can break once action_index_start exceeds action_step.
         for chunk in self.chunks:
+            if chunk.action_index_start > action_step:
+                break
             if (
-                chunk.action_index_start
+                chunk.action_index_start + chunk.first_executed_index
                 <= action_step
-                <= chunk.action_index_start + chunk.execution_horizon - 1
+                <= chunk.action_index_start + chunk.max_execution_horizon - 1
             ) and chunk.arrival_time <= time:
                 return True
         return False
@@ -203,48 +360,130 @@ class Robot:
         )
 
     def deadline(self) -> float:
-        if not self.chunks:
-            # TODO: should be first step when robot ran out of actions
-            return self.steps[-1].time
-
         step = self.steps[-1]
-        while step.next_action_step <= self.max_overall_action_step:
-            # # If no chunk covers next_action_step, advance_step can never
-            # # increment it (action_is_available stays False forever) and the
-            # # loop spins indefinitely. Treat the gap as the stall point and
-            # # return the current step time.
-            # # NOTE Rohan: hack from Claude. fix properly
-            if not any(
-                chunk.action_index_start
-                <= step.next_action_step
-                <= chunk.action_index_start + chunk.execution_horizon - 1
-                for chunk in self.chunks
-            ):
-                return step.time
-            step = self.advance_step(step)
+        if step.next_action_step < self.max_overall_action_step:
+            TIMEOUT = 1000
+            i = 0
+            while step.next_action_step <= self.max_overall_action_step:
+                step = self.advance_step(step)
+                i += 1
+                if i > TIMEOUT:
+                    raise ValueError(f"Timeout while advancing step: {step}")
+            return step.time
+        elif step.next_action_step == self.max_overall_action_step:
+            for prev_step in reversed(self.steps):
+                if prev_step.action_step is not None:
+                    return step.time
+                step = prev_step
 
-        return step.time
+            assert False, "should not happen"
+        else:
+            # next_action_step == max_overall + 1 is the legitimate "just executed
+            # the final action of the last chunk, now idle" state; anything beyond
+            # that means we skipped indices.
+            if (
+                step.next_action_step > self.max_overall_action_step + 1
+                and self.max_overall_action_step != -1
+            ):
+                logger.warning(f"self.steps: {self.steps}")
+                logger.warning(f"step: {step}")
+                logger.warning(f"self.max_overall_action_step: {self.max_overall_action_step}")
+                logger.warning(f"self.chunks: {self.chunks}")
+                raise ValueError(
+                    f"step.next_action_step {step.next_action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
+                )
+            return step.time
 
     def step_forward(self, time: float) -> None:
-        while self.steps[-1].time < time:
-            self.steps.append(self.advance_step(self.steps[-1]))
+        # Hot path: inlines advance_step + action_is_available and exploits the
+        # fact that both ``action_step`` (= prev next_action_step) and ``time``
+        # are monotonic non-decreasing across iterations. A cursor advances
+        # past chunks whose entire range is below the current action_step so
+        # we don't rescan them every tick.
+        steps = self.steps
+        prev_step = steps[-1]
+        if prev_step.time >= time:
+            return
+
+        chunks = self.chunks
+        n_chunks = len(chunks)
+        chunk_starts = [c.action_index_start + c.first_executed_index for c in chunks]
+        chunk_ends = [c.action_index_start + c.max_execution_horizon - 1 for c in chunks]
+        chunk_ais = [c.action_index_start for c in chunks]
+        chunk_arrivals = [c.arrival_time for c in chunks]
+
+        dt = 1.0 / self.control_hz
+        chunk_idx = 0
+
+        prev_time = prev_step.time
+        prev_obs = prev_step.observation_step
+        prev_next_action = prev_step.next_action_step
+
+        while prev_time < time:
+            next_time = prev_time + dt
+            action_step = prev_next_action
+
+            # Advance cursor past chunks that end before action_step.
+            while chunk_idx < n_chunks and chunk_ends[chunk_idx] < action_step:
+                chunk_idx += 1
+
+            # Walk forward while chunks overlap with action_step on action_index_start.
+            is_available = False
+            i = chunk_idx
+            while i < n_chunks and chunk_ais[i] <= action_step:
+                if chunk_starts[i] <= action_step and chunk_arrivals[i] <= next_time:
+                    is_available = True
+                    break
+                i += 1
+
+            if is_available:
+                new_action = action_step
+                new_next_action = action_step + 1
+            else:
+                new_action = None
+                new_next_action = action_step
+
+            new_obs = prev_obs + 1
+            steps.append(
+                ControlStep(
+                    time=next_time,
+                    observation_step=new_obs,
+                    action_step=new_action,
+                    next_action_step=new_next_action,
+                )
+            )
+            prev_time = next_time
+            prev_obs = new_obs
+            prev_next_action = new_next_action
 
     def next_chunk_start(self, cs: ControlStep) -> int:
         """Action index the next queued chunk should start at, given control step ``cs``."""
         return cs.action_step if cs.action_step is not None else cs.next_action_step
 
-    def remove_chunk(self, chunk_id: int) -> None:
-        for i, chunk in enumerate(self.chunks):
-            if chunk.chunk_id == chunk_id:
-                del self.chunks[i]
-                return
-        raise KeyError(f"chunk_id {chunk_id} not found")
+    def _clone_for_twin(self) -> Robot:
+        """Cheap shallow clone for speculative twins.
+
+        ``steps`` and ``chunks`` get fresh list objects so twin-side appends
+        and replacements don't leak back, but the items themselves are shared:
+        ``ActionChunk`` is frozen, and ``ControlStep`` is never mutated in
+        place anywhere in this module."""
+        twin = Robot.__new__(Robot)
+        twin.robot_id = self.robot_id
+        twin.control_hz = self.control_hz
+        twin.min_execution_horizon = self.min_execution_horizon
+        twin.max_execution_horizon = self.max_execution_horizon
+        twin.latency_tracker = self.latency_tracker
+        twin.steps = list(self.steps)
+        twin.chunks = list(self.chunks)
+        twin.last_request = self.last_request  # NOTE: bad hack
+        return twin
 
     def to_dict(self, now: float) -> dict:
         step = self.steps[-1] if self.steps else None
         return {
             "control_hz": self.control_hz,
-            "execution_horizon": self.execution_horizon,
+            "min_execution_horizon": self.min_execution_horizon,
+            "max_execution_horizon": self.max_execution_horizon,
             "n_steps": len(self.steps),
             "n_chunks": len(self.chunks),
             "action_index_range": (
@@ -278,25 +517,11 @@ class Batch:
         return len(self.robot_ids)
 
 
-@dataclass(frozen=True)
-class Checkpoint:
-    """Snapshot of a Mirror's append-only state. Restore resets robot and batch state.
-
-    Checkpoints must preserve the actual list contents, not only list lengths:
-    search restores divergent branches whose chunk/control-step prefixes may
-    have the same length but different values.
-    """
-
-    robot_states: dict[RobotID, tuple[tuple[ControlStep, ...], tuple[ActionChunk, ...]]]
-    in_flight_batches: tuple[Batch, ...]
-    last_batch_completed_time: float
-
-
 class Mirror:
-    def __init__(self, latency_tracker: LatencyTracker | None = None):
+    """Tracks GPU timing + wraps Robots"""
+
+    def __init__(self, latency_tracker: LatencyTracker):
         self.robots: dict[RobotID, Robot] = {}
-        # Optional so existing tests can construct a Mirror without a tracker;
-        # methods that need it (get_chunks, update_completion) assert non-None.
         self.latency_tracker = latency_tracker
         self.in_flight_batches: deque[Batch] = deque()
         self.last_batch_completed_time: float = 0.0
@@ -306,51 +531,91 @@ class Mirror:
     def in_flight_batches_count(self) -> int:
         return len(self.in_flight_batches)
 
-    def reset_robot(self, robot_id: RobotID) -> None:
-        self.robots.pop(robot_id, None)
+    def next_time_server_available(self) -> float:
+        if len(self.in_flight_batches) == 0:
+            # During simulation last_batch_completed_time is a future simulated time;
+            # during production it's in the past so time.time() dominates.
+            return max(time.time(), self.last_batch_completed_time)
+        # Each batch's completion_time is already chained: queue_batch sets it to
+        # next_time_server_available() + infer_lat at enqueue time, so the tail
+        # of the queue is exactly when the server next becomes free.
+        return self.in_flight_batches[-1].completion_time
 
-    def receive_request(self, request: SlotRequest, control_hz: float) -> bool:
+    def reset_robot(self, robot_id: RobotID) -> None:
+        if self.robots.pop(robot_id, None) is None:
+            return
+        # Strip the robot's chunks from any in-flight batches so that a late
+        # ResponseBatch (or downstream bump_arrival) doesn't look up a chunk_id
+        # that no longer exists on the robot. The batch entries themselves are
+        # kept (even if they end up empty) so GPU timing accounting —
+        # next_time_server_available, batch_id matching in
+        # update_batch_completion — stays consistent with the work the GPU is
+        # actually still doing.
+        for in_flight in self.in_flight_batches:
+            kept_robots: list[RobotID] = []
+            kept_chunks: list[int] = []
+            for rid, cid in zip(in_flight.robot_ids, in_flight.chunk_ids):
+                if rid == robot_id:
+                    continue
+                kept_robots.append(rid)
+                kept_chunks.append(cid)
+            in_flight.robot_ids = kept_robots
+            in_flight.chunk_ids = kept_chunks
+
+    def clear_all(self) -> None:
+        self.robots.clear()
+        self.in_flight_batches.clear()
+        self.last_batch_completed_time = 0.0
+        self.chunk_id_counter = itertools.count(1)
+
+    def receive_request(self, request: SlotRequest) -> bool:
         """Returns False if the request was dropped as stale by ``Robot.step``."""
         if request.robot_id not in self.robots:
-            # NOTE: for now, assume control_hz and execution_horizon are fixed for a robot's lifetime
-            self.robots[request.robot_id] = Robot(control_hz, request.execution_horizon)
+            # NOTE: for now, assume control_hz and max_execution_horizon are fixed for a robot's lifetime
+            self.robots[request.robot_id] = Robot(
+                request.robot_id,
+                request.control_hz,
+                request.min_execution_horizon,
+                request.max_execution_horizon,
+                self.latency_tracker,
+            )
         return self.robots[request.robot_id].step(request)
 
-    def _next_chunk_context(self, rid: RobotID, dispatch_time: float) -> tuple[ControlStep, int]:
-        # Caller must fast-forward the mirror to at least ``dispatch_time`` first.
-        robot = self.robots[rid]
-        obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(rid)
-        cs = robot.get_latest_control_step_before(obs_cutoff)
-        assert cs is not None, (
-            f"robot {rid} has no control step before {obs_cutoff}, first control step: {robot.steps[0].time}"
-        )
-        return cs, robot.next_chunk_start(cs)
-
     def queue_batch(
-        self, batch: list[RobotID], batch_id: int, *, origin: str = "queued"
+        self,
+        batch: list[RobotID],
+        batch_id: int,
+        *,
+        origin: str = "queued",
     ) -> list[ActionChunk]:
-        assert self.latency_tracker is not None
         dispatch_time = self.next_time_server_available()
+        twin = self.get_twin()
+        twin.fast_forward(dispatch_time)
+
         infer_lat = self.latency_tracker.infer_latency(len(batch))
 
-        ckpt = self.checkpoint()
-        self.fast_forward(dispatch_time)
-        contexts = [self._next_chunk_context(rid, dispatch_time) for rid in batch]
-        self.restore(ckpt)
-
         chunks: list[ActionChunk] = []
-        for rid, (cs, action_index_start) in zip(batch, contexts):
-            robot = self.robots[rid]
+        for robot_id in batch:
+            # The twin holds the simulated state at dispatch_time; the real
+            # robot's clock may still be behind, so calculate against the twin.
+            arrival_time = dispatch_time + infer_lat + self.latency_tracker.action_latency(robot_id)
+            chunk_context = twin.robots[robot_id].calculate_chunk_context(
+                dispatch_time,
+                arrival_time=arrival_time,
+            )
             chunk = ActionChunk(
                 chunk_id=next(self.chunk_id_counter),
-                observation_step=cs.observation_step,
-                arrival_time=dispatch_time + infer_lat + self.latency_tracker.action_latency(rid),
-                action_index_start=action_index_start,
-                execution_horizon=robot.execution_horizon,
+                observation_step=chunk_context.observation_step,
+                action_index_start=chunk_context.action_index_start,
+                min_execution_horizon=chunk_context.min_execution_horizon,
+                max_execution_horizon=chunk_context.max_execution_horizon,
+                arrival_time=chunk_context.arrival_time,
+                execution_start_step=chunk_context.execution_start_step,
+                first_executed_index=chunk_context.first_executed_index,
                 origin=origin,
             )
+            self.robots[robot_id].queue_chunk(chunk)
             chunks.append(chunk)
-            robot.queue_chunk(chunk)
         self.in_flight_batches.append(
             Batch(
                 batch_id=batch_id,
@@ -363,7 +628,6 @@ class Mirror:
 
     def update_batch_completion(self, batch: ResponseBatch) -> None:
         """Refine each chunk's arrival_time once GPU inference has completed."""
-        assert self.latency_tracker is not None
         # Stale ResponseBatches can arrive from before a ResetAll: the GPU was
         # already mid-flight when /reset cleared in_flight_batches. Ignore them
         # — batch_ids are monotonic, so a mismatch means we're seeing the past.
@@ -379,110 +643,71 @@ class Mirror:
         actual_completion = batch.inference_start_time + batch.inference_duration
         self.last_batch_completed_time = actual_completion
 
-        served_chunk_ids = set([response.chunk_id for response in batch.responses])
-        for (
-            robot_id,
-            chunk_id,
-        ) in zip(in_flight.robot_ids, in_flight.chunk_ids):
+        responses_by_chunk = {response.chunk_id: response for response in batch.responses}
+        for robot_id, chunk_id in zip(in_flight.robot_ids, in_flight.chunk_ids):
             robot = self.robots.get(robot_id)
             if robot is None:
                 logger.debug("Ignoring completion for unknown robot: %s", robot_id)
                 continue
-            if chunk_id not in served_chunk_ids:
-                robot.remove_chunk(chunk_id)
+            response = responses_by_chunk.get(chunk_id)
+            if response is None:
+                robot.drop_chunk(chunk_id)
             else:
-                # kind ugly
-                infer_response = next(
-                    response for response in batch.responses if response.chunk_id == chunk_id
+                arrival_time = actual_completion + self.latency_tracker.action_latency(robot_id)
+                robot.apply_response(chunk_id, response, arrival_time)
+
+        # Re-chain downstream batches off the actual completion of the head batch.
+        prev_completion = actual_completion
+        for queued_batch in self.in_flight_batches:
+            queued_batch.completion_time = prev_completion + self.latency_tracker.infer_latency(
+                len(queued_batch.robot_ids)
+            )
+            for robot_id, chunk_id in zip(queued_batch.robot_ids, queued_batch.chunk_ids):
+                robot = self.robots.get(robot_id)
+                if robot is None:
+                    logger.debug("Ignoring completion for unknown robot: %s", robot_id)
+                    continue
+                arrival_time = queued_batch.completion_time + self.latency_tracker.action_latency(
+                    robot_id
                 )
-                chunk = ActionChunk(
-                    chunk_id=chunk_id,
-                    observation_step=infer_response.observation_step,
-                    arrival_time=actual_completion + self.latency_tracker.action_latency(robot_id),
-                    action_index_start=infer_response.action_index_start,
-                    execution_horizon=infer_response.execution_horizon,
-                    execution_start_step=0,
-                    origin="completed",
-                )
-                robot.update_chunk(chunk)
+                robot.bump_arrival(chunk_id, arrival_time)
+            prev_completion = queued_batch.completion_time
 
     def confirm_chunk(self, ack: AckNotification) -> None:
         robot = self.robots.get(ack.robot_id)
         if robot is None:
             logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
             return
-        chunk = ActionChunk(
-            chunk_id=ack.chunk_id,
-            observation_step=ack.observation_step,
-            arrival_time=ack.receive_time,
-            action_index_start=ack.action_index_start,
-            execution_horizon=ack.execution_horizon,
-            execution_start_step=ack.execution_start_step,
-            first_executed_index=ack.first_executed_index,
-            origin="confirmed",
-        )
-        robot.update_chunk(chunk)
+        # The chunk may have been wiped by an intervening reset_robot (and the
+        # robot since re-registered with a fresh empty chunks list). Acks are
+        # advisory arrival-time refinements, so dropping a stale one is safe.
+        if not any(c.chunk_id == ack.chunk_id for c in robot.chunks):
+            logger.debug(
+                "Ignoring ack for unknown chunk: robot=%s chunk_id=%s",
+                ack.robot_id,
+                ack.chunk_id,
+            )
+            return
+        robot.apply_ack(ack)
 
-    def next_time_server_available(self) -> float:
-        if len(self.in_flight_batches) == 0:
-            # During simulation last_batch_completed_time is a future simulated time;
-            # during production it's in the past so time.time() dominates.
-            return max(time.time(), self.last_batch_completed_time)
-        # Each batch's completion_time is already chained: queue_batch sets it to
-        # next_time_server_available() + infer_lat at enqueue time, so the tail
-        # of the queue is exactly when the server next becomes free.
-        return self.in_flight_batches[-1].completion_time
-
-    def schedulable_requests(
+    def schedulable_robot_ids(
         self,
-        requests: dict[RobotID, SlotRequest],
-        min_execution_horizon: int = 0,
-    ) -> list[SlotRequest]:
-        """Filter requests whose next-chunk start is at least ``min_execution_horizon`` past
-        the last queued chunk. Mirrors the engine's _should_serve gate so the
-        scheduler doesn't emit batches the engine will drop.
-        """
-        schedulable_requests: list[SlotRequest] = []
+    ) -> list[RobotID]:
+        schedulable_robot_ids: list[RobotID] = []
 
-        dispatch_time = self.next_time_server_available()
-        # logger.debug(
-        #     "Dispatch time: %f, last batch completed time: %f, current time: %f",
-        #     dispatch_time,
-        #     self.last_batch_completed_time,
-        #     time.time(),
-        # )
-        ckpt = self.checkpoint()
-        self.fast_forward(dispatch_time)
-        for robot_id, request in requests.items():
-            robot = self.robots[robot_id]
-
-            # added by Rohan. sometimes client clock is slightly off on reset, so new robot's first step lands after obs_cutoff,
-            # then get_latest_control_step_before returns None and it blows up. I added the below to skip this robot initially,
-            # it will get re-scheduled in the future.
-            obs_cutoff = dispatch_time - self.latency_tracker.observation_latency(robot_id)
-            if robot.get_latest_control_step_before(obs_cutoff) is None:
-                continue
-            #
-
-            _, action_index_start = self._next_chunk_context(robot_id, dispatch_time)
-            if (
-                len(robot.chunks) == 0
-                or action_index_start > robot.chunks[-1].action_index_start + min_execution_horizon
+        twin = self.get_twin()
+        dispatch_time = twin.next_time_server_available()
+        twin.fast_forward(dispatch_time)
+        for robot_id in self.robots.keys():
+            robot = twin.robots[robot_id]
+            anticipated_chunk = robot.calculate_chunk_context(dispatch_time)
+            if len(robot.chunks) == 0 or robot.last_request.can_serve(
+                robot.chunks[-1].action_index_start, anticipated_chunk.action_index_start
             ):
-                schedulable_requests.append(request)
-            # else:
-            #     logger.debug("Request %s is not schedulable", request.robot_id)
-            #     logger.debug("Action index start: %d", action_index_start)
-            #     logger.debug("Request action index start: %d", request.action_index_start)
-            #     logger.debug("Dispatch time: %f", dispatch_time)
-            #     logger.debug("Request: %s", request)
-            #     logger.debug("Robot: %s", robot_id)
-            #     logger.debug("Robot steps: %s", self.robots[robot_id].steps)
-            #     logger.debug("Robot chunks: %s", self.robots[robot_id].chunks)
-        self.restore(ckpt)
-        return schedulable_requests
+                schedulable_robot_ids.append(robot_id)
 
-    # below are methods only used by search
+        return schedulable_robot_ids
+
     def fast_forward(
         self,
         time: float,
@@ -495,26 +720,22 @@ class Mirror:
             completed = self.in_flight_batches.popleft()
             self.last_batch_completed_time = completed.completion_time
 
-    def checkpoint(self) -> Checkpoint:
-        return Checkpoint(
-            robot_states={
-                rid: (tuple(robot.steps), tuple(robot.chunks)) for rid, robot in self.robots.items()
-            },
-            in_flight_batches=tuple(self.in_flight_batches),
-            last_batch_completed_time=self.last_batch_completed_time,
-        )
+    def get_twin(self) -> Mirror:
+        """Shallow twin for speculative planning.
 
-    def restore(self, ckpt: Checkpoint) -> None:
-        for rid in list(self.robots.keys()):
-            if rid not in ckpt.robot_states:
-                del self.robots[rid]
-                continue
-            steps, chunks = ckpt.robot_states[rid]
-            robot = self.robots[rid]
-            robot.steps = list(steps)
-            robot.chunks = list(chunks)
-        self.in_flight_batches = deque(ckpt.in_flight_batches)
-        self.last_batch_completed_time = ckpt.last_batch_completed_time
+        ``in_flight_batches`` and each robot's ``steps`` / ``chunks`` lists
+        are copied so twin-side mutations don't leak back, but the items
+        inside are shared. ``Batch.completion_time`` is mutated only by
+        ``update_batch_completion`` on the real Mirror, never via a twin,
+        so sharing ``Batch`` references is safe. ``latency_tracker`` and
+        ``chunk_id_counter`` are read/never-touched on the twin path."""
+        twin = Mirror.__new__(Mirror)
+        twin.latency_tracker = self.latency_tracker
+        twin.in_flight_batches = deque(self.in_flight_batches)
+        twin.last_batch_completed_time = self.last_batch_completed_time
+        twin.chunk_id_counter = self.chunk_id_counter
+        twin.robots = {rid: robot._clone_for_twin() for rid, robot in self.robots.items()}
+        return twin
 
     def deadlines(self) -> dict[RobotID, float]:
         deadlines = {rid: robot.deadline() for rid, robot in self.robots.items()}

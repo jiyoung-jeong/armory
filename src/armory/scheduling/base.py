@@ -3,10 +3,15 @@ import logging
 import multiprocessing as mp
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from armory.scheduling.latency import EMALatencyTracker
+
+# Swap between Mirror and SimpleMirror here while mirror.py is being fixed.
 from armory.scheduling.mirror import Mirror
+
+# from armory.scheduling.simple_mirror import SimpleMirror as Mirror
 from armory.serving.schemas import (
     AckNotification,
     RequestBatch,
@@ -20,22 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 class RequestScheduler(ABC):
-    def __init__(
-        self,
-        batch_queue: mp.Queue,
-        max_batch_size: int = 1,
-        min_execution_horizon: int = 0,
-    ):
+    def __init__(self, batch_queue: mp.Queue, max_batch_size: int = 1):
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
-        # Mirror the engine's _should_serve gate. The engine drops a request
-        # whose action_index_start is not at least min_execution_horizon past what was last
-        # served; if the scheduler doesn't apply the same gate, it keeps
-        # emitting batches the engine will reject. Each rejected batch returns
-        # an empty ResponseBatch which still pops in_flight, freeing the
-        # GreedyDeadline gate to emit again — a tight loop that buries the
-        # GPU's batch_queue.
-        self._min_execution_horizon = min_execution_horizon
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)
@@ -43,12 +35,13 @@ class RequestScheduler(ABC):
 
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
+        self._drain_fn: Callable[[], None] | None = None
 
     def update(self, request: SlotRequest) -> None:
         self.latency_tracker.update_obs(
             request.robot_id, request.arrival_timestamp, request.request_timestamp
         )
-        accepted = self.mirror.receive_request(request, request.control_hz)
+        accepted = self.mirror.receive_request(request)
         if accepted:
             self._latest_requests[request.robot_id] = request
 
@@ -81,8 +74,8 @@ class RequestScheduler(ABC):
         logger.debug(
             "schedule stage=mirror_schedulable latest_requests=%d", len(self._latest_requests)
         )
-        candidates = self.mirror.schedulable_requests(self._latest_requests, min_execution_horizon=self._min_execution_horizon)
-        candidate_ids = [r.robot_id for r in candidates]
+        candidate_ids = self.mirror.schedulable_robot_ids()
+        candidates = [self._latest_requests[robot_id] for robot_id in candidate_ids]
         logger.debug("schedule stage=mirror_deadlines robots=%d", len(self.mirror.robots))
         deadlines = self.mirror.deadlines() if self.mirror.robots else {}
 
@@ -95,12 +88,23 @@ class RequestScheduler(ABC):
         )
 
         batches, notes = self.get_next_batches(candidates)
+        post_return = time.time()
         logger.debug(
             "schedule stage=get_next_batches_done batches=%d mode=%s",
             len(batches),
             notes.get("mode") if isinstance(notes, dict) else None,
         )
 
+        dispatch_start = time.time()
+        # Phases recorded by the inner scheduler use timestamps captured before
+        # `return`. The window between the last in-function phase and now covers
+        # function return + local-variable dealloc (which can be slow when the
+        # search held large frontiers) + this logger.debug. Surface it.
+        if isinstance(notes, dict):
+            phases = notes.setdefault("phases", [])
+            last_end = max((float(p.get("end", 0.0)) for p in phases), default=0.0)
+            if 0.0 < last_end < post_return:
+                phases.append({"name": "return_overhead", "start": last_end, "end": post_return})
         decisions: list[SchedulerDecision] = []
         for batch in batches:
             batch_id = next(self.next_batch_id)
@@ -133,6 +137,10 @@ class RequestScheduler(ABC):
                 )
             )
 
+        if batches and isinstance(notes, dict):
+            phases = notes.setdefault("phases", [])
+            phases.append({"name": "dispatch", "start": dispatch_start, "end": time.time()})
+
         return decisions
 
     @abstractmethod
@@ -163,7 +171,5 @@ class RequestScheduler(ABC):
         and the next trial sees zero scheduling decisions.
         """
         self._latest_requests.clear()
-        self.mirror.robots.clear()
-        self.mirror.in_flight_batches.clear()
-        self.mirror.last_batch_completed_time = 0.0
-        # Latency tracker keeps its profile — that's still valid across trials.
+        self.mirror.clear_all()
+        self.latency_tracker.clear_all()

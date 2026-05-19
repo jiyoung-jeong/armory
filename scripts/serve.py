@@ -6,6 +6,7 @@ import multiprocessing as mp
 import pathlib
 import socket
 import sys
+from dataclasses import field
 from typing import Literal
 
 import tyro
@@ -81,6 +82,7 @@ class Args(JsonArgs):
     lookahead_horizon_ms: int = 500
     lookahead_timestep_ms: int = 50
     lookahead_control_hz: int = 20
+    action_horizon_multipliers: dict[int, float] = field(default_factory=dict)
 
     seed: int = 7
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -108,6 +110,7 @@ class Args(JsonArgs):
             "lookahead_horizon_ms": self.lookahead_horizon_ms,
             "lookahead_timestep_ms": self.lookahead_timestep_ms,
             "lookahead_control_hz": self.lookahead_control_hz,
+            "action_horizon_multipliers": self.action_horizon_multipliers,
             "seed": self.seed,
             "log_level": self.log_level,
         }
@@ -138,6 +141,10 @@ class Args(JsonArgs):
             lookahead_horizon_ms=data.get("lookahead_horizon_ms", 500),
             lookahead_timestep_ms=data.get("lookahead_timestep_ms", 50),
             lookahead_control_hz=data.get("lookahead_control_hz", 20),
+            action_horizon_multipliers={
+                int(horizon): float(multiplier)
+                for horizon, multiplier in data.get("action_horizon_multipliers", {}).items()
+            },
             seed=data.get("seed", 7),
             log_level=data.get("log_level", "INFO"),
         )
@@ -155,9 +162,9 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
             "action_horizon_steps": action_horizon_steps,
             "control_hz": args.lookahead_control_hz,
         }
-    if args.scheduling_algorithm == "starvation":
+    if args.scheduling_algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
         return {
-            "min_observation_step_diff": args.min_observation_step_diff,
+            "action_horizon_multipliers": args.action_horizon_multipliers,
         }
     return None
 
@@ -199,7 +206,6 @@ def main(args: Args) -> None:
         args, action_horizon_steps=resolved.metadata.action_horizon
     )
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
-    resolved.metadata.min_execution_horizon = args.min_execution_horizon
 
     server = PolicyServer(
         metadata=resolved.metadata,

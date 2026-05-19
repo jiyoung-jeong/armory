@@ -32,13 +32,19 @@ class SlotRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
-    execution_horizon: int
+    min_execution_horizon: int
+    max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None
     noise: np.ndarray | None
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
     is_padding: bool = False  # true for artificial slots used only to pad GPU batch size
+
+    def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
+        return (
+            anticipated_action_index_start >= last_action_index_start + self.min_execution_horizon
+        )
 
 
 @dataclass(frozen=True)
@@ -50,7 +56,8 @@ class AckNotification:
     chunk_id: int
     observation_step: int
     action_index_start: int
-    execution_horizon: int
+    min_execution_horizon: int
+    max_execution_horizon: int
     execution_start_step: int
     first_executed_index: int
 
@@ -89,7 +96,8 @@ class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
     action_index_start: int  # action index of the first action in the chunk
-    execution_horizon: int
+    min_execution_horizon: int
+    max_execution_horizon: int
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int = 0  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
@@ -99,6 +107,19 @@ class ActionChunk:
     #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
     #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
     origin: str = "queued"
+
+    @classmethod
+    def from_ack(cls, ack: AckNotification) -> ActionChunk:
+        return cls(
+            chunk_id=ack.chunk_id,
+            observation_step=ack.observation_step,
+            action_index_start=ack.action_index_start,
+            min_execution_horizon=ack.min_execution_horizon,
+            max_execution_horizon=ack.max_execution_horizon,
+            execution_start_step=ack.execution_start_step,
+            first_executed_index=ack.first_executed_index,
+            origin="confirmed",
+        )
 
 
 class RequestBatch(NamedTuple):
@@ -172,7 +193,8 @@ class InternalRequest:
     action_index_start: int
     request_timestamp: float
     deadline: float
-    execution_horizon: int
+    min_execution_horizon: int
+    max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
     noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
@@ -197,7 +219,8 @@ class InternalRequest:
             action_index_start=slot_data.action_index_start,
             request_timestamp=slot_data.request_timestamp,
             deadline=slot_data.deadline,
-            execution_horizon=slot_data.execution_horizon,
+            min_execution_horizon=slot_data.min_execution_horizon,
+            max_execution_horizon=slot_data.max_execution_horizon,
             infer_type=slot_data.infer_type,
             params=params,
         )
