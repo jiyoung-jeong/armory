@@ -141,13 +141,28 @@ class IncrementalSearch:
 
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
         schedulable_robot_ids = mirror.schedulable_robot_ids()
+
+        ## deadline version
         deadlines = mirror.deadlines()
         sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
+        # No robot back-to-back: exclude whoever was in the most recent dispatch
+        # the mirror knows about. The mirror persists this field through
+        # fast_forward, so it bridges both intra-search depth (just-queued
+        # batches in the search tree) and across ticks (last real dispatch).
+        if mirror.last_queued_batch_robot_ids:
+            prev_set = set(mirror.last_queued_batch_robot_ids)
+            sorted_robot_ids = [rid for rid in sorted_robot_ids if rid not in prev_set]
         # just prefixes
         return tuple(
             tuple(sorted_robot_ids[:size])
             for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
         )
+        #
+
+        ## everything version
+        # if mirror.last_queued_batch_robot_ids:
+        #     prev_set = set(mirror.last_queued_batch_robot_ids)
+        #     schedulable_robot_ids = [rid for rid in schedulable_robot_ids if rid not in prev_set]
 
         # return tuple(
         #     itertools.chain.from_iterable(
@@ -251,35 +266,17 @@ class IncrementalSearch:
     #             [b for b in schedule],
     #         )
 
-    # def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
-    #     gpu_time = gpu_end_time - self.start_time
-    #     if gpu_time <= 0:
-    #         return
-    #     new_times = _action_times(node)
-    #     gained = sum(
-    #         self.action_horizon_multipliers[node.robots[rid].max_execution_horizon]
-    #         * (new_times[rid] - self.initial_action_times[rid])
-    #         for rid in new_times
-    #     )
-    #     objective = gained / gpu_time
-    #     if objective > self.best_objective:
-    #         self.best_objective = objective
-    #         self.best_schedule = list(schedule)
-    #         logger.debug(
-    #             "new best: depth=%d objective=%.4f schedule=%s",
-    #             len(schedule),
-    #             objective,
-    #             [b for b in schedule],
-    #         )
-
     def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
         gpu_time = gpu_end_time - self.start_time
         if gpu_time <= 0:
             return
         new_times = _action_times(node)
-        avg_time = sum(new_times.values()) / len(new_times)
-        worst_time = min(new_times.values())
-        objective = self.starvation_alpha * avg_time + (1 - self.starvation_alpha) * worst_time
+        gained = sum(
+            self.action_horizon_multipliers[node.robots[rid].max_execution_horizon]
+            * (new_times[rid] - self.initial_action_times[rid])
+            for rid in new_times
+        )
+        objective = gained / gpu_time
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
@@ -289,6 +286,25 @@ class IncrementalSearch:
                 objective,
                 [b for b in schedule],
             )
+
+    # def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
+    #     gpu_time = gpu_end_time - self.start_time
+    #     if gpu_time <= 0:
+    #         return
+    #     new_times = _action_times(node)
+    #     avg_time = sum(new_times.values()) / len(new_times)
+    #     worst_time = min(new_times.values())
+    #     self.starvation_alpha = 1.0
+    #     objective = self.starvation_alpha * avg_time + (1 - self.starvation_alpha) * worst_time
+    #     if objective > self.best_objective:
+    #         self.best_objective = objective
+    #         self.best_schedule = list(schedule)
+    #         logger.debug(
+    #             "new best: depth=%d objective=%.4f schedule=%s",
+    #             len(schedule),
+    #             objective,
+    #             [b for b in schedule],
+    #         )
 
     def _greedy(self) -> Batch:
         schedulable_robot_ids = self.snapshot.schedulable_robot_ids()

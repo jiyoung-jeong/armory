@@ -528,6 +528,10 @@ class Mirror:
         self.in_flight_batches: deque[Batch] = deque()
         self.last_batch_completed_time: float = 0.0
         self.chunk_id_counter = itertools.count(1)
+        # Persists past fast_forward popping the batch out of in_flight_batches;
+        # used by schedulers that want a "no back-to-back" view of the most
+        # recent dispatch.
+        self.last_queued_batch_robot_ids: tuple[RobotID, ...] = ()
 
     @property
     def in_flight_batches_count(self) -> int:
@@ -569,6 +573,7 @@ class Mirror:
         self.in_flight_batches.clear()
         self.last_batch_completed_time = 0.0
         self.chunk_id_counter = itertools.count(1)
+        self.last_queued_batch_robot_ids = ()
 
     def receive_request(self, request: SlotRequest) -> bool:
         """Returns False if the request was dropped as stale by ``Robot.step``."""
@@ -626,6 +631,7 @@ class Mirror:
                 completion_time=dispatch_time + infer_lat,
             )
         )
+        self.last_queued_batch_robot_ids = tuple(batch)
         return chunks
 
     def update_batch_completion(self, batch: ResponseBatch) -> None:
@@ -737,6 +743,7 @@ class Mirror:
         twin.last_batch_completed_time = self.last_batch_completed_time
         twin.chunk_id_counter = self.chunk_id_counter
         twin.robots = {rid: robot._clone_for_twin() for rid, robot in self.robots.items()}
+        twin.last_queued_batch_robot_ids = self.last_queued_batch_robot_ids
         return twin
 
     def deadlines(self) -> dict[RobotID, float]:
