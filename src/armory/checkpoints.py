@@ -72,9 +72,16 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
     },
     EnvMode.REAL_ACT_100: {
         # "config": "pi05_legos_turntable_25hz_act100",
-        "config": "pi05_legos_turntable_better_25hz_act100",
+        # "config": "pi05_legos_turntable_better_25hz_act100",
+        # "config": "pi05_legos_turntable_better_full_25hz_act100",  # good 25hz checkpt
+        # "config": "pi05_legos_turntable_better_full_30hz_act100",  # 30hz checkpt
+        "config": "pi05_legos_turntable_better_full_30hz_act100_finetune",  # 30hz checkpt finetune
         # "dir": "/coc/flash7/rbansal66/vvla/armory/checkpoints/multitask_100",
-        "dir": "/checkpoints/openpi-assets/checkpoints/pi05_legos_turntable_25hz_act100_doublestack_finetune",
+        # "dir": "/checkpoints/openpi-assets/checkpoints/finetuned_lego_turntable/55000",
+        # "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_25hz_new_act100_5999",  # good 25hz checkpt
+        # "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_30hz_new_act100/50000",  # good 30z checkpt
+        "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_30hz_new_act100_finetune",  # good 30z checkpt finetune
+        # "dir": "/coc/flash7/rbansal66/vvla/armory/checkpoints/new_multitask_100",
     },
 }
 

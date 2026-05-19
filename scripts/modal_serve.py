@@ -14,14 +14,14 @@ app = modal.App("armory-serve")
 
 GPU = "l40s"
 REGION = "us-east"
-ENV_MODE = "REAL_ACT_20"
-MAX_BATCH_SIZE = 1
+ENV_MODE = "REAL_ACT_100"
+MAX_BATCH_SIZE = 5
 PORT = 8080
 MODEL = "PI05"
-SCHEDULING_ALGORITHM = "max-batch"
-ALPHA = 1.0
+SCHEDULING_ALGORITHM = "round-robin"
+ALPHA = 2.0
 MIN_EXECUTION_HORIZON = 5
-MIN_OBSERVATION_STEP_DIFF = 20
+MIN_OBSERVATION_STEP_DIFF = 12
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 
