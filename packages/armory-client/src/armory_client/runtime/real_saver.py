@@ -201,11 +201,7 @@ class RealSaver(_subscriber.Subscriber):
         result.to_json(out_folder / "metadata.json")
 
     def _save_video(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
-        images = [
-            obs.image
-            for obs in data.observations_buffer.values()
-            if obs.image is not None
-        ]
+        images = [obs.image for obs in data.observations_buffer.values() if obs.image is not None]
         if not images:
             return
         imageio.mimwrite(
@@ -215,9 +211,7 @@ class RealSaver(_subscriber.Subscriber):
         )
 
     def _save_debug_data(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
-        has_noise = any(
-            getattr(chunk, "noise", None) is not None for chunk in data.action_chunks
-        )
+        has_noise = any(getattr(chunk, "noise", None) is not None for chunk in data.action_chunks)
         if not has_noise:
             return
 
@@ -243,7 +237,7 @@ class RealSaver(_subscriber.Subscriber):
                 data_to_save[f"{prefix}/noise"] = chunk.noise
             data_to_save[f"{prefix}/actions"] = chunk.actions
             data_to_save[f"{prefix}/start_step"] = chunk.observation_step
-            data_to_save[f"{prefix}/execution_horizon"] = chunk.execution_horizon
+            data_to_save[f"{prefix}/max_execution_horizon"] = chunk.max_execution_horizon
 
         np.savez_compressed(debug_data_file, **data_to_save)
 

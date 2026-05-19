@@ -49,6 +49,33 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
         "config": "pi05_stack_cubes",
         "dir": "/coc/flash7/rbansal66/vvla/openpi-training/checkpoints/pi05_stack_cubes/stack_cubes_finetune/8000",
     },
+    EnvMode.REAL_MULTITASK: {
+        "config": "pi05_legos_turntable_30hz",
+        "dir": "/coc/flash7/rbansal66/vvla/openpi-training/checkpoints/pi05_legos_turntable_30hz/legos_turntable_30hz_finetune/29999",
+    },
+    EnvMode.REAL_ACT_20: {
+        "config": "pi05_legos_turntable_25hz_act20",
+        # "dir": "/coc/cedarp-dxu345-0/rbansal66/openpi_checkpoints/pi05_legos_turntable_25hz_act20/legos_turntable_25hz_finetune_act20/29999/",
+        "dir": "/checkpoints/openpi-assets/checkpoints/pi05_legos_turntable_25hz_act20",
+    },
+    EnvMode.REAL_ACT_40: {
+        "config": "pi05_legos_turntable_25hz_act40",
+        "dir": "/coc/cedarp-dxu345-0/rbansal66/openpi_checkpoints/pi05_legos_turntable_25hz_act40/legos_turntable_25hz_finetune_act40/29999/",
+    },
+    EnvMode.REAL_ACT_60: {
+        "config": "pi05_legos_turntable_25hz_act60",
+        "dir": "/coc/cedarp-dxu345-0/rbansal66/openpi_checkpoints/pi05_legos_turntable_25hz_act60/legos_turntable_25hz_finetune_act60/29999/",
+    },
+    EnvMode.REAL_ACT_80: {
+        "config": "pi05_legos_turntable_25hz_act80",
+        "dir": "/coc/cedarp-dxu345-0/rbansal66/openpi_checkpoints/pi05_legos_turntable_25hz_act80/legos_turntable_25hz_finetune_act80/29999/",
+    },
+    EnvMode.REAL_ACT_100: {
+        # "config": "pi05_legos_turntable_25hz_act100",
+        "config": "pi05_legos_turntable_better_25hz_act100",
+        # "dir": "/coc/flash7/rbansal66/vvla/armory/checkpoints/multitask_100",
+        "dir": "/checkpoints/openpi-assets/checkpoints/pi05_legos_turntable_25hz_act100_doublestack_finetune",
+    },
 }
 
 

@@ -24,6 +24,12 @@ class EnvMode(str, enum.Enum):
     LIBERO_REALTIME = "libero_realtime"
     REAL_SORT_LEGOS = "real_sort_legos"
     REAL_STACK_CUBES = "real_stack_cubes"
+    REAL_MULTITASK = "real_multitask"
+    REAL_ACT_20 = "real_act_20"
+    REAL_ACT_40 = "real_act_40"
+    REAL_ACT_60 = "real_act_60"
+    REAL_ACT_80 = "real_act_80"
+    REAL_ACT_100 = "real_act_100"
 
 
 def _make_real_example():
@@ -40,7 +46,9 @@ def _make_real_example():
 
 def _make_example_fn(env_mode: EnvMode | None):
     """Return the env-specific make_*_example() function for profiling/warmup."""
-    if env_mode in (EnvMode.REAL_SORT_LEGOS, EnvMode.REAL_STACK_CUBES):
+    if env_mode in (EnvMode.REAL_ACT_20, EnvMode.REAL_ACT_40, EnvMode.REAL_ACT_60, EnvMode.REAL_ACT_80, EnvMode.REAL_ACT_100):
+        return _make_real_example
+    if env_mode in (EnvMode.REAL_SORT_LEGOS, EnvMode.REAL_STACK_CUBES, EnvMode.REAL_MULTITASK):
         return _make_real_example
     if env_mode in (
         EnvMode.LIBERO,

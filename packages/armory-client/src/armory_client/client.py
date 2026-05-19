@@ -122,7 +122,8 @@ class BidirectionalWebsocket:
         deadline: float,
         action_index_start: int,
         infer_type: messages.InferType = messages.InferType.SYNC,
-        execution_horizon: int = 0,
+        min_execution_horizon: int = 5,
+        max_execution_horizon: int = 100,
         noise: np.ndarray | None = None,
     ) -> None:
         if self._pre_send_hook is not None:
@@ -137,7 +138,8 @@ class BidirectionalWebsocket:
                 action_index_start=action_index_start,
                 request_timestamp=request_timestamp,
                 deadline=deadline,
-                execution_horizon=execution_horizon,
+                min_execution_horizon=min_execution_horizon,
+                max_execution_horizon=max_execution_horizon,
                 infer_type=infer_type,
                 noise=noise,
             )
@@ -163,7 +165,8 @@ class BidirectionalWebsocket:
         observation_step: int,
         receive_time: float,
         action_index_start: int,
-        execution_horizon: int,
+        min_execution_horizon: int,
+        max_execution_horizon: int,
         execution_start_step: int,
         first_executed_index: int = 0,
     ) -> None:
@@ -173,7 +176,8 @@ class BidirectionalWebsocket:
             observation_step=observation_step,
             receive_time=receive_time,
             action_index_start=action_index_start,
-            execution_horizon=execution_horizon,
+            min_execution_horizon=min_execution_horizon,
+            max_execution_horizon=max_execution_horizon,
             execution_start_step=execution_start_step,
             first_executed_index=first_executed_index,
         )

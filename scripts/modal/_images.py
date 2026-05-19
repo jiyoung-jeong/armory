@@ -1,20 +1,18 @@
 """Modal image definitions for the experiment sweep scripts.
 
-Four images, built from two bases:
+Three images, built from two bases:
 
     _cuda_base ──┬─ gpu_server_image          policy server with real PI05/GR00T
                  │                            weights; no sim code, no EGL.
                  └─ gpu_libero_client_image   LIBERO sim client, hardware EGL
                                               rendering (runs on a small GPU).
 
-    debian-slim ─┬─ cpu_mock_image            mock policy server + mock client in
-                 │                            one container; no model/sim stacks.
-                 └─ cpu_libero_client_image   LIBERO sim client, OSMesa software
-                                              rendering (no GPU; slow but real).
+    debian-slim ── cpu_mock_image             mock policy and/or mock-env client;
+                                              no model/sim stacks, no GPU.
 
 ``serve.py`` imports no sim code, so the server image deliberately omits the
 EGL apt packages, the MUJOCO_GL env, and the libero data-dir mounts that the
-client images need.
+libero client image needs.
 """
 
 from __future__ import annotations
@@ -237,29 +235,4 @@ cpu_mock_image = _add_repo_sources(
     .workdir(str(REMOTE_ROOT))
     .env({"MPLBACKEND": "Agg"}),
     py_source=_MOCK_PY_SOURCE,
-)
-
-# --- CPU libero client: real LIBERO sim, OSMesa software rendering ------------
-#
-# No CUDA, so mujoco falls back to OSMesa software rendering — known to be slow
-# (100ms+/step), but it runs the real sim without consuming GPU quota.
-cpu_libero_client_image = _add_libero_data(
-    _add_repo_sources(
-        _bake_libero_config(
-            modal.Image.debian_slim(python_version="3.11")
-            .apt_install("git", "build-essential", "cmake", *_EGL_APT)
-            .pip_install("torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cpu")
-            .pip_install("av==17.0.0")
-            .pip_install_from_requirements(str(REQUIREMENTS_FILE))
-            .workdir(str(REMOTE_ROOT))
-            .env(
-                {
-                    **_LIBERO_CLIENT_ENV,
-                    "MUJOCO_GL": "osmesa",
-                    "PYOPENGL_PLATFORM": "osmesa",
-                }
-            )
-        ),
-        py_source=_FULL_PY_SOURCE,
-    )
 )

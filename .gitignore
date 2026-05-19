@@ -172,7 +172,6 @@ policy_logs/
 requirements-modal*
 
 # Credentials and secrets
-*.json
 !package*.json
 !tsconfig*.json
 !*.schema.json

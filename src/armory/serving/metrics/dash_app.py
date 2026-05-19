@@ -556,6 +556,7 @@ def _gantt_fig(
     window_s: float,
     replan_markers: list[dict],
     kickoff_markers: list[dict],
+    scheduling_decisions: list[dict] | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     if not batches:
@@ -563,7 +564,21 @@ def _gantt_fig(
     max_t = batches[-1]["t"]
     visible = [b for b in batches if b["t"] >= max_t - window_s]
     visible_min_t = max_t - window_s
-    all_robots = sorted({rid for b in visible for rid in b["robot_ids"]})
+
+    # Collect dropped-request events: candidates not scheduled in each decision.
+    dropped_events: list[dict] = []  # {"t": float, "robot_id": str}
+    if scheduling_decisions:
+        for dec in scheduling_decisions:
+            if dec.get("t", -float("inf")) < visible_min_t:
+                continue
+            scheduled_set = set(dec.get("scheduled") or [])
+            for rid in dec.get("candidates") or []:
+                if rid not in scheduled_set:
+                    dropped_events.append({"t": dec["t"], "robot_id": rid})
+
+    all_robots = sorted(
+        {rid for b in visible for rid in b["robot_ids"]} | {e["robot_id"] for e in dropped_events}
+    )
     palette = [
         "#4fc3f7",
         "#81c784",
@@ -620,6 +635,36 @@ def _gantt_fig(
                 },
             )
         )
+
+    # Dropped-request bars: hatched pattern, nominal width based on avg inference dur.
+    if dropped_events:
+        gpu_times = [b["inference_end_t"] - b["inference_start_t"] for b in visible]
+        nominal_dur = sum(gpu_times) / len(gpu_times) if gpu_times else 0.1
+        dmap: dict[str, dict] = {}
+        for ev in dropped_events:
+            rid = ev["robot_id"]
+            if rid not in dmap:
+                dmap[rid] = {"x": [], "base": [], "y": []}
+            dmap[rid]["x"].append(nominal_dur)
+            dmap[rid]["base"].append(ev["t"])
+            dmap[rid]["y"].append(rid)
+        for rid, dd in sorted(dmap.items()):
+            color = rc.get(rid, palette[0])
+            fig.add_trace(
+                go.Bar(
+                    x=dd["x"],
+                    base=dd["base"],
+                    y=dd["y"],
+                    orientation="h",
+                    name=f"{rid} (dropped)",
+                    showlegend=False,
+                    marker={
+                        "color": "rgba(0,0,0,0)",
+                        "line": {"width": 1.5, "color": color},
+                        "pattern": {"shape": "/", "fgcolor": color, "size": 6},
+                    },
+                )
+            )
     for marker in replan_markers:
         t = marker["t"]
         if visible_min_t <= t <= max_t:
@@ -1083,6 +1128,7 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
             float(window_s) if window_s else float("inf"),
             snap.replan_markers,
             snap.kickoff_markers,
+            snap.scheduling_decisions,
         )
 
         robot_opts = [{"label": "all", "value": "all"}] + [

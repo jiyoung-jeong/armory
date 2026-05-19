@@ -21,7 +21,7 @@ from armory.serving.schemas import InternalRequest
 from armory_client.messages import InferType, RTCParams
 
 logger = logging.getLogger(__name__)
-
+# logger.setLevel(logging.DEBUG)
 
 def _recursive_stack(list_of_dicts: list[dict]) -> dict:
     """Recursively stack a list of dicts-of-arrays into a single dict-of-batched-arrays."""
@@ -218,13 +218,16 @@ class OpenPiPolicyAdapter:
             prev_actions = np.stack([np.asarray(p.prev_action) for p in rtc_params], axis=0)
             s_values = np.asarray([p.s_param for p in rtc_params], dtype=np.int32)
             d_values = np.asarray([p.d_param for p in rtc_params], dtype=np.int32)
+            eh_values = np.asarray([req.execution_horizon for req in requests], dtype=np.int32)
             logger.debug(
-                "RTC sub-batch: size=%d s=%s d=%s", batch_size, s_values.tolist(), d_values.tolist()
+                "RTC sub-batch: size=%d s=%s d=%s eh=%s",
+                batch_size, s_values.tolist(), d_values.tolist(), eh_values.tolist(),
             )
             sample_kwargs["use_rtc"] = True
             sample_kwargs["prev_action"] = jnp.asarray(prev_actions)
             sample_kwargs["s"] = jnp.asarray(s_values)
             sample_kwargs["d"] = jnp.asarray(d_values)
+            sample_kwargs["execution_horizon"] = jnp.asarray(eh_values)
 
         actions = self._sample_actions(rng_or_device, observation, **sample_kwargs)
         if self._is_pytorch_model:
@@ -268,6 +271,9 @@ class OpenPiPolicyAdapter:
                 and req.infer_type == InferType.INFERENCE_TIME_RTC
                 and isinstance(req.params, RTCParams)
             )
+            logger.debug(
+                f"can_rtc: {can_rtc}, pytorch_model: {self._is_pytorch_model}, triton_optimized: {self._is_triton_optimized}, infer_type: {req.infer_type}, params: {req.params}"
+            )
             grouped[can_rtc].append(i)
 
         for use_rtc, indices in grouped.items():
@@ -289,7 +295,7 @@ class OpenPiPolicyAdapter:
             action_index_start=0,
             request_timestamp=time.time(),
             deadline=time.time() + 60.0,
-            execution_horizon=0,
+            max_execution_horizon=0,
             infer_type=InferType.SYNC,
             params=None,
             noise=None,
@@ -306,7 +312,7 @@ class OpenPiPolicyAdapter:
                 action_index_start=0,
                 request_timestamp=0,
                 deadline=0,
-                execution_horizon=0,
+                max_execution_horizon=0,
                 infer_type=InferType.SYNC,
                 params=None,
                 noise=None,
@@ -328,7 +334,7 @@ class OpenPiPolicyAdapter:
                     action_index_start=0,
                     request_timestamp=0,
                     deadline=0,
-                    execution_horizon=0,
+                    max_execution_horizon=0,
                     infer_type=InferType.INFERENCE_TIME_RTC,
                     params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
                     noise=None,
