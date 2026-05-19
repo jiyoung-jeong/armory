@@ -23,6 +23,7 @@ from armory_client.messages import InferType, RTCParams
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
 
+
 def _recursive_stack(list_of_dicts: list[dict]) -> dict:
     """Recursively stack a list of dicts-of-arrays into a single dict-of-batched-arrays."""
     result = {}
@@ -221,7 +222,10 @@ class OpenPiPolicyAdapter:
             eh_values = np.asarray([req.execution_horizon for req in requests], dtype=np.int32)
             logger.debug(
                 "RTC sub-batch: size=%d s=%s d=%s eh=%s",
-                batch_size, s_values.tolist(), d_values.tolist(), eh_values.tolist(),
+                batch_size,
+                s_values.tolist(),
+                d_values.tolist(),
+                eh_values.tolist(),
             )
             sample_kwargs["use_rtc"] = True
             sample_kwargs["prev_action"] = jnp.asarray(prev_actions)
@@ -295,6 +299,7 @@ class OpenPiPolicyAdapter:
             action_index_start=0,
             request_timestamp=time.time(),
             deadline=time.time() + 60.0,
+            min_execution_horizon=0,
             max_execution_horizon=0,
             infer_type=InferType.SYNC,
             params=None,
@@ -312,6 +317,7 @@ class OpenPiPolicyAdapter:
                 action_index_start=0,
                 request_timestamp=0,
                 deadline=0,
+                min_execution_horizon=0,
                 max_execution_horizon=0,
                 infer_type=InferType.SYNC,
                 params=None,
@@ -334,6 +340,7 @@ class OpenPiPolicyAdapter:
                     action_index_start=0,
                     request_timestamp=0,
                     deadline=0,
+                    min_execution_horizon=0,
                     max_execution_horizon=0,
                     infer_type=InferType.INFERENCE_TIME_RTC,
                     params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
