@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+from itertools import pairwise
 import time
 from collections import deque
 from dataclasses import dataclass, replace
@@ -90,9 +91,9 @@ class Robot:
         self.latency_tracker = latency_tracker
 
         # Both lists are sorted increasing by time by assertion.
-        self.steps: list[ControlStep] = []
+        self.steps: deque[ControlStep] = deque(maxlen=30)
         # Includes chunks that are in-transit.
-        self.chunks: list[ActionChunk] = []
+        self.chunks: deque[ActionChunk] = deque(maxlen=5)
         self.last_request: SlotRequest | None = None
 
     def step(self, request: SlotRequest) -> bool:
@@ -299,14 +300,14 @@ class Robot:
     def assert_consistency(self) -> None:
         """Debug-time invariant checks. Remove the call sites once we're
         confident the producers can't violate them."""
-        for prev, curr in zip(self.chunks[:-1], self.chunks[1:]):
+        for prev, curr in pairwise(self.chunks):
             if prev.action_index_start + prev.max_execution_horizon < curr.action_index_start:
                 raise ValueError(
                     f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
                 )
 
     def assert_step_consistency(self) -> None:
-        for prev, curr in zip(self.steps[:-1], self.steps[1:]):
+        for prev, curr in pairwise(self.steps):
             if curr.action_step is not None and curr.action_step != prev.next_action_step:
                 logger.warning(f"self.steps: {self.steps}")
                 logger.warning(f"prev: {prev}")
@@ -475,8 +476,8 @@ class Robot:
         twin.min_execution_horizon = self.min_execution_horizon
         twin.max_execution_horizon = self.max_execution_horizon
         twin.latency_tracker = self.latency_tracker
-        twin.steps = list(self.steps)
-        twin.chunks = list(self.chunks)
+        twin.steps = deque(self.steps)
+        twin.chunks = deque(self.chunks)
         twin.last_request = self.last_request  # NOTE: bad hack
         return twin
 
