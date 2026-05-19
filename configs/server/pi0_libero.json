@@ -1,0 +1,17 @@
+{
+  "env": "libero_pi0",
+  "model": "pi05",
+  "port": 8080,
+  "policy": {
+    "type": "default"
+  },
+  "max_batch_size": 5,
+  "num_steps": 10,
+  "scheduling_algorithm": "greedy-deadline",
+  "alpha": 1.0,
+  "min_execution_horizon": 0,
+  "lookahead_horizon_ms": 500,
+  "lookahead_timestep_ms": 50,
+  "lookahead_control_hz": 20,
+  "log_level": "INFO"
+}
