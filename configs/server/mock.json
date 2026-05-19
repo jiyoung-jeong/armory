@@ -4,18 +4,18 @@
   "port": 8080,
   "policy": {
     "type": "mock",
-    "action_horizon": 10,
+    "action_horizon": 20,
     "action_dim": 7,
     "model": "pi05",
     "gpu": "l40s"
   },
   "max_batch_size": 5,
   "num_steps": 10,
-  "scheduling_algorithm": "greedy-deadline",
+  "scheduling_algorithm": "lookahead-actions",
   "alpha": 1.0,
   "log_level": "INFO",
   "action_horizon_multipliers": {
-    "10": 10.0,
+    "10": 1.0,
     "20": 1.0
   }
 }

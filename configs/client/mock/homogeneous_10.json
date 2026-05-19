@@ -5,8 +5,8 @@
         "action_chunk_broker_type": "naive_async",
         "num_robots": 10,
         "trials_per_robot": 1,
-        "max_steps": 100,
-        "control_hz": 25
+        "max_steps": 1000,
+        "control_hz": 30
     },
     "toxiproxy": {
         "api_url": "http://127.0.0.1:8474",
