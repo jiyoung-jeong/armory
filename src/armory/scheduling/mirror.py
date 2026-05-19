@@ -362,13 +362,8 @@ class Robot:
     def deadline(self) -> float:
         step = self.steps[-1]
         if step.next_action_step < self.max_overall_action_step:
-            TIMEOUT = 1000
-            i = 0
             while step.next_action_step <= self.max_overall_action_step:
                 step = self.advance_step(step)
-                i += 1
-                if i > TIMEOUT:
-                    raise ValueError(f"Timeout while advancing step: {step}")
             return step.time
         elif step.next_action_step == self.max_overall_action_step:
             for prev_step in reversed(self.steps):
