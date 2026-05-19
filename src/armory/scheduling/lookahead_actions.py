@@ -88,7 +88,9 @@ class IncrementalSearch:
         self.max_depth = max_depth
         self.starvation_alpha = starvation_alpha
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
-        logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
+        logger.debug(
+            "incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers
+        )
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -153,11 +155,23 @@ class IncrementalSearch:
             prev_set = set(mirror.last_queued_batch_robot_ids)
             sorted_robot_ids = [rid for rid in sorted_robot_ids if rid not in prev_set]
         # just prefixes
-        return tuple(
+        edf_batches = tuple(
             tuple(sorted_robot_ids[:size])
             for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
         )
-        #
+        sorted_robot_ids_by_priority = sorted(
+            schedulable_robot_ids,
+            key=lambda rid: (
+                self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon],
+                -deadlines[rid],
+            ),
+            reverse=True,
+        )
+        priority_batches = tuple(
+            tuple(sorted_robot_ids_by_priority[:size])
+            for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+        )
+        return edf_batches + priority_batches
 
         ## everything version
         # if mirror.last_queued_batch_robot_ids:
@@ -345,7 +359,10 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
-        logger.debug("lookahead actions scheduler, action_horizon_multipliers=%s", self.action_horizon_multipliers)
+        logger.debug(
+            "lookahead actions scheduler, action_horizon_multipliers=%s",
+            self.action_horizon_multipliers,
+        )
         self.starvation_alpha = starvation_alpha
 
     def get_next_batches(
