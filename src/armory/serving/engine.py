@@ -89,15 +89,15 @@ class GpuWorker:
         result_sock = ctx.socket(zmq.PUB)
         result_sock.bind(self.gpu_out_ep)
 
-        self._profile_and_send(policy, result_sock)
-
-        self.ready_event.set()
-        logger.info("GPU worker ready")
-
         # Per-robot inference state — initialised here (post-fork, not in __init__)
         self._latency_tracker = EMALatencyTracker()
         self._last_served_action_index: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
+
+        self._profile_and_send(policy, result_sock)
+
+        self.ready_event.set()
+        logger.info("GPU worker ready")
 
         while True:
             self._process_server_messages(req_sock)
@@ -138,8 +138,10 @@ class GpuWorker:
                 # logger.warning("Sent empty response batch")
                 continue
 
+            batch_size = len(slot_datas)
             infer_requests = [
-                InternalRequest.from_slot_data(sd, self._make_params(sd)) for sd in slot_datas
+                InternalRequest.from_slot_data(sd, self._make_params(sd, batch_size))
+                for sd in slot_datas
             ]
 
             logger.info("Inferring batch of %d", len(infer_requests))
@@ -203,6 +205,7 @@ class GpuWorker:
                 policy.infer_batch([request] * batch_size)
                 latencies.append(time.perf_counter() - start)
             profile[batch_size] = sum(latencies) / len(latencies)
+            self._latency_tracker.update_infer(batch_size, profile[batch_size])
             logger.info("  batch_size=%d: %.1f ms", batch_size, profile[batch_size] * 1000)
         notify_sock.send_pyobj(BatchProfile(latencies=profile))
         logger.info("Sent batch profile to scheduler")
@@ -211,17 +214,17 @@ class GpuWorker:
         while req_sock.poll(0):
             msg = req_sock.recv_pyobj(zmq.NOBLOCK)
             if isinstance(msg, ResetRequest):
-                self._latency_tracker.clear(msg.robot_id)
+                # Latency intentionally preserved across resets — matches scheduler
+                # behavior (see scheduling/base.py:reset_robot).
                 self._last_served_action_index.pop(msg.robot_id, None)
+                self._prev_infer_start.pop(msg.robot_id, None)
                 self._prev_actions.pop(msg.robot_id, None)
                 logger.debug("Received reset request: %s", msg)
             elif isinstance(msg, ResetAll):
                 self._last_served_action_index.clear()
+                self._prev_infer_start.clear()
                 self._prev_actions.clear()
-                # Latency tracker is per-robot via .clear(rid); EMALatencyTracker
-                # has no clear-all, so just rebuild it.
-                self._latency_tracker = EMALatencyTracker()
-                logger.info("Received ResetAll: cleared engine state")
+                logger.info("Received ResetAll: cleared engine RTC state (latency preserved)")
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
                     msg.robot_id, msg.arrival_timestamp, msg.request_timestamp
@@ -249,7 +252,7 @@ class GpuWorker:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
 
     def _make_params(
-        self, slot_data: SlotData
+        self, slot_data: SlotData, batch_size: int
     ) -> RTCParams | VlashParams | TrainTimeRTCParams | None:
         if (
             slot_data.infer_type == InferType.INFERENCE_TIME_RTC
@@ -257,7 +260,7 @@ class GpuWorker:
         ):
             s = slot_data.action_index_start - self._last_served_action_index[slot_data.robot_id]
             d = (
-                self._latency_tracker.total_latency(slot_data.robot_id, len(slot_data))
+                self._latency_tracker.total_latency(slot_data.robot_id, batch_size)
                 * slot_data.control_hz
             )
             return RTCParams(
@@ -274,4 +277,5 @@ class GpuWorker:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
             if not sr.is_padding:
                 self._last_served_action_index[sr.robot_id] = sd.action_index_start
-                self._prev_actions[sr.robot_id] = action_dict["actions"]
+                self._prev_infer_start[sr.robot_id] = sd.action_index_start
+                self._prev_actions[sr.robot_id] = action_dict["rtc_prev_actions"]
