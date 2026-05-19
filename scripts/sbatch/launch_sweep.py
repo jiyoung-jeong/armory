@@ -350,28 +350,56 @@ def _submit_case(case_dir: pathlib.Path, *, num_robots: int, args: argparse.Name
         "sbatch",
         "--parsable",
         f"--export=ALL,ARMORY_SCRIPTS_DIR={SCRIPTS_DIR / 'sbatch'}",
-        # Het-group 0: server on a single L40S (embers QoS is required here).
-        "--constraint=gpu-l40s",
-        "--gres=gpu:1",
-        "--ntasks=1",
-        "--cpus-per-task=4",
-        f"--mem={args.server_mem}",
-        "--qos=embers",
-        f"--time={args.time}",
     ]
+    if args.cluster == "pace":
+        # Het-group 0: server on a single L40S (embers QoS is required here).
+        cmd += [
+            "--constraint=gpu-l40s",
+            "--gres=gpu:1",
+            "--ntasks=1",
+            "--cpus-per-task=4",
+            f"--mem={args.server_mem}",
+            "--qos=embers",
+            f"--time={args.time}",
+        ]
+    else:  # ice
+        cmd += [
+            "--gres=gpu:L40S:1",
+            "--ntasks=1",
+            "--cpus-per-task=4",
+            f"--mem={args.server_mem}",
+            f"--time={args.time}",
+        ]
     if args.account:
         cmd.append(f"--account={args.account}")
     cmd.append(":")
-    # Het-group 1: client on V100(s). GPU count is driven by the CPU:GPU<12 rule.
-    cmd += [
-        "--constraint=V100",
-        "--nodes=1",
-        f"--gres=gpu:{n_v100}",
-        "--ntasks=1",
-        f"--cpus-per-task={client_cpus}",
-        f"--mem={args.client_mem}",
-        f"--time={args.time}",
-    ]
+    if args.cluster == "pace":
+        # Het-group 1: client on V100(s). GPU count is driven by the CPU:GPU<12 rule.
+        cmd += [
+            "--constraint=V100",
+            "--nodes=1",
+            f"--gres=gpu:{n_v100}",
+            "--ntasks=1",
+            f"--cpus-per-task={client_cpus}",
+            f"--mem={args.client_mem}",
+            f"--time={args.time}",
+        ]
+    else:  # ice
+        if num_robots > 20:
+            client_gpu_type = "L40S"
+            client_cpus = num_robots
+            n_client_gpus = math.ceil(client_cpus / 8)
+        else:
+            client_gpu_type = "V100"
+            n_client_gpus = n_v100
+        cmd += [
+            "--nodes=1",
+            f"--gres=gpu:{client_gpu_type}:{n_client_gpus}",
+            "--ntasks=1",
+            f"--cpus-per-task={client_cpus}",
+            f"--mem={args.client_mem}",
+            f"--time={args.time}",
+        ]
     if args.account:
         cmd.append(f"--account={args.account}")
     cmd += [str(SCRIPTS_DIR / "sbatch" / "run_case.sh"), str(case_dir)]
@@ -518,6 +546,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-batch-size", default="")
     parser.add_argument("--alpha", default="")
     parser.add_argument("--account", default="")
+    parser.add_argument(
+        "--cluster",
+        choices=["pace", "ice"],
+        default="pace",
+        help="Cluster preset: pace (Phoenix; L40S+V100 constraints, embers QoS) or ice (gpu:TYPE:N gres).",
+    )
     parser.add_argument("--time", default="1:00:00")
     parser.add_argument("--server-mem", default="32G", help="Memory for the L40S server component.")
     parser.add_argument(

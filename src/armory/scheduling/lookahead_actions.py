@@ -1,6 +1,5 @@
 """Lookahead scheduler that searches batches during GPU slack time."""
 
-import gc
 import itertools
 import logging
 import multiprocessing as mp
@@ -268,7 +267,6 @@ class IncrementalSearch:
     #         )
 
     def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
-        logger.debug("evaluate: action_horizon_multipliers=%s", self.action_horizon_multipliers)
         gpu_time = gpu_end_time - self.start_time
         if gpu_time <= 0:
             return
@@ -406,21 +404,8 @@ class LookaheadActionsScheduler(RequestScheduler):
         # logger.debug(
         #     "lookahead stage=search_init horizon=%.3fs max_depth=%d", self.horizon, self.max_depth
         # )
-        # Run GC now, before the latency-critical search. GC stays disabled
-        # afterward (across postprocess and the return path) so an automatic
-        # collection cannot fire in the post-search dispatch window. The next
-        # scheduler call will collect again at its head — where we have slack
-        # to absorb the cost.
-        gc_start = time.time()
-        _phase("setup", entry_time, gc_start)
-        gc_counts_before = gc.get_count()
-        gc.collect()
-        if gc.isenabled():
-            gc.disable()
-        gc_end = time.time()
-        gc_counts_after = gc.get_count()
-        _phase("gc", gc_start, gc_end)
 
+        search_init_start = time.time()
         search = IncrementalSearch(
             self.mirror,
             self.latency_tracker,
@@ -431,7 +416,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.starvation_alpha,
         )
         search_started_at = time.time()
-        _phase("search_init", gc_end, search_started_at)
+        _phase("search_init", search_init_start, search_started_at)
         search_iters = 0
         step_durations: list[float] = []
         step_end = search_started_at
