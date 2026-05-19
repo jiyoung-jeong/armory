@@ -89,6 +89,7 @@ class IncrementalSearch:
         self.max_depth = max_depth
         self.starvation_alpha = starvation_alpha
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
+        logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -267,6 +268,7 @@ class IncrementalSearch:
     #         )
 
     def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
+        logger.debug("evaluate: action_horizon_multipliers=%s", self.action_horizon_multipliers)
         gpu_time = gpu_end_time - self.start_time
         if gpu_time <= 0:
             return
@@ -280,12 +282,12 @@ class IncrementalSearch:
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
-            logger.debug(
-                "new best: depth=%d objective=%.4f schedule=%s",
-                len(schedule),
-                objective,
-                [b for b in schedule],
-            )
+            # logger.debug(
+            #     "new best: depth=%d objective=%.4f schedule=%s",
+            #     len(schedule),
+            #     objective,
+            #     [b for b in schedule],
+            # )
 
     # def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
     #     gpu_time = gpu_end_time - self.start_time
@@ -345,6 +347,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
+        logger.debug("lookahead actions scheduler, action_horizon_multipliers=%s", self.action_horizon_multipliers)
         self.starvation_alpha = starvation_alpha
 
     def get_next_batches(
@@ -375,14 +378,14 @@ class LookaheadActionsScheduler(RequestScheduler):
         in_flight = self.mirror.in_flight_batches_count
         dispatch_budget = max(0, self.max_in_flight - in_flight)
 
-        logger.debug(
-            "search start: robots=%d slack=%+.3fs in_flight=%d budget=%d | %s",
-            len(self.mirror.robots),
-            slack,
-            in_flight,
-            dispatch_budget,
-            _mirror_summary(self.mirror, next_avail),
-        )
+        # logger.debug(
+        #     "search start: robots=%d slack=%+.3fs in_flight=%d budget=%d | %s",
+        #     len(self.mirror.robots),
+        #     slack,
+        #     in_flight,
+        #     dispatch_budget,
+        #     _mirror_summary(self.mirror, next_avail),
+        # )
 
         notes: dict[str, Any] = {
             "rule": "lookahead_actions",
@@ -400,9 +403,9 @@ class LookaheadActionsScheduler(RequestScheduler):
             "phases": phases,
         }
 
-        logger.debug(
-            "lookahead stage=search_init horizon=%.3fs max_depth=%d", self.horizon, self.max_depth
-        )
+        # logger.debug(
+        #     "lookahead stage=search_init horizon=%.3fs max_depth=%d", self.horizon, self.max_depth
+        # )
         # Run GC now, before the latency-critical search. GC stays disabled
         # afterward (across postprocess and the return path) so an automatic
         # collection cannot fire in the post-search dispatch window. The next
@@ -451,33 +454,33 @@ class LookaheadActionsScheduler(RequestScheduler):
         avg_step = (sum(step_durations) / len(step_durations)) if step_durations else 0.0
         nodes = search.nodes_visited
         per_node = (search_duration / nodes) if nodes else 0.0
-        logger.debug(
-            "lookahead search inter_call=%+.3fs slack_in=%+.3fs slack_out=%+.3fs buffer=%.3fs "
-            "iters=%d nodes=%d budget=%d total=%.4fs max_step=%.4fs avg_step=%.4fs "
-            "per_node=%.4fs max_node=%.4fs ops twin=%.4f queue=%.4f ff=%.4f eval=%.4f "
-            "in_flight=%d candidates=%d done=%s gc_before=%s gc_after=%s",
-            inter_call_gap,
-            slack,
-            remaining_slack,
-            self.scheduling_buffer,
-            search_iters,
-            nodes,
-            self.step_budget_nodes,
-            search_duration,
-            max_step,
-            avg_step,
-            per_node,
-            search.max_node_time,
-            search.op_time["twin"],
-            search.op_time["queue"],
-            search.op_time["fastforward"],
-            search.op_time["evaluate"],
-            in_flight,
-            len(candidates),
-            search.is_done(),
-            gc_counts_before,
-            gc_counts_after,
-        )
+        # logger.debug(
+        #     "lookahead search inter_call=%+.3fs slack_in=%+.3fs slack_out=%+.3fs buffer=%.3fs "
+        #     "iters=%d nodes=%d budget=%d total=%.4fs max_step=%.4fs avg_step=%.4fs "
+        #     "per_node=%.4fs max_node=%.4fs ops twin=%.4f queue=%.4f ff=%.4f eval=%.4f "
+        #     "in_flight=%d candidates=%d done=%s gc_before=%s gc_after=%s",
+        #     inter_call_gap,
+        #     slack,
+        #     remaining_slack,
+        #     self.scheduling_buffer,
+        #     search_iters,
+        #     nodes,
+        #     self.step_budget_nodes,
+        #     search_duration,
+        #     max_step,
+        #     avg_step,
+        #     per_node,
+        #     search.max_node_time,
+        #     search.op_time["twin"],
+        #     search.op_time["queue"],
+        #     search.op_time["fastforward"],
+        #     search.op_time["evaluate"],
+        #     in_flight,
+        #     len(candidates),
+        #     search.is_done(),
+        #     gc_counts_before,
+        #     gc_counts_after,
+        # )
 
         notes.update(
             {
@@ -500,10 +503,10 @@ class LookaheadActionsScheduler(RequestScheduler):
             [self._latest_requests[rid] for rid in batch] for batch in best[:dispatch_budget]
         ]
         _phase("postprocess", search_end, time.time())
-        logger.debug(
-            "lookahead stage=return mode=search batches=%d plan_depth=%d objective=%.4f",
-            len(batches),
-            len(best),
-            search.best_objective,
-        )
+        # logger.debug(
+        #     "lookahead stage=return mode=search batches=%d plan_depth=%d objective=%.4f",
+        #     len(batches),
+        #     len(best),
+        #     search.best_objective,
+        # )
         return batches, notes
