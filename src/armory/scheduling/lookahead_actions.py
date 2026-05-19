@@ -153,11 +153,23 @@ class IncrementalSearch:
             prev_set = set(mirror.last_queued_batch_robot_ids)
             sorted_robot_ids = [rid for rid in sorted_robot_ids if rid not in prev_set]
         # just prefixes
-        return tuple(
+        edf_batches = tuple(
             tuple(sorted_robot_ids[:size])
             for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
         )
-        #
+        sorted_robot_ids_by_priority = sorted(
+            schedulable_robot_ids,
+            key=lambda rid: (
+                self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon],
+                -deadlines[rid],
+            ),
+            reverse=True,
+        )
+        priority_batches = tuple(
+            tuple(sorted_robot_ids_by_priority[:size])
+            for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+        )
+        return edf_batches + priority_batches
 
         ## everything version
         # if mirror.last_queued_batch_robot_ids:
