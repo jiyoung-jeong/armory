@@ -139,49 +139,92 @@ class IncrementalSearch:
     def best(self) -> list[Batch]:
         return list(self.best_schedule)
 
+    # def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
+    #     schedulable_robot_ids = mirror.schedulable_robot_ids()
+
+    #     ## deadline version
+    #     deadlines = mirror.deadlines()
+    #     sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
+    #     # No robot back-to-back: exclude whoever was in the most recent dispatch
+    #     # the mirror knows about. The mirror persists this field through
+    #     # fast_forward, so it bridges both intra-search depth (just-queued
+    #     # batches in the search tree) and across ticks (last real dispatch).
+    #     if mirror.last_queued_batch_robot_ids:
+    #         prev_set = set(mirror.last_queued_batch_robot_ids)
+    #         sorted_robot_ids = [rid for rid in sorted_robot_ids if rid not in prev_set]
+    #     # just prefixes
+    #     edf_batches = tuple(
+    #         tuple(sorted_robot_ids[:size])
+    #         for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+    #     )
+    #     sorted_robot_ids_by_priority = sorted(
+    #         schedulable_robot_ids,
+    #         key=lambda rid: (
+    #             self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon],
+    #             -deadlines[rid],
+    #         ),
+    #         reverse=True,
+    #     )
+    #     priority_batches = tuple(
+    #         tuple(sorted_robot_ids_by_priority[:size])
+    #         for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+    #     )
+    #     return edf_batches + priority_batches
+
+    ## everything version
+    # if mirror.last_queued_batch_robot_ids:
+    #     prev_set = set(mirror.last_queued_batch_robot_ids)
+    #     schedulable_robot_ids = [rid for rid in schedulable_robot_ids if rid not in prev_set]
+
+    # return tuple(
+    #     itertools.chain.from_iterable(
+    #         itertools.combinations(schedulable_robot_ids, size)
+    #         for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
+    #     )
+    # )
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
         schedulable_robot_ids = mirror.schedulable_robot_ids()
 
-        ## deadline version
         deadlines = mirror.deadlines()
         sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
-        # No robot back-to-back: exclude whoever was in the most recent dispatch
-        # the mirror knows about. The mirror persists this field through
-        # fast_forward, so it bridges both intra-search depth (just-queued
-        # batches in the search tree) and across ticks (last real dispatch).
         if mirror.last_queued_batch_robot_ids:
             prev_set = set(mirror.last_queued_batch_robot_ids)
             sorted_robot_ids = [rid for rid in sorted_robot_ids if rid not in prev_set]
-        # just prefixes
-        edf_batches = tuple(
-            tuple(sorted_robot_ids[:size])
-            for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
-        )
-        sorted_robot_ids_by_priority = sorted(
-            schedulable_robot_ids,
-            key=lambda rid: (
-                self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon],
-                -deadlines[rid],
-            ),
-            reverse=True,
-        )
-        priority_batches = tuple(
-            tuple(sorted_robot_ids_by_priority[:size])
-            for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
-        )
-        return edf_batches + priority_batches
 
-        ## everything version
-        # if mirror.last_queued_batch_robot_ids:
-        #     prev_set = set(mirror.last_queued_batch_robot_ids)
-        #     schedulable_robot_ids = [rid for rid in schedulable_robot_ids if rid not in prev_set]
+        if not sorted_robot_ids:
+            return ()
 
-        # return tuple(
-        #     itertools.chain.from_iterable(
-        #         itertools.combinations(schedulable_robot_ids, size)
-        #         for size in range(min(len(schedulable_robot_ids), self.max_batch_size), 0, -1)
-        #     )
-        # )
+        # Group into tiers by priority, preserving EDF order within each tier
+        tiers: dict[float, list[RobotID]] = {}
+        for rid in sorted_robot_ids:  # already EDF-sorted
+            p = self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon]
+            tiers.setdefault(p, []).append(rid)
+        tier_list = [tiers[p] for p in sorted(tiers.keys(), reverse=True)]
+
+        pool_size = len(sorted_robot_ids)
+        tier_sizes = [len(t) for t in tier_list]
+        n_tiers = len(tier_list)
+
+        def compositions(n: int, k: int, caps: list[int]):
+            """Yield all ways to write n as ordered sum of k non-negative ints, each <= caps[i]."""
+            if k == 1:
+                if n <= caps[0]:
+                    yield (n,)
+                return
+            for i in range(min(n, caps[0]) + 1):
+                for rest in compositions(n - i, k - 1, caps[1:]):
+                    yield (i,) + rest
+
+        seen = set()
+        batches = []
+        for size in range(1, min(pool_size, self.max_batch_size) + 1):
+            for counts in compositions(size, n_tiers, tier_sizes):
+                batch = tuple(rid for tier, count in zip(tier_list, counts) for rid in tier[:count])
+                if batch not in seen:
+                    seen.add(batch)
+                    batches.append(batch)
+
+        return tuple(batches)
 
     def _expand(
         self,
