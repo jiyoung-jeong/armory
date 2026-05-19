@@ -1,6 +1,5 @@
 """Lookahead scheduler that searches batches during GPU slack time."""
 
-import gc
 import itertools
 import logging
 import multiprocessing as mp
@@ -268,7 +267,6 @@ class IncrementalSearch:
     #         )
 
     def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
-        logger.debug("evaluate: action_horizon_multipliers=%s", self.action_horizon_multipliers)
         gpu_time = gpu_end_time - self.start_time
         if gpu_time <= 0:
             return
