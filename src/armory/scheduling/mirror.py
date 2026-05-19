@@ -362,13 +362,8 @@ class Robot:
     def deadline(self) -> float:
         step = self.steps[-1]
         if step.next_action_step < self.max_overall_action_step:
-            TIMEOUT = 1000
-            i = 0
             while step.next_action_step <= self.max_overall_action_step:
                 step = self.advance_step(step)
-                i += 1
-                if i > TIMEOUT:
-                    raise ValueError(f"Timeout while advancing step: {step}")
             return step.time
         elif step.next_action_step == self.max_overall_action_step:
             for prev_step in reversed(self.steps):
@@ -393,6 +388,13 @@ class Robot:
                     f"step.next_action_step {step.next_action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
                 )
             return step.time
+
+    def starved_steps(self) -> int:
+        if not self.steps:
+            return 0
+        total_steps = self.steps[-1].observation_step + 1
+        executed_steps = self.steps[-1].next_action_step
+        return total_steps - executed_steps
 
     def step_forward(self, time: float) -> None:
         # Hot path: inlines advance_step + action_is_available and exploits the
@@ -526,6 +528,10 @@ class Mirror:
         self.in_flight_batches: deque[Batch] = deque()
         self.last_batch_completed_time: float = 0.0
         self.chunk_id_counter = itertools.count(1)
+        # Persists past fast_forward popping the batch out of in_flight_batches;
+        # used by schedulers that want a "no back-to-back" view of the most
+        # recent dispatch.
+        self.last_queued_batch_robot_ids: tuple[RobotID, ...] = ()
 
     @property
     def in_flight_batches_count(self) -> int:
@@ -567,6 +573,7 @@ class Mirror:
         self.in_flight_batches.clear()
         self.last_batch_completed_time = 0.0
         self.chunk_id_counter = itertools.count(1)
+        self.last_queued_batch_robot_ids = ()
 
     def receive_request(self, request: SlotRequest) -> bool:
         """Returns False if the request was dropped as stale by ``Robot.step``."""
@@ -624,6 +631,7 @@ class Mirror:
                 completion_time=dispatch_time + infer_lat,
             )
         )
+        self.last_queued_batch_robot_ids = tuple(batch)
         return chunks
 
     def update_batch_completion(self, batch: ResponseBatch) -> None:
@@ -735,6 +743,7 @@ class Mirror:
         twin.last_batch_completed_time = self.last_batch_completed_time
         twin.chunk_id_counter = self.chunk_id_counter
         twin.robots = {rid: robot._clone_for_twin() for rid, robot in self.robots.items()}
+        twin.last_queued_batch_robot_ids = self.last_queued_batch_robot_ids
         return twin
 
     def deadlines(self) -> dict[RobotID, float]:
