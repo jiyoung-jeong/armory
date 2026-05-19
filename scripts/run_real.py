@@ -88,17 +88,19 @@ class Args:
     """If true, skip robots that aren't BOOTED before starting."""
 
     het_config_path: str | None = None
-    """Optional YAML with per-workstation launch overrides. Supports three
+    """Optional YAML with per-workstation launch overrides. Supports four
     top-level sections, all optional (must have at least one):
 
     ``control_hz: {<station_id>: <hz>, ...}`` — forwarded as ``--control-hz``.
     ``language_index: {<station_id>: <idx>, ...}`` — looked up in
     ``configs/real_task_index.json`` (override path with --task-index-path)
     and forwarded as ``--prompt <STRING>``.
-    ``execution_horizon: {<station_id>: <N>, ...}`` — forwarded as
-    ``--execution-horizon <N>``.
+    ``min_execution_horizon: {<station_id>: <N>, ...}`` — forwarded as
+    ``--min-execution-horizon <N>``.
+    ``max_execution_horizon: {<station_id>: <N>, ...}`` — forwarded as
+    ``--max-execution-horizon <N>``.
 
-    See configs/experiments/edge_cases_real/*.yaml for examples."""
+    See configs/client/exp_*.yaml for examples."""
 
     task_index_path: str | None = None
     """Path to the language-index → prompt JSON. Defaults to
@@ -170,22 +172,29 @@ def _default_task_index_path() -> str:
 
 def _load_het_config(
     path: str,
-) -> tuple[dict[int, int], dict[int, int], dict[int, int]]:
+) -> tuple[dict[int, int], dict[int, int], dict[int, int], dict[int, int]]:
     """Parse the heterogeneous per-robot launch YAML.
 
     Schema (all sections optional, at least one required):
       ``control_hz: {<station_id>: <hz>, ...}``
       ``language_index: {<station_id>: <task_idx>, ...}``
-      ``execution_horizon: {<station_id>: <N>, ...}``
+      ``min_execution_horizon: {<station_id>: <N>, ...}``
+      ``max_execution_horizon: {<station_id>: <N>, ...}``
 
-    Returns ``(control_hz_map, language_index_map, execution_horizon_map)``
-    with ints on both sides. Language indices are returned as-is here;
-    resolution against real_task_index.json happens in ``main()``.
+    Returns ``(control_hz_map, language_index_map,
+    min_execution_horizon_map, max_execution_horizon_map)`` with ints on both
+    sides. Language indices are returned as-is here; resolution against
+    real_task_index.json happens in ``main()``.
     """
     raw = yaml.safe_load(pathlib.Path(path).read_text())
     if not isinstance(raw, dict):
         sys.exit(f"het config {path}: top-level must be a mapping")
-    known_sections = ("control_hz", "language_index", "execution_horizon")
+    known_sections = (
+        "control_hz",
+        "language_index",
+        "min_execution_horizon",
+        "max_execution_horizon",
+    )
     if not any(s in raw for s in known_sections):
         sys.exit(
             f"het config {path}: must define at least one of "
@@ -212,7 +221,8 @@ def _load_het_config(
     return (
         _parse_int_int("control_hz"),
         _parse_int_int("language_index"),
-        _parse_int_int("execution_horizon"),
+        _parse_int_int("min_execution_horizon"),
+        _parse_int_int("max_execution_horizon"),
     )
 
 
@@ -490,9 +500,12 @@ def main(args: Args) -> None:
 
         het_hz: dict[int, int] = {}
         het_lang: dict[int, int] = {}
-        het_exec: dict[int, int] = {}
+        het_min_exec: dict[int, int] = {}
+        het_max_exec: dict[int, int] = {}
         if args.het_config_path:
-            het_hz, het_lang, het_exec = _load_het_config(args.het_config_path)
+            het_hz, het_lang, het_min_exec, het_max_exec = _load_het_config(
+                args.het_config_path
+            )
 
         target_ids = {r.id for r in targets}
         if het_hz:
@@ -503,16 +516,21 @@ def main(args: Args) -> None:
                 logger.warning(
                     "control_hz config has entries for non-target ids: %s", unmatched
                 )
-        if het_exec:
+        for label, mapping in (
+            ("min_execution_horizon", het_min_exec),
+            ("max_execution_horizon", het_max_exec),
+        ):
+            if not mapping:
+                continue
             applied_exec = {
-                rid: het_exec[rid] for rid in het_exec if rid in target_ids
+                rid: mapping[rid] for rid in mapping if rid in target_ids
             }
-            unmatched_exec = sorted(set(het_exec) - target_ids)
-            logger.info("execution_horizon overrides applied: %s", applied_exec)
+            unmatched_exec = sorted(set(mapping) - target_ids)
+            logger.info("%s overrides applied: %s", label, applied_exec)
             if unmatched_exec:
                 logger.warning(
-                    "execution_horizon config has entries for non-target ids: %s",
-                    unmatched_exec,
+                    "%s config has entries for non-target ids: %s",
+                    label, unmatched_exec,
                 )
 
         prompt_overrides: dict[int, str] = {}
@@ -565,7 +583,8 @@ def main(args: Args) -> None:
             remote_subdir=args.remote_subdir,
             control_hz_overrides=het_hz or None,
             prompt_overrides=prompt_overrides or None,
-            execution_horizon_overrides=het_exec or None,
+            min_execution_horizon_overrides=het_min_exec or None,
+            max_execution_horizon_overrides=het_max_exec or None,
             on_clients_running=_on_clients_running,
             on_clients_stopping=_on_clients_stopping,
         )

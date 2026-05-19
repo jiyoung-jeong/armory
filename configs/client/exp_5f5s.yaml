@@ -13,7 +13,22 @@ control_hz:
   13: 30
   14: 30
 
-execution_horizon:
+min_execution_horizon:
+  1: 5
+  2: 5
+  3: 5
+  4: 5
+  5: 5
+  6: 5
+  7: 5
+  8: 5
+  9: 5
+  11: 5
+  12: 5
+  13: 5
+  14: 5
+
+max_execution_horizon:
   1: 20
   2: 20
   3: 20
@@ -24,7 +39,7 @@ execution_horizon:
   8: 20
   9: 20
   11: 10
-  12: 10  
+  12: 10
   13: 10
   14: 10
 

@@ -108,7 +108,8 @@ class FleetDispatcher:
         callback: Callable | None = None,
         control_hz_overrides: dict[int, int] | None = None,
         prompt_overrides: dict[int, str] | None = None,
-        execution_horizon_overrides: dict[int, int] | None = None,
+        min_execution_horizon_overrides: dict[int, int] | None = None,
+        max_execution_horizon_overrides: dict[int, int] | None = None,
         on_clients_running: Callable[[], None] | None = None,
         on_clients_stopping: Callable[[], None] | None = None,
     ):
@@ -122,12 +123,15 @@ class FleetDispatcher:
           5. ``fetch_episode_data(robots, output_dir, remote_subdir, fetch_video)``
 
         ``control_hz_overrides`` (ws id → hz), ``prompt_overrides``
-        (ws id → prompt string), and ``execution_horizon_overrides``
-        (ws id → action-chunk horizon) are forwarded per-robot to
-        ``piper_client_armory`` as ``--control-hz <N>``,
-        ``--prompt <STRING>``, and ``--execution-horizon <N>`` respectively,
-        after a single leading ``--`` separator. Robots not present in a
-        given dict use the node's declared default for that parameter.
+        (ws id → prompt string), ``min_execution_horizon_overrides``
+        (ws id → min action-chunk horizon), and
+        ``max_execution_horizon_overrides`` (ws id → max action-chunk horizon)
+        are forwarded per-robot to ``piper_client_armory`` as
+        ``--control-hz <N>``, ``--prompt <STRING>``,
+        ``--min-execution-horizon <N>``, and ``--max-execution-horizon <N>``
+        respectively, after a single leading ``--`` separator. Robots not
+        present in a given dict use the node's declared default for that
+        parameter.
 
         ``on_clients_running`` (optional) is invoked once, in the fleet event
         loop thread, immediately after the startup barrier go signal is sent
@@ -150,7 +154,8 @@ class FleetDispatcher:
             self._run_trial(
                 robots, duration_sec, pathlib.Path(output_dir),
                 fetch_video, grace_sec, remote_subdir, callback,
-                control_hz_overrides, prompt_overrides, execution_horizon_overrides,
+                control_hz_overrides, prompt_overrides,
+                min_execution_horizon_overrides, max_execution_horizon_overrides,
                 on_clients_running, on_clients_stopping,
             )
         )
@@ -235,7 +240,8 @@ class FleetDispatcher:
         callback: Callable | None,
         control_hz_overrides: dict[int, int] | None = None,
         prompt_overrides: dict[int, str] | None = None,
-        execution_horizon_overrides: dict[int, int] | None = None,
+        min_execution_horizon_overrides: dict[int, int] | None = None,
+        max_execution_horizon_overrides: dict[int, int] | None = None,
         on_clients_running: Callable[[], None] | None = None,
         on_clients_stopping: Callable[[], None] | None = None,
     ):
@@ -255,7 +261,8 @@ class FleetDispatcher:
         extra_args_per_robot = self._build_extra_args(
             control_hz_overrides,
             prompt_overrides,
-            execution_horizon_overrides=execution_horizon_overrides,
+            min_execution_horizon_overrides=min_execution_horizon_overrides,
+            max_execution_horizon_overrides=max_execution_horizon_overrides,
             barrier_robot_ids=target_ids,
         )
         if extra_args_per_robot:
@@ -368,21 +375,23 @@ class FleetDispatcher:
     def _build_extra_args(
         control_hz_overrides: dict[int, int] | None,
         prompt_overrides: dict[int, str] | None,
-        execution_horizon_overrides: dict[int, int] | None = None,
+        min_execution_horizon_overrides: dict[int, int] | None = None,
+        max_execution_horizon_overrides: dict[int, int] | None = None,
         barrier_robot_ids: set[int] | None = None,
     ) -> dict[int, str] | None:
         """Merge per-robot overrides into a single ``--<flag> <value> …`` suffix.
 
         Returns ``{robot_id: " -- --control-hz X --prompt 'STRING'
-        --execution-horizon N --barrier "}`` for each robot that has at least
-        one override (or has the barrier enabled); ``None`` if no robot has
-        anything to add. The prompt is shell-quoted because it may contain
-        spaces, and the whole string is interpolated verbatim into a bash
-        command in fleet.py.
+        --min-execution-horizon N --max-execution-horizon M --barrier "}`` for
+        each robot that has at least one override (or has the barrier
+        enabled); ``None`` if no robot has anything to add. The prompt is
+        shell-quoted because it may contain spaces, and the whole string is
+        interpolated verbatim into a bash command in fleet.py.
         """
         rids: set[int] = set(control_hz_overrides or {})
         rids |= set(prompt_overrides or {})
-        rids |= set(execution_horizon_overrides or {})
+        rids |= set(min_execution_horizon_overrides or {})
+        rids |= set(max_execution_horizon_overrides or {})
         rids |= barrier_robot_ids or set()
         if not rids:
             return None
@@ -393,9 +402,13 @@ class FleetDispatcher:
                 parts.append(f"--control-hz {float(control_hz_overrides[rid])}")
             if prompt_overrides and rid in prompt_overrides:
                 parts.append(f"--prompt {shlex.quote(prompt_overrides[rid])}")
-            if execution_horizon_overrides and rid in execution_horizon_overrides:
+            if min_execution_horizon_overrides and rid in min_execution_horizon_overrides:
                 parts.append(
-                    f"--execution-horizon {int(execution_horizon_overrides[rid])}"
+                    f"--min-execution-horizon {int(min_execution_horizon_overrides[rid])}"
+                )
+            if max_execution_horizon_overrides and rid in max_execution_horizon_overrides:
+                parts.append(
+                    f"--max-execution-horizon {int(max_execution_horizon_overrides[rid])}"
                 )
             if barrier_robot_ids and rid in barrier_robot_ids:
                 parts.append("--barrier")
