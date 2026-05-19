@@ -218,7 +218,7 @@ class OpenPiPolicyAdapter:
             prev_actions = np.stack([np.asarray(p.prev_action) for p in rtc_params], axis=0)
             s_values = np.asarray([p.s_param for p in rtc_params], dtype=np.int32)
             d_values = np.asarray([p.d_param for p in rtc_params], dtype=np.int32)
-            eh_values = np.asarray([req.execution_horizon for req in requests], dtype=np.int32)
+            eh_values = np.asarray([req.max_execution_horizon for req in requests], dtype=np.int32)
             logger.debug(
                 "RTC sub-batch: size=%d s=%s d=%s eh=%s",
                 batch_size, s_values.tolist(), d_values.tolist(), eh_values.tolist(),
@@ -295,6 +295,7 @@ class OpenPiPolicyAdapter:
             action_index_start=0,
             request_timestamp=time.time(),
             deadline=time.time() + 60.0,
+            min_execution_horizon=0,
             max_execution_horizon=0,
             infer_type=InferType.SYNC,
             params=None,
@@ -312,6 +313,7 @@ class OpenPiPolicyAdapter:
                 action_index_start=0,
                 request_timestamp=0,
                 deadline=0,
+                min_execution_horizon=0,
                 max_execution_horizon=0,
                 infer_type=InferType.SYNC,
                 params=None,
@@ -334,6 +336,7 @@ class OpenPiPolicyAdapter:
                     action_index_start=0,
                     request_timestamp=0,
                     deadline=0,
+                    min_execution_horizon=0,
                     max_execution_horizon=0,
                     infer_type=InferType.INFERENCE_TIME_RTC,
                     params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),

@@ -217,12 +217,10 @@ class GpuWorker:
                 # Latency intentionally preserved across resets — matches scheduler
                 # behavior (see scheduling/base.py:reset_robot).
                 self._last_served_action_index.pop(msg.robot_id, None)
-                self._prev_infer_start.pop(msg.robot_id, None)
                 self._prev_actions.pop(msg.robot_id, None)
                 logger.debug("Received reset request: %s", msg)
             elif isinstance(msg, ResetAll):
                 self._last_served_action_index.clear()
-                self._prev_infer_start.clear()
                 self._prev_actions.clear()
                 logger.info("Received ResetAll: cleared engine RTC state (latency preserved)")
             elif isinstance(msg, SlotRequest):
@@ -277,5 +275,4 @@ class GpuWorker:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
             if not sr.is_padding:
                 self._last_served_action_index[sr.robot_id] = sd.action_index_start
-                self._prev_infer_start[sr.robot_id] = sd.action_index_start
                 self._prev_actions[sr.robot_id] = action_dict["rtc_prev_actions"]
