@@ -80,7 +80,8 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
         # "dir": "/checkpoints/openpi-assets/checkpoints/finetuned_lego_turntable/55000",
         # "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_25hz_new_act100_5999",  # good 25hz checkpt
         # "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_30hz_new_act100/50000",  # good 30z checkpt
-        "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_30hz_new_act100_finetune",  # good 30z checkpt finetune
+        # "dir": "/checkpoints/openpi-assets/checkpoints/legos_turntable_30hz_new_act100_finetune",  # good 30z checkpt finetune
+        "dir": "/coc/flash7/rbansal66/vvla/armory/checkpoints/new_ckpt/legos_turntable_30hz_new_act100_finetune",  # good 30z checkpt finetune
         # "dir": "/coc/flash7/rbansal66/vvla/armory/checkpoints/new_multitask_100",
     },
 }

@@ -89,7 +89,7 @@ class IncrementalSearch:
         self.max_depth = max_depth
         self.starvation_alpha = starvation_alpha
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
-        logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
+        # logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
@@ -347,7 +347,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
-        logger.debug("lookahead actions scheduler, action_horizon_multipliers=%s", self.action_horizon_multipliers)
+        # logger.debug("lookahead actions scheduler, action_horizon_multipliers=%s", self.action_horizon_multipliers)
         self.starvation_alpha = starvation_alpha
 
     def get_next_batches(
