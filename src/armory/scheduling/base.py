@@ -1,4 +1,5 @@
 import itertools
+import gc
 import logging
 import multiprocessing as mp
 import time
@@ -36,6 +37,7 @@ class RequestScheduler(ABC):
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
         self._drain_fn: Callable[[], None] | None = None
+        gc.disable()
 
     def update(self, request: SlotRequest) -> None:
         self.latency_tracker.update_obs(
@@ -138,7 +140,12 @@ class RequestScheduler(ABC):
             )
 
         if batches and isinstance(notes, dict):
+            gc_start = time.time()
+            gc.collect()
+            gc_end = time.time()
+
             phases = notes.setdefault("phases", [])
+            phases.append({"name": "gc", "start": gc_start, "end": gc_end})
             phases.append({"name": "dispatch", "start": dispatch_start, "end": time.time()})
 
         if not decisions:
