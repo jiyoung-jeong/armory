@@ -10,9 +10,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import style
-from matplotlib.lines import Line2D
 
 OUTPUT_DIR = pathlib.Path(__file__).parent
+
+# starvation_rate (fraction), dynamic trial successes, static trial successes
+# Each trial entry is out of 30 runs.
+_STARVATION_DATA = [
+    (0.0, [7, 7, 6], [6, 5, 6]),
+    (0.1, [6, 7, 7], [6, 5, 6]),
+    (0.3, [4, 4, 5], [5, 6, 5]),
+    (0.5, [3, 2, 2], [4, 5, 4]),
+    (0.7, [1, 2, 0], [3, 4, 3]),
+    (0.9, [0, 0, 0], [2, 3, 2]),
+]
 
 # min_execution_horizon (steps), dynamic trial successes, static trial successes
 # Each trial entry is out of 30 runs.
@@ -74,19 +84,27 @@ def plot_starvation(
     if standalone:
         fig, ax = plt.subplots(figsize=(3.5, 2.8))
 
+    rates = np.array([d[0] for d in _STARVATION_DATA]) * 100  # fraction → %
+    dyn = np.array([d[1] for d in _STARVATION_DATA], dtype=float) / _TRIALS_PER_GROUP
+    sta = np.array([d[2] for d in _STARVATION_DATA], dtype=float) / _TRIALS_PER_GROUP
+
+    for label, tpr, color_idx, marker in [
+        ("Static task", sta, 0, "s"),
+        ("Dynamic task", dyn, 1, "o"),
+    ]:
+        mean = tpr.mean(axis=1)
+        std = tpr.std(axis=1)
+        c = style.color(color_idx)
+        ax.plot(rates, mean, marker=marker, color=c, label=label, zorder=3)
+        ax.fill_between(rates, mean - std, mean + std, color=c, alpha=0.18, linewidth=0)
+
     ax.set_xlabel("Starvation rate (%)")
     ax.set_ylabel("Throughput (succ/s)")
     ax.set_xlim(0, 100)
-    ax.set_ylim(0, 1)
-    ax.set_yticks([0.25, 0.5, 0.75, 1.0])
-    ax.set_yticklabels([])
+    ax.set_ylim(0, 0.40)
+    ax.set_xticks(rates)
     style.yonly_grid(ax)
-    ax.legend(
-        handles=[
-            Line2D([], [], color=style.color(0), label="Static task"),
-            Line2D([], [], color=style.color(1), label="Dynamic task"),
-        ]
-    )
+    ax.legend()
 
     if standalone:
         fig.tight_layout()
