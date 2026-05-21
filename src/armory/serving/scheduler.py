@@ -129,23 +129,23 @@ class SchedulerWorker:
         tick = 0
         while True:
             tick += 1
-            logger.debug("tick=%d stage=poll_wait", tick)
-            events = poller.poll()
+            # logger.debug("tick=%d stage=poll_wait", tick)
+            events = poller.poll(timeout=1)
             ready = {
                 "req": any(s is req_sock for s, _ in events),
                 "result": any(s is result_sock for s, _ in events),
             }
-            logger.debug("tick=%d stage=poll_done ready=%s", tick, ready)
+            # logger.debug("tick=%d stage=poll_done ready=%s", tick, ready)
 
-            logger.debug("tick=%d stage=process_engine", tick)
+            # logger.debug("tick=%d stage=process_engine", tick)
             self._process_engine_messages(scheduler, result_sock)
 
-            logger.debug("tick=%d stage=process_server", tick)
+            # logger.debug("tick=%d stage=process_server", tick)
             self._process_server_messages(scheduler, req_sock)
 
-            logger.debug("tick=%d stage=schedule_begin", tick)
+            # logger.debug("tick=%d stage=schedule_begin", tick)
             decisions = scheduler.schedule()
-            logger.debug("tick=%d stage=schedule_done decisions=%d", tick, len(decisions))
+            # logger.debug("tick=%d stage=schedule_done decisions=%d", tick, len(decisions))
 
             if self.scheduler_metrics_queue is not None:
                 try:

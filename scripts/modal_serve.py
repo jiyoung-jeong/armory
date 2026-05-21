@@ -14,14 +14,18 @@ app = modal.App("armory-serve")
 
 GPU = "l40s"
 REGION = "us-east"
-ENV_MODE = "REAL_ACT_20"
-MAX_BATCH_SIZE = 1
+ENV_MODE = "REAL_ACT_100"
+MAX_BATCH_SIZE = 5
 PORT = 8080
 MODEL = "PI05"
-SCHEDULING_ALGORITHM = "max-batch"
-ALPHA = 1.0
-MIN_EXECUTION_HORIZON = 5
-MIN_OBSERVATION_STEP_DIFF = 20
+SCHEDULING_ALGORITHM = "lookahead-actions"
+ALPHA = 2.0
+MIN_OBSERVATION_STEP_DIFF = 12
+
+ACTION_HORIZON_MULTIPLIERS = {
+    10: 1.0,
+    20: 1.0,
+}
 
 REPO_ROOT = pathlib.Path(__file__).parent.parent
 
@@ -150,10 +154,10 @@ class ModalPolicyServer:
             SCHEDULING_ALGORITHM,
             "--alpha",
             str(ALPHA),
-            "--min-execution-horizon",
-            str(MIN_EXECUTION_HORIZON),
-            "--min-observation-step-diff",
-            str(MIN_OBSERVATION_STEP_DIFF),
+            # "--min-observation-step-diff",
+            # str(MIN_OBSERVATION_STEP_DIFF),
+            "--action-horizon-multipliers",
+            *[str(x) for kv in ACTION_HORIZON_MULTIPLIERS.items() for x in kv],
         ]
 
         def _stream_logs(proc: subprocess.Popen) -> None:

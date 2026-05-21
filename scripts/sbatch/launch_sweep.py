@@ -19,6 +19,8 @@ sys.path.insert(0, str(SCRIPTS_DIR / "modal"))
 
 from _utils import write_rows  # noqa: E402
 
+SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
+
 EXAMPLES = """examples:
   # 1. Dry-run a tiny sweep. Writes case dirs + jobs CSV but submits nothing.
   uv run python scripts/sbatch/launch_sweep.py \
@@ -111,6 +113,7 @@ class Case:
         seed: int,
         max_batch_size: int,
         alpha: float,
+        server_variant: str = "",
     ) -> None:
         self.server_args = server_args
         self.client_args = client_args
@@ -121,6 +124,7 @@ class Case:
         self.seed = seed
         self.max_batch_size = max_batch_size
         self.alpha = alpha
+        self.server_variant = server_variant
 
     @property
     def num_robots(self) -> int:
@@ -128,16 +132,17 @@ class Case:
 
     @property
     def run_id(self) -> str:
-        return "__".join(
-            [
-                f"scheduler={self.scheduler}",
-                f"experiment={self.experiment_name}",
-                f"num_robots={self.num_robots}",
-                f"seed={self.seed}",
-                f"max_batch_size={self.max_batch_size}",
-                f"alpha={self.alpha}",
-            ]
-        )
+        parts = [
+            f"scheduler={self.scheduler}",
+            f"experiment={self.experiment_name}",
+            f"num_robots={self.num_robots}",
+            f"seed={self.seed}",
+            f"max_batch_size={self.max_batch_size}",
+            f"alpha={self.alpha}",
+        ]
+        if self.server_variant:
+            parts.append(f"server={self.server_variant}")
+        return "__".join(parts)
 
 
 def parse_list_args(value: str, *, cast=str) -> list[Any]:
@@ -154,6 +159,20 @@ def _resolve_path(path: str) -> pathlib.Path:
 
 def _read_json(path: str) -> dict[str, Any]:
     return json.loads(_resolve_path(path).read_text())
+
+
+def _server_config_paths(value: str) -> list[pathlib.Path]:
+    paths = [_resolve_path(item.strip()) for item in value.split(",") if item.strip()]
+    if not paths:
+        raise SystemExit("--server-config is required.")
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        raise SystemExit(f"--server-config file(s) not found: {', '.join(missing)}")
+    return paths
+
+
+def _server_variant_name(path: pathlib.Path) -> str:
+    return path.stem.removeprefix("lookahead_actions_short_horizon_")
 
 
 def _client_config_paths(path: str) -> list[pathlib.Path]:
@@ -212,7 +231,7 @@ def _run_sbatch(cmd: list[str]) -> str:
 
 def _make_cases(
     *,
-    server_args: dict[str, Any],
+    server_variants: list[tuple[str, dict[str, Any]]],
     client_args: dict[str, Any],
     experiment_configs: list[tuple[str, dict[str, Any]]],
     schedulers: list[str],
@@ -223,43 +242,54 @@ def _make_cases(
 ) -> list[Case]:
     if max_batch_sizes and alphas:
         raise SystemExit("Sweep only one of --max-batch-size or --alpha at a time.")
+    if not server_variants:
+        raise SystemExit("At least one server config is required.")
     if not max_batch_sizes:
-        max_batch_sizes = [int(server_args.get("max_batch_size", 1))]
+        max_batch_sizes = [int(server_variants[0][1].get("max_batch_size", 1))]
     if not alphas:
-        alphas = [float(server_args.get("alpha", 1.0))]
+        alphas = [float(server_variants[0][1].get("alpha", 1.0))]
 
     cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
-            for experiment_name, experiment_config in experiment_configs:
-                for max_batch_size in max_batch_sizes:
-                    for alpha in alphas:
-                        server = {
-                            **server_args,
-                            "seed": seed,
-                            "scheduling_algorithm": scheduler,
-                            "max_batch_size": max_batch_size,
-                            "alpha": alpha,
-                        }
-                        client = {
-                            **client_args,
-                            "seed": seed,
-                            "progress_type": "logging",
-                            "overwrite": True,
-                        }
-                        cases.append(
-                            Case(
-                                server_args=server,
-                                client_args=client,
-                                experiment_config=experiment_config,
-                                experiment_name=experiment_name,
-                                stamp=stamp,
-                                scheduler=scheduler,
-                                seed=seed,
-                                max_batch_size=max_batch_size,
-                                alpha=alpha,
+            active_server_variants = (
+                server_variants
+                if scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
+                else server_variants[:1]
+            )
+            for server_variant, server_args in active_server_variants:
+                for experiment_name, experiment_config in experiment_configs:
+                    for max_batch_size in max_batch_sizes:
+                        for alpha in alphas:
+                            server = {
+                                **server_args,
+                                "seed": seed,
+                                "scheduling_algorithm": scheduler,
+                                "max_batch_size": max_batch_size,
+                                "alpha": alpha,
+                            }
+                            client = {
+                                **client_args,
+                                "seed": seed,
+                                "progress_type": "logging",
+                                "overwrite": True,
+                            }
+                            cases.append(
+                                Case(
+                                    server_args=server,
+                                    client_args=client,
+                                    experiment_config=experiment_config,
+                                    experiment_name=experiment_name,
+                                    stamp=stamp,
+                                    scheduler=scheduler,
+                                    seed=seed,
+                                    max_batch_size=max_batch_size,
+                                    alpha=alpha,
+                                    server_variant=(
+                                        server_variant if len(server_variants) > 1 else ""
+                                    ),
+                                )
                             )
-                        )
     return cases
 
 
@@ -294,6 +324,8 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
             "seed": case.seed,
             "max_batch_size": case.max_batch_size,
             "alpha": case.alpha,
+            "server_variant": case.server_variant,
+            "action_horizon_multipliers": case.server_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "output_dir": str(output_dir),
         },
@@ -318,28 +350,56 @@ def _submit_case(case_dir: pathlib.Path, *, num_robots: int, args: argparse.Name
         "sbatch",
         "--parsable",
         f"--export=ALL,ARMORY_SCRIPTS_DIR={SCRIPTS_DIR / 'sbatch'}",
-        # Het-group 0: server on a single L40S (embers QoS is required here).
-        "--constraint=gpu-l40s",
-        "--gres=gpu:1",
-        "--ntasks=1",
-        "--cpus-per-task=4",
-        f"--mem={args.server_mem}",
-        "--qos=embers",
-        f"--time={args.time}",
     ]
+    if args.cluster == "pace":
+        # Het-group 0: server on a single L40S (embers QoS is required here).
+        cmd += [
+            "--constraint=gpu-l40s",
+            "--gres=gpu:1",
+            "--ntasks=1",
+            "--cpus-per-task=4",
+            f"--mem={args.server_mem}",
+            "--qos=embers",
+            f"--time={args.time}",
+        ]
+    else:  # ice
+        cmd += [
+            "--gres=gpu:L40S:1",
+            "--ntasks=1",
+            "--cpus-per-task=4",
+            f"--mem={args.server_mem}",
+            f"--time={args.time}",
+        ]
     if args.account:
         cmd.append(f"--account={args.account}")
     cmd.append(":")
-    # Het-group 1: client on V100(s). GPU count is driven by the CPU:GPU<12 rule.
-    cmd += [
-        "--constraint=V100",
-        "--nodes=1",
-        f"--gres=gpu:{n_v100}",
-        "--ntasks=1",
-        f"--cpus-per-task={client_cpus}",
-        f"--mem={args.client_mem}",
-        f"--time={args.time}",
-    ]
+    if args.cluster == "pace":
+        # Het-group 1: client on V100(s). GPU count is driven by the CPU:GPU<12 rule.
+        cmd += [
+            "--constraint=V100",
+            "--nodes=1",
+            f"--gres=gpu:{n_v100}",
+            "--ntasks=1",
+            f"--cpus-per-task={client_cpus}",
+            f"--mem={args.client_mem}",
+            f"--time={args.time}",
+        ]
+    else:  # ice
+        if num_robots > 20:
+            client_gpu_type = "L40S"
+            client_cpus = num_robots
+            n_client_gpus = math.ceil(client_cpus / 8)
+        else:
+            client_gpu_type = "V100"
+            n_client_gpus = n_v100
+        cmd += [
+            "--nodes=1",
+            f"--gres=gpu:{client_gpu_type}:{n_client_gpus}",
+            "--ntasks=1",
+            f"--cpus-per-task={client_cpus}",
+            f"--mem={args.client_mem}",
+            f"--time={args.time}",
+        ]
     if args.account:
         cmd.append(f"--account={args.account}")
     cmd += [str(SCRIPTS_DIR / "sbatch" / "run_case.sh"), str(case_dir)]
@@ -455,7 +515,11 @@ def parse_args() -> argparse.Namespace:
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--server-config", default="configs/server/mock.json")
+    parser.add_argument(
+        "--server-config",
+        default="configs/server/mock.json",
+        help="Server config JSON file, or comma-separated JSON files for config-sensitive schedulers.",
+    )
     parser.add_argument(
         "--client-config",
         default="",
@@ -482,6 +546,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-batch-size", default="")
     parser.add_argument("--alpha", default="")
     parser.add_argument("--account", default="")
+    parser.add_argument(
+        "--cluster",
+        choices=["pace", "ice"],
+        default="pace",
+        help="Cluster preset: pace (Phoenix; L40S+V100 constraints, embers QoS) or ice (gpu:TYPE:N gres).",
+    )
     parser.add_argument("--time", default="1:00:00")
     parser.add_argument("--server-mem", default="32G", help="Memory for the L40S server component.")
     parser.add_argument(
@@ -515,7 +585,10 @@ def main() -> None:
     run_root = pathlib.Path(args.output_dir) / stamp
     run_root.mkdir(parents=True, exist_ok=True)
 
-    server_args = _read_json(args.server_config)
+    server_paths = _server_config_paths(args.server_config)
+    server_variants = [
+        (_server_variant_name(path), json.loads(path.read_text())) for path in server_paths
+    ]
     client_paths = _client_config_paths(args.client_config)
     resolved_client_config = _resolve_path(args.client_config)
     config_root = resolved_client_config if resolved_client_config.is_dir() else None
@@ -529,9 +602,12 @@ def main() -> None:
         "overwrite": True,
     }
     if args.server_policy == "default":
-        server_args["policy"] = {"type": "default"}
+        server_variants = [
+            (variant, {**server_args, "policy": {"type": "default"}})
+            for variant, server_args in server_variants
+        ]
     cases = _make_cases(
-        server_args=server_args,
+        server_variants=server_variants,
         client_args=client_args,
         experiment_configs=experiment_configs,
         schedulers=parse_list_args(args.schedulers),
@@ -553,6 +629,8 @@ def main() -> None:
             "seed": case.seed,
             "max_batch_size": case.max_batch_size,
             "alpha": case.alpha,
+            "server_variant": case.server_variant,
+            "action_horizon_multipliers": case.server_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "status": "dry_run" if args.dry_run else "submitted",
             "job_id": "",

@@ -363,7 +363,7 @@ class CpuMockClient:
 # --------------------------------------------------------------------------
 @app.cls(
     image=cpu_mock_image,
-    cpu=8,
+    cpu=16,
     timeout=2 * 60 * 60,
     memory=16384,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
