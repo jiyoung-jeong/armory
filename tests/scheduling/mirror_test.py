@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import replace
 
 import pytest
@@ -212,8 +213,8 @@ def test_mirror_twin_roundtrip() -> None:
     assert len(mirror.robots[ROBOT_ID].steps) > len(pre_steps)
     assert len(mirror.robots[ROBOT_ID].chunks) > len(pre_chunks)
 
-    assert twin.robots[ROBOT_ID].steps == pre_steps
-    assert twin.robots[ROBOT_ID].chunks == pre_chunks
+    assert list(twin.robots[ROBOT_ID].steps) == pre_steps
+    assert list(twin.robots[ROBOT_ID].chunks) == pre_chunks
 
 
 def test_mirror_twin_does_not_include_robots_added_after() -> None:
@@ -240,11 +241,11 @@ def test_mirror_twin_preserves_divergent_branch_contents() -> None:
     mirror.robots[ROBOT_ID].queue_chunk(branch_a_chunk)
     branch_a_twin = mirror.get_twin()
 
-    mirror.robots[ROBOT_ID].chunks = [LONG_RUN.chunks[0]]
+    mirror.robots[ROBOT_ID].chunks = deque([LONG_RUN.chunks[0]], maxlen=5)
     branch_b_chunk = replace(LONG_RUN.chunks[1], chunk_id=202, action_index_start=4)
     mirror.robots[ROBOT_ID].queue_chunk(branch_b_chunk)
 
-    assert branch_a_twin.robots[ROBOT_ID].chunks == [LONG_RUN.chunks[0], branch_a_chunk]
+    assert list(branch_a_twin.robots[ROBOT_ID].chunks) == [LONG_RUN.chunks[0], branch_a_chunk]
 
 
 def test_mirror_update_completion_refines_arrival() -> None:
