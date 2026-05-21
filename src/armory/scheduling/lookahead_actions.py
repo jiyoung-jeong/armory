@@ -118,11 +118,16 @@ class IncrementalSearch:
             self.frontier.append(((), batch, start_time, root_node))
 
         greedy_fallback = self._greedy()
-        self._evaluate(
-            (greedy_fallback,),
-            self.start_time + self.latency_tracker.infer_latency(len(greedy_fallback)),
-            root_node,
-        )
+        if greedy_fallback:
+            greedy_end_time = self.start_time + self.latency_tracker.infer_latency(
+                len(greedy_fallback)
+            )
+            greedy_node = root_node.get_twin()
+            greedy_node.queue_batch(
+                list(greedy_fallback), next(self._search_batch_id), origin="searched"
+            )
+            greedy_node.fast_forward(greedy_end_time)
+            self._evaluate((greedy_fallback,), greedy_end_time, greedy_node)
 
     def is_done(self) -> bool:
         return not self.frontier
@@ -157,19 +162,19 @@ class IncrementalSearch:
     #         tuple(sorted_robot_ids[:size])
     #         for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
     #     )
-    #     sorted_robot_ids_by_priority = sorted(
-    #         schedulable_robot_ids,
-    #         key=lambda rid: (
-    #             self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon],
-    #             -deadlines[rid],
-    #         ),
-    #         reverse=True,
-    #     )
-    #     priority_batches = tuple(
-    #         tuple(sorted_robot_ids_by_priority[:size])
-    #         for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
-    #     )
-    #     return edf_batches + priority_batches
+    #     # sorted_robot_ids_by_priority = sorted(
+    #     #     schedulable_robot_ids,
+    #     #     key=lambda rid: (
+    #     #         self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon],
+    #     #         -deadlines[rid],
+    #     #     ),
+    #     #     reverse=True,
+    #     # )
+    #     # priority_batches = tuple(
+    #     #     tuple(sorted_robot_ids_by_priority[:size])
+    #     #     for size in range(min(len(sorted_robot_ids), self.max_batch_size), 0, -1)
+    #     # )
+    #     return edf_batches # + priority_batches
 
     ## everything version
     # if mirror.last_queued_batch_robot_ids:
@@ -363,6 +368,9 @@ class IncrementalSearch:
 
     def _greedy(self) -> Batch:
         schedulable_robot_ids = self.snapshot.schedulable_robot_ids()
+        if self.snapshot.last_queued_batch_robot_ids:
+            prev_set = set(self.snapshot.last_queued_batch_robot_ids)
+            schedulable_robot_ids = [rid for rid in schedulable_robot_ids if rid not in prev_set]
         deadlines = self.snapshot.deadlines()
         return tuple(
             sorted(schedulable_robot_ids, key=lambda robot_id: deadlines[robot_id])[
