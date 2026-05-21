@@ -265,17 +265,30 @@ class Robot:
 
         obs_cutoff is rolled back from arrival_time through both action and
         observation latency, mirroring how the GPU saw the world when it
-        produced this chunk."""
+        produced this chunk. When obs_cutoff falls past the latest real step
+        (typical for in-flight chunks recomputed by ``bump_arrival``), simulate
+        forward past it so ``action_index_start`` reflects what the robot's
+        ``next_action_step`` will be at obs time — not whatever it is right
+        now, which doesn't yet account for upstream queued chunks."""
         action_latency = self.latency_tracker.action_latency(self.robot_id)
         obs_cutoff = (
             arrival_time - action_latency - self.latency_tracker.observation_latency(self.robot_id)
         )
-        control_step = self.get_latest_control_step_before(obs_cutoff)
+
+        step = self.steps[-1]
+        if step.time >= obs_cutoff:
+            control_step = self.get_latest_control_step_before(obs_cutoff)
+        else:
+            while True:
+                next_step = self.advance_step(step)
+                if next_step.time >= obs_cutoff:
+                    break
+                step = next_step
+            control_step = step
 
         observation_step = control_step.observation_step
         action_start_index = control_step.action_step or control_step.next_action_step
 
-        step = self.steps[-1]
         while step.time < arrival_time:
             step = self.advance_step(step)
 
