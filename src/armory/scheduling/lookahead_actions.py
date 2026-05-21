@@ -4,7 +4,7 @@ import itertools
 import logging
 import multiprocessing as mp
 import time
-from collections import deque
+from collections import deque, namedtuple
 from collections.abc import Mapping
 from typing import Any, TypeAlias
 
@@ -60,10 +60,10 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
 
 
 Batch: TypeAlias = tuple[RobotID, ...]
-
+SearchNode: namedtuple = namedtuple("SearchNode", ["schedule", "batch_to_queue", "next_time_server_available", "node"])
 
 class IncrementalSearch:
-    """Frontier-based BFS over batches in ``[start_time, start_time + horizon]``.
+    """Frontier-based BFS over batches in ``[start_time, end_time]``.
 
     Each frontier entry carries a Mirror so we can resume from any node. ``step``
     pops the front node, restores its node, expands every candidate child, evaluates
@@ -76,27 +76,22 @@ class IncrementalSearch:
         self,
         mirror: Mirror,
         latency_tracker: LatencyTracker,
-        start_time: float,
-        horizon: float,
         max_depth: int = 5,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,
-        starvation_alpha: float = 0.5,
     ) -> None:
         self.latency_tracker = latency_tracker
-        self.start_time = start_time
-        self.end_time = start_time + horizon
+        self.start_time = mirror.next_time_server_available()
         self.max_depth = max_depth
-        self.starvation_alpha = starvation_alpha
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
         # logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
         # FIXME: don't access private
         self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
-        self.snapshot = mirror.get_twin()
-        self.snapshot.chunk_id_counter = itertools.count(1)
-        self.snapshot.fast_forward(start_time)
-        self.initial_action_times = _action_times(self.snapshot)
-        self.initial_starvation_times = _starvation_times(self.snapshot)
+        self.root_node = mirror.get_twin()
+        self.root_node.chunk_id_counter = itertools.count(1)
+        self.root_node.fast_forward(self.start_time)
+        self.initial_action_times = _action_times(self.root_node)
+        self.initial_starvation_times = _starvation_times(self.root_node)
         self._search_batch_id = itertools.count(1)
 
         self.best_objective: float = -float("inf")
@@ -112,34 +107,25 @@ class IncrementalSearch:
         }
         self.max_node_time: float = 0.0
 
-        root_node = self.snapshot.get_twin()
+        self.search_level = 0
         self.frontier: deque[tuple[tuple[Batch, ...], Batch, float, Mirror]] = deque()
-        for batch in self._candidate_batches(root_node):
-            self.frontier.append(((), batch, start_time, root_node))
 
-        greedy_fallback = self._greedy()
-        if greedy_fallback:
-            greedy_end_time = self.start_time + self.latency_tracker.infer_latency(
-                len(greedy_fallback)
-            )
-            greedy_node = root_node.get_twin()
-            greedy_node.queue_batch(
-                list(greedy_fallback), next(self._search_batch_id), origin="searched"
-            )
-            greedy_node.fast_forward(greedy_end_time)
-            self._evaluate((greedy_fallback,), greedy_end_time, greedy_node)
+        for batch in self._candidate_batches(self.root_node):
+            self.frontier.append(SearchNode((), batch, self.start_time, self.root_node))
 
     def is_done(self) -> bool:
         return not self.frontier
 
     def step(self, budget_nodes: int = 32) -> None:
+        """Searches until it finishes budget nodes or it finishes one depth, whichever comes first."""
         for _ in range(budget_nodes):
             if self.is_done():
                 return
-            parent_schedule, queued_batch, parent_gpu_end_time, parent_node = (
-                self.frontier.popleft()
-            )
-            self._expand(parent_schedule, queued_batch, parent_gpu_end_time, parent_node)
+            self._expand(*self.frontier.popleft())
+            if not self.is_done() and len(self.frontier[0].schedule) > self.search_level:
+                assert len(self.frontier[0].schedule) == self.search_level + 1
+                self.search_level += 1
+                return
 
     def best(self) -> list[Batch]:
         return list(self.best_schedule)
@@ -239,8 +225,6 @@ class IncrementalSearch:
         parent_node: Mirror,
     ):
         next_time = gpu_end_time + self.latency_tracker.infer_latency(len(queued_batch))
-        if next_time > self.end_time:
-            return
 
         t0 = time.perf_counter()
         node = parent_node.get_twin()
@@ -366,19 +350,6 @@ class IncrementalSearch:
     #             [b for b in schedule],
     #         )
 
-    def _greedy(self) -> Batch:
-        schedulable_robot_ids = self.snapshot.schedulable_robot_ids()
-        if self.snapshot.last_queued_batch_robot_ids:
-            prev_set = set(self.snapshot.last_queued_batch_robot_ids)
-            schedulable_robot_ids = [rid for rid in schedulable_robot_ids if rid not in prev_set]
-        deadlines = self.snapshot.deadlines()
-        return tuple(
-            sorted(schedulable_robot_ids, key=lambda robot_id: deadlines[robot_id])[
-                : self.max_batch_size
-            ]
-        )
-
-
 class LookaheadActionsScheduler(RequestScheduler):
     """Plan one batch per tick, using GPU slack to search.
 
@@ -393,23 +364,19 @@ class LookaheadActionsScheduler(RequestScheduler):
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
         *,
-        horizon: float = 1.0,
         max_depth: int = 3,
         max_in_flight: int = 3,
         step_budget_nodes: int = 8,
         scheduling_buffer: float = 0.05,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,
-        starvation_alpha: float = 0.5,
     ) -> None:
         super().__init__(batch_queue, max_batch_size)
-        self.horizon = horizon
         self.max_depth = max_depth
         self.max_in_flight = max_in_flight
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
         # logger.debug("lookahead actions scheduler, action_horizon_multipliers=%s", self.action_horizon_multipliers)
-        self.starvation_alpha = starvation_alpha
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
@@ -450,7 +417,6 @@ class LookaheadActionsScheduler(RequestScheduler):
 
         notes: dict[str, Any] = {
             "rule": "lookahead_actions",
-            "horizon": self.horizon,
             "max_depth": self.max_depth,
             "max_in_flight": self.max_in_flight,
             "step_budget_nodes": self.step_budget_nodes,
@@ -472,11 +438,8 @@ class LookaheadActionsScheduler(RequestScheduler):
         search = IncrementalSearch(
             self.mirror,
             self.latency_tracker,
-            next_avail,
-            self.horizon,
             self.max_depth,
             self.action_horizon_multipliers,
-            self.starvation_alpha,
         )
         search_started_at = time.time()
         _phase("search_init", search_init_start, search_started_at)
