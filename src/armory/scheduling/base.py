@@ -1,5 +1,4 @@
 import itertools
-import gc
 import logging
 import multiprocessing as mp
 import time
@@ -37,7 +36,6 @@ class RequestScheduler(ABC):
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
         self._drain_fn: Callable[[], None] | None = None
-        # gc.disable()
 
     def update(self, request: SlotRequest) -> None:
         self.latency_tracker.update_obs(
@@ -140,32 +138,8 @@ class RequestScheduler(ABC):
             )
 
         if batches and isinstance(notes, dict):
-            # gc_start = time.time()
-            # gc.collect()
-            # gc_end = time.time()
-
             phases = notes.setdefault("phases", [])
-            # phases.append({"name": "gc", "start": gc_start, "end": gc_end})
             phases.append({"name": "dispatch", "start": dispatch_start, "end": time.time()})
-
-        if not decisions:
-            # Always emit at least one record per call so empty-batch ticks
-            # (no_requests, dispatch_budget==0, search-with-no-commit, etc.)
-            # show up in metrics instead of silently vanishing.
-            decisions.append(
-                SchedulerDecision(
-                    scheduler_name=type(self).__name__,
-                    started_at=started_at,
-                    duration=time.time() - started_at,
-                    next_server_available=next_avail,
-                    in_flight_batches=in_flight,
-                    candidates=candidate_ids,
-                    deadlines=dict(deadlines),
-                    batch_id=None,
-                    scheduled=[],
-                    notes=dict(notes) if isinstance(notes, dict) else {},
-                )
-            )
 
         return decisions
 
