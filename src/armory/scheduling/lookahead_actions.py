@@ -78,14 +78,14 @@ class IncrementalSearch:
         latency_tracker: LatencyTracker,
         max_depth: int = 5,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,
+        max_batch_size: int = 1,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = mirror.next_time_server_available()
         self.max_depth = max_depth
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
+        self.max_batch_size = max_batch_size
         # logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
-        # FIXME: don't access private
-        self.max_batch_size = max(latency_tracker._infer_latency.keys())
 
         self.root_node = mirror.get_twin()
         self.root_node.chunk_id_counter = itertools.count(1)
@@ -440,6 +440,7 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.latency_tracker,
             self.max_depth,
             self.action_horizon_multipliers,
+            self.max_batch_size,
         )
         search_started_at = time.time()
         _phase("search_init", search_init_start, search_started_at)
