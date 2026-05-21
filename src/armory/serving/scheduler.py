@@ -164,10 +164,9 @@ class SchedulerWorker:
         while True:
             if result_sock.poll(timeout=100):
                 msg = result_sock.recv_pyobj()
-                if isinstance(msg, BatchProfile):
-                    return msg.latencies
-                logger.warning("Unexpected message before batch profile: %s", type(msg).__name__)
-
+                assert isinstance(msg, BatchProfile), f"Unexpected message: {type(msg).__name__}"
+                return msg.latencies
+                
     def _process_engine_messages(
         self, scheduler: RequestScheduler, result_sock: zmq.Socket
     ) -> None:
