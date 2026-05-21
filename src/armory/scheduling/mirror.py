@@ -148,7 +148,7 @@ class Robot:
 
     def queue_chunk(self, chunk: ActionChunk) -> None:
         self.chunks.append(chunk)
-        # self.assert_consistency()
+        self.assert_consistency()
 
     def apply_response(self, chunk_id: int, response: InferResponse, arrival_time: float) -> None:
         """A queued chunk has come back from inference. Refresh the chunk and
@@ -301,10 +301,8 @@ class Robot:
         """Debug-time invariant checks. Remove the call sites once we're
         confident the producers can't violate them."""
         for prev, curr in pairwise(self.chunks):
-            if prev.action_index_start + prev.max_execution_horizon < curr.action_index_start:
-                raise ValueError(
-                    f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
-                )
+            assert prev.action_index_start + prev.max_execution_horizon >= curr.action_index_start, f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
+            assert prev_action_index_start < curr_action_index_start, f"Backward chunks {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
 
     def assert_step_consistency(self) -> None:
         for prev, curr in pairwise(self.steps):
@@ -320,7 +318,7 @@ class Robot:
     def max_overall_action_step(self) -> int:
         if not self.chunks:
             return -1
-        return max(c.action_index_start + c.max_execution_horizon - 1 for c in self.chunks)
+        return self.chunks[-1].action_index_start + self.chunks[-1].max_execution_horizon - 1
 
     def get_latest_control_step_before(self, time: float) -> ControlStep | None:
         for step in reversed(self.steps):
