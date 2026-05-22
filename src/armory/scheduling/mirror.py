@@ -409,7 +409,7 @@ class Robot:
         executed_steps = self.steps[-1].next_action_step
         return total_steps - executed_steps
 
-    def step_forward(self, time: float) -> None:
+    def step_forward(self, time_end: float) -> None:
         # Hot path: inlines advance_step + action_is_available and exploits the
         # fact that both ``action_step`` (= prev next_action_step) and ``time``
         # are monotonic non-decreasing across iterations. A cursor advances
@@ -417,59 +417,37 @@ class Robot:
         # we don't rescan them every tick.
         steps = self.steps
         prev_step = steps[-1]
-        if prev_step.time >= time:
+        if prev_step.time >= time_end:
             return
 
-        chunks = self.chunks
-        n_chunks = len(chunks)
-        chunk_starts = [c.action_index_start + c.first_executed_index for c in chunks]
-        chunk_ends = [c.action_index_start + c.max_execution_horizon - 1 for c in chunks]
-        chunk_ais = [c.action_index_start for c in chunks]
-        chunk_arrivals = [c.arrival_time for c in chunks]
-
         dt = 1.0 / self.control_hz
+
+        time = prev_step.time + dt
+        observation_step = prev_step.observation_step + 1
+        action_step = prev_step.next_action_step
+
         chunk_idx = 0
-
-        prev_time = prev_step.time
-        prev_obs = prev_step.observation_step
-        prev_next_action = prev_step.next_action_step
-
-        while prev_time < time:
-            next_time = prev_time + dt
-            action_step = prev_next_action
-
-            # Advance cursor past chunks that end before action_step.
-            while chunk_idx < n_chunks and chunk_ends[chunk_idx] < action_step:
+        while time < time_end:
+            # Go to the latest chunk that has arrived by the current time
+            while chunk_idx + 1 < len(self.chunks) and self.chunks[chunk_idx + 1].arrival_time <= time:
                 chunk_idx += 1
+            
+            is_available = (chunk_idx < len(self.chunks) and self.chunks[chunk_idx].arrival_time <= time and action_step <= self.chunks[chunk_idx].last_action_index)
 
-            # Walk forward while chunks overlap with action_step on action_index_start.
-            is_available = False
-            i = chunk_idx
-            while i < n_chunks and chunk_ais[i] <= action_step:
-                if chunk_starts[i] <= action_step and chunk_arrivals[i] <= next_time:
-                    is_available = True
-                    break
-                i += 1
+            current_action_step = action_step if is_available else None
+            next_action_step = action_step + 1 if is_available else action_step
 
-            if is_available:
-                new_action = action_step
-                new_next_action = action_step + 1
-            else:
-                new_action = None
-                new_next_action = action_step
-
-            new_obs = prev_obs + 1
             steps.append(
                 ControlStep(
-                    time=next_time,
-                    observation_step=new_obs,
-                    action_step=new_action,
-                    next_action_step=new_next_action,
+                    time=time,
+                    observation_step=observation_step,
+                    action_step=current_action_step,
+                    next_action_step=next_action_step,
                 )
             )
-            prev_time = next_time
-            prev_obs = new_obs
-            prev_next_action = new_next_action
+            time += dt
+            observation_step += 1
+            action_step = next_action_step
 
     def next_chunk_start(self, cs: ControlStep) -> int:
         """Action index the next queued chunk should start at, given control step ``cs``."""
