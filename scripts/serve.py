@@ -150,8 +150,11 @@ def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | N
 
 
 def main(args: Args) -> None:
+    cli_multipliers = args.action_horizon_multipliers
     if args.json_path is not None:
         args = Args.from_json(args.json_path)
+    if cli_multipliers:
+        args.action_horizon_multipliers = cli_multipliers
     seed_everything(args.seed)
     log_path = (
         pathlib.Path(args.log_dir)
