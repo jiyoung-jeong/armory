@@ -107,6 +107,7 @@ class ActionChunk:
     #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
     #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
     origin: str = "queued"
+    debug_info: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_ack(cls, ack: AckNotification) -> ActionChunk:
@@ -121,11 +122,31 @@ class ActionChunk:
             origin="confirmed",
         )
 
+    @property
+    def last_action_index(self) -> int:
+        """inclusive"""
+        return self.action_index_start + self.max_execution_horizon - 1
+
+
+@dataclass(frozen=True)
+class Idle:
+    """Synthetic scheduler action: leave the GPU idle for ``duration`` seconds.
+
+    Flows through the same dispatch path as a real batch — the scheduler queues
+    it on the mirror (occupying server time without producing chunks) and the
+    GPU worker sleeps for ``duration`` before returning an empty ResponseBatch.
+    """
+
+    duration: float
+
 
 class RequestBatch(NamedTuple):
     requests: list[SlotRequest]
     chunk_ids: list[int]
     batch_id: int
+    # > 0 marks a synthetic idle batch (empty ``requests``): the GPU sleeps this
+    # long instead of inferring. See ``Idle``.
+    idle_duration: float = 0.0
 
 
 class ResponseBatch(NamedTuple):

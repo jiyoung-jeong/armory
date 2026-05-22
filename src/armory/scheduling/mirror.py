@@ -31,7 +31,7 @@ import logging
 from itertools import pairwise
 import time
 from collections import deque
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import (
@@ -63,7 +63,7 @@ class ChunkContext:
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int = 0  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
-
+    debug_info: dict[str, Any] = field(default_factory=dict)
 
 class Robot:
     """Mirror of a single robot's control steps and action chunks.
@@ -228,7 +228,7 @@ class Robot:
         self, dispatch_time: float, arrival_time: float | None = None
     ) -> ChunkContext:
         # NOTE: assumes time has been simulated up until dispatch_time
-        assert self.steps[-1].time + 1 / self.control_hz > dispatch_time
+        assert self.steps[-1].time + (1 / self.control_hz) > dispatch_time, f"time has not been simulated up until dispatch_time {dispatch_time}, steps: {self.steps}, next step time would be {self.steps[-1].time + (1 / self.control_hz)}"
         if arrival_time is None:
             arrival_time = dispatch_time + self.latency_tracker.action_latency(self.robot_id)
 
@@ -258,6 +258,15 @@ class Robot:
             arrival_time=arrival_time,
             execution_start_step=execution_start_step,
             first_executed_index=first_executed_index,
+            debug_info={
+                "steps": [str(s) for s in self.steps],
+                "dispatch_time": dispatch_time,
+                "arrival_time": arrival_time,
+                "control_step": control_step,
+                "step": step,
+                "execution_start_step": execution_start_step,
+                "first_executed_index": first_executed_index,
+            },
         )
 
     def _context_at_arrival(self, arrival_time: float) -> ChunkContext:
@@ -523,6 +532,7 @@ class Mirror:
         # used by schedulers that want a "no back-to-back" view of the most
         # recent dispatch.
         self.last_queued_batch_robot_ids: tuple[RobotID, ...] = ()
+        self.latest_fast_forward_time: float = 0.0
 
     @property
     def in_flight_batches_count(self) -> int:
@@ -611,6 +621,13 @@ class Mirror:
                 execution_start_step=chunk_context.execution_start_step,
                 first_executed_index=chunk_context.first_executed_index,
                 origin=origin,
+                debug_info={
+                    "dispatch_time": dispatch_time,
+                    "infer_lat": infer_lat,
+                    "action_latency": self.latency_tracker.action_latency(robot_id),
+                    "arrival_time": arrival_time,
+                    "chunk_context": chunk_context,
+                },
             )
             self.robots[robot_id].queue_chunk(chunk)
             chunks.append(chunk)
@@ -624,6 +641,26 @@ class Mirror:
         )
         self.last_queued_batch_robot_ids = tuple(batch)
         return chunks
+
+    def queue_idle(self, duration: float, batch_id: int) -> None:
+        """Register a synthetic batch that occupies the server for ``duration``
+        without producing any chunks.
+
+        Mirrors ``queue_batch``'s GPU-timing bookkeeping (an in-flight Batch with
+        a chained ``completion_time``) so ``next_time_server_available`` reflects
+        the idle window — both in production and inside speculative search twins,
+        where it keeps downstream ``schedulable_robot_ids`` / ``deadlines`` from
+        being computed at a too-early dispatch time."""
+        dispatch_time = self.next_time_server_available()
+        self.in_flight_batches.append(
+            Batch(
+                batch_id=batch_id,
+                robot_ids=[],
+                chunk_ids=[],
+                completion_time=dispatch_time + duration,
+            )
+        )
+        self.last_queued_batch_robot_ids = ()
 
     def update_batch_completion(self, batch: ResponseBatch) -> None:
         """Refine each chunk's arrival_time once GPU inference has completed."""
@@ -719,6 +756,8 @@ class Mirror:
             completed = self.in_flight_batches.popleft()
             self.last_batch_completed_time = completed.completion_time
 
+        self.latest_fast_forward_time = max(self.latest_fast_forward_time, time)
+
     def get_twin(self) -> Mirror:
         """Shallow twin for speculative planning.
 
@@ -735,6 +774,7 @@ class Mirror:
         twin.chunk_id_counter = self.chunk_id_counter
         twin.robots = {rid: robot._clone_for_twin() for rid, robot in self.robots.items()}
         twin.last_queued_batch_robot_ids = self.last_queued_batch_robot_ids
+        twin.latest_fast_forward_time = self.latest_fast_forward_time
         return twin
 
     def deadlines(self) -> dict[RobotID, float]:
@@ -757,4 +797,5 @@ class Mirror:
             "last_batch_completed_time_rel": (
                 self.last_batch_completed_time - now if self.last_batch_completed_time > 0 else None
             ),
+            "latest_fast_forward_time": self.latest_fast_forward_time,
         }

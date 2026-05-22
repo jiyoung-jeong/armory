@@ -557,6 +557,7 @@ def _gantt_fig(
     replan_markers: list[dict],
     kickoff_markers: list[dict],
     scheduling_decisions: list[dict] | None = None,
+    idle_periods: list[dict] | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     if not batches:
@@ -665,6 +666,26 @@ def _gantt_fig(
                     },
                 )
             )
+    # Scheduled idle periods: translucent bands spanning all robot rows, drawn
+    # below the bars so a deliberate GPU idle is distinguishable from an
+    # incidental gap between batches.
+    for idle in idle_periods or []:
+        start = idle["inference_start_t"]
+        end = idle["inference_end_t"]
+        if end < visible_min_t or start > max_t:
+            continue
+        fig.add_vrect(
+            x0=max(start, visible_min_t),
+            x1=min(end, max_t),
+            fillcolor="#9e9e9e",
+            opacity=0.22,
+            line_width=0,
+            layer="below",
+            annotation_text=f"idle {idle.get('idle_ms', 0):.0f}ms",
+            annotation_position="top left",
+            annotation_font_size=9,
+            annotation_font_color="#9e9e9e",
+        )
     for marker in replan_markers:
         t = marker["t"]
         if visible_min_t <= t <= max_t:
@@ -1129,6 +1150,7 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
             snap.replan_markers,
             snap.kickoff_markers,
             snap.scheduling_decisions,
+            snap.idle_history,
         )
 
         robot_opts = [{"label": "all", "value": "all"}] + [

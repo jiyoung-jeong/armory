@@ -48,6 +48,7 @@ class Snapshot:
     healthy_robots_over_time: list[dict]
     # Chart data (formerly in history())
     batch_history: list[dict]
+    idle_history: list[dict]
     outbound_delays_ms: dict[str, list[float]]
     scheduler_timing_ms: dict[str, list[float]]
     replan_markers: list[dict]
@@ -144,10 +145,14 @@ class MetricsStore(JSONDataclass):
     end_time: float = 0.0
     robots: dict[RobotID, Robot] = field(default_factory=dict)
     batches: list[BatchSummary] = field(default_factory=list)
+    # Synthetic idle batches kept apart from real batches so they never skew
+    # GPU-time / batch-size stats; surfaced only on the gantt.
+    idle_batches: list[BatchSummary] = field(default_factory=list)
     scheduler_decisions: list[SchedulerDecision] = field(default_factory=list)
 
     def __post_init__(self):
         self.batches = [BatchSummary.from_json(b) for b in self.batches]
+        self.idle_batches = [BatchSummary.from_json(b) for b in self.idle_batches]
         self.robots = {
             robot_id: v
             if isinstance(v, Robot)
@@ -165,6 +170,23 @@ class MetricsStore(JSONDataclass):
         with lock:
             responses = batch.responses
             if len(responses) == 0:
+                # Synthetic idle batch (GPU slept, no inference): inference_duration
+                # is the sleep length. Real "dropped everything" batches report a
+                # zero duration and are ignored. Idle batches are tracked separately
+                # so they don't pollute GPU-time / batch-size stats.
+                if batch.inference_duration > 0:
+                    self.idle_batches.append(
+                        BatchSummary(
+                            batch_id=batch.batch_id,
+                            robot_ids=[],
+                            request_ids=[],
+                            inference_start_time=batch.inference_start_time,
+                            inference_end_time=batch.inference_start_time
+                            + batch.inference_duration,
+                            batch_size=0,
+                            idle_duration=batch.inference_duration,
+                        )
+                    )
                 return
             self.batches.append(
                 BatchSummary(
@@ -285,6 +307,11 @@ class MetricsStore(JSONDataclass):
 
             batches = window_filter(
                 self.batches,
+                lambda b: b.inference_end_time,
+                (start_timestamp, self.end_time),
+            )
+            idle_batches = window_filter(
+                self.idle_batches,
                 lambda b: b.inference_end_time,
                 (start_timestamp, self.end_time),
             )
@@ -496,6 +523,16 @@ class MetricsStore(JSONDataclass):
                     }
                 )
 
+            idle_history = [
+                {
+                    "t": round(b.inference_end_time - t0, 3),
+                    "inference_start_t": round(b.inference_start_time - t0, 3),
+                    "inference_end_t": round(b.inference_end_time - t0, 3),
+                    "idle_ms": round(b.idle_duration * 1000, 2),
+                }
+                for b in idle_batches
+            ]
+
             # ---- outbound delays ----
             outbound_delays_ms: dict[str, list[float]] = {}
             for robot_id, robot in self.robots.items():
@@ -604,6 +641,7 @@ class MetricsStore(JSONDataclass):
                 sla_capacity_curve=sla_capacity_curve,
                 healthy_robots_over_time=healthy_robots_over_time,
                 batch_history=batch_history,
+                idle_history=idle_history,
                 outbound_delays_ms=outbound_delays_ms,
                 scheduler_timing_ms=scheduler_timing_ms,
                 replan_markers=replan_markers,
@@ -617,5 +655,6 @@ class MetricsStore(JSONDataclass):
         """Clear all accumulated metrics and reset counters."""
         with lock:
             self.batches.clear()
+            self.idle_batches.clear()
             self.scheduler_decisions.clear()
             self.robots.clear()

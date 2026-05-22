@@ -14,6 +14,7 @@ from armory.scheduling.mirror import Mirror
 # from armory.scheduling.simple_mirror import SimpleMirror as Mirror
 from armory.serving.schemas import (
     AckNotification,
+    Idle,
     RequestBatch,
     ResponseBatch,
     RobotID,
@@ -46,7 +47,10 @@ class RequestScheduler(ABC):
             self._latest_requests[request.robot_id] = request
 
     def on_batch_completed(self, batch: ResponseBatch) -> None:
-        self.latency_tracker.update_infer(batch.batch_size, batch.inference_duration)
+        # Skip empty completions (no inference happened): keeps idle batches and
+        # dropped-everything batches from polluting the size-0 infer-latency seed.
+        if batch.batch_size > 0:
+            self.latency_tracker.update_infer(batch.batch_size, batch.inference_duration)
         self.mirror.update_batch_completion(batch)
 
     def update_ack(self, notification: AckNotification) -> None:
@@ -108,20 +112,38 @@ class RequestScheduler(ABC):
         decisions: list[SchedulerDecision] = []
         for batch in batches:
             batch_id = next(self.next_batch_id)
-            chunks = self.mirror.queue_batch([slot.robot_id for slot in batch], batch_id)
-            self._batch_queue.put_nowait(
-                RequestBatch(
-                    requests=batch,
-                    chunk_ids=[chunk.chunk_id for chunk in chunks],
-                    batch_id=batch_id,
+            if isinstance(batch, Idle):
+                # Leave the GPU idle: occupy the mirror's server clock for the
+                # duration and tell the worker to sleep. No chunks, no robots.
+                self.mirror.queue_idle(batch.duration, batch_id)
+                self._batch_queue.put_nowait(
+                    RequestBatch(
+                        requests=[],
+                        chunk_ids=[],
+                        batch_id=batch_id,
+                        idle_duration=batch.duration,
+                    )
                 )
-            )
-            logger.debug(
-                "schedule stage=dispatched batch_id=%d size=%d robots=%s",
-                batch_id,
-                len(batch),
-                [slot.robot_id for slot in batch],
-            )
+                logger.debug(
+                    "schedule stage=dispatched batch_id=%d idle=%.3fs", batch_id, batch.duration
+                )
+                scheduled_ids: list[RobotID] = []
+            else:
+                chunks = self.mirror.queue_batch([slot.robot_id for slot in batch], batch_id)
+                self._batch_queue.put_nowait(
+                    RequestBatch(
+                        requests=batch,
+                        chunk_ids=[chunk.chunk_id for chunk in chunks],
+                        batch_id=batch_id,
+                    )
+                )
+                logger.debug(
+                    "schedule stage=dispatched batch_id=%d size=%d robots=%s",
+                    batch_id,
+                    len(batch),
+                    [slot.robot_id for slot in batch],
+                )
+                scheduled_ids = [slot.robot_id for slot in batch]
             decisions.append(
                 SchedulerDecision(
                     scheduler_name=type(self).__name__,
@@ -132,7 +154,7 @@ class RequestScheduler(ABC):
                     candidates=candidate_ids,
                     deadlines=dict(deadlines),
                     batch_id=batch_id,
-                    scheduled=[slot.robot_id for slot in batch],
+                    scheduled=scheduled_ids,
                     notes=dict(notes),
                 )
             )
@@ -146,7 +168,7 @@ class RequestScheduler(ABC):
     @abstractmethod
     def get_next_batches(
         self, candidates: list[SlotRequest]
-    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+    ) -> tuple[list[list[SlotRequest] | Idle], dict[str, Any]]:
         """Return (batches_to_dispatch, debug_notes) for the current tick.
 
         ``candidates`` is the list of robots the mirror considers schedulable
