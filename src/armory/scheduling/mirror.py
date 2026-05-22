@@ -436,7 +436,7 @@ class Robot:
         action_step = prev_step.next_action_step
 
         chunk_idx = 0
-        while time < time_end:
+        while time <= time_end:
             # Go to the latest chunk that has arrived by the current time
             while chunk_idx + 1 < len(self.chunks) and self.chunks[chunk_idx + 1].arrival_time <= time:
                 chunk_idx += 1
