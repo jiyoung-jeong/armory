@@ -411,12 +411,17 @@ class Robot:
                 )
             return step.time
 
+    @property
+    def executed_steps(self) -> int:
+        if not self.steps:
+            return 0
+        return self.steps[-1].next_action_step
+
     def starved_steps(self) -> int:
         if not self.steps:
             return 0
         total_steps = self.steps[-1].observation_step + 1
-        executed_steps = self.steps[-1].next_action_step
-        return total_steps - executed_steps
+        return total_steps - self.executed_steps
 
     def step_forward(self, time_end: float) -> None:
         # Hot path: inlines advance_step + action_is_available and exploits the
