@@ -28,10 +28,10 @@ from __future__ import annotations
 
 import itertools
 import logging
-from itertools import pairwise
 import time
 from collections import deque
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
+from itertools import pairwise
 
 from armory.scheduling.latency import LatencyTracker
 from armory.serving.schemas import (
@@ -63,7 +63,7 @@ class ChunkContext:
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int = 0  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
-    debug_info: dict[str, Any] = field(default_factory=dict)
+
 
 class Robot:
     """Mirror of a single robot's control steps and action chunks.
@@ -228,7 +228,9 @@ class Robot:
         self, dispatch_time: float, arrival_time: float | None = None
     ) -> ChunkContext:
         # NOTE: assumes time has been simulated up until dispatch_time
-        assert self.steps[-1].time + (1 / self.control_hz) > dispatch_time, f"time has not been simulated up until dispatch_time {dispatch_time}, steps: {self.steps}, next step time would be {self.steps[-1].time + (1 / self.control_hz)}"
+        assert self.steps[-1].time + (1 / self.control_hz) > dispatch_time, (
+            f"time has not been simulated up until dispatch_time {dispatch_time}, steps: {self.steps}, next step time would be {self.steps[-1].time + (1 / self.control_hz)}"
+        )
         if arrival_time is None:
             arrival_time = dispatch_time + self.latency_tracker.action_latency(self.robot_id)
 
@@ -236,7 +238,11 @@ class Robot:
         control_step = self.get_latest_control_step_before(obs_cutoff)
 
         observation_step = control_step.observation_step
-        action_start_index = control_step.action_step if control_step.action_step is not None else control_step.next_action_step
+        action_start_index = (
+            control_step.action_step
+            if control_step.action_step is not None
+            else control_step.next_action_step
+        )
 
         step = self.steps[-1]
         while step.time < arrival_time:
@@ -258,15 +264,6 @@ class Robot:
             arrival_time=arrival_time,
             execution_start_step=execution_start_step,
             first_executed_index=first_executed_index,
-            debug_info={
-                "steps": [str(s) for s in self.steps],
-                "dispatch_time": dispatch_time,
-                "arrival_time": arrival_time,
-                "control_step": control_step,
-                "step": step,
-                "execution_start_step": execution_start_step,
-                "first_executed_index": first_executed_index,
-            },
         )
 
     def _context_at_arrival(self, arrival_time: float) -> ChunkContext:
@@ -296,7 +293,11 @@ class Robot:
             control_step = step
 
         observation_step = control_step.observation_step
-        action_start_index = control_step.action_step if control_step.action_step is not None else control_step.next_action_step
+        action_start_index = (
+            control_step.action_step
+            if control_step.action_step is not None
+            else control_step.next_action_step
+        )
 
         while step.time < arrival_time:
             step = self.advance_step(step)
@@ -323,7 +324,9 @@ class Robot:
         """Debug-time invariant checks. Remove the call sites once we're
         confident the producers can't violate them."""
         for prev, curr in pairwise(self.chunks):
-            assert prev.action_index_start + prev.max_execution_horizon >= curr.action_index_start, f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
+            assert (
+                prev.action_index_start + prev.max_execution_horizon >= curr.action_index_start
+            ), f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
             # NOTE: I wanted to add this assert, but it fails when a completion/ack causes a queued chunk to become redundant
             # assert prev.action_index_start < curr.action_index_start, f"Backward chunks {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
 
@@ -441,12 +444,18 @@ class Robot:
         action_step = prev_step.next_action_step
 
         chunk_idx = 0
-        while time < time_end:
+        while time <= time_end:
             # Go to the latest chunk that has arrived by the current time
-            while chunk_idx + 1 < len(self.chunks) and self.chunks[chunk_idx + 1].arrival_time <= time:
+            while (
+                chunk_idx + 1 < len(self.chunks) and self.chunks[chunk_idx + 1].arrival_time <= time
+            ):
                 chunk_idx += 1
-            
-            is_available = (chunk_idx < len(self.chunks) and self.chunks[chunk_idx].arrival_time <= time and action_step <= self.chunks[chunk_idx].last_action_index)
+
+            is_available = (
+                chunk_idx < len(self.chunks)
+                and self.chunks[chunk_idx].arrival_time <= time
+                and action_step <= self.chunks[chunk_idx].last_action_index
+            )
 
             current_action_step = action_step if is_available else None
             next_action_step = action_step + 1 if is_available else action_step
@@ -626,13 +635,6 @@ class Mirror:
                 execution_start_step=chunk_context.execution_start_step,
                 first_executed_index=chunk_context.first_executed_index,
                 origin=origin,
-                debug_info={
-                    "dispatch_time": dispatch_time,
-                    "infer_lat": infer_lat,
-                    "action_latency": self.latency_tracker.action_latency(robot_id),
-                    "arrival_time": arrival_time,
-                    "chunk_context": chunk_context,
-                },
             )
             self.robots[robot_id].queue_chunk(chunk)
             chunks.append(chunk)

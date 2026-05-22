@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Synthetic idle durations (seconds) the search may insert to defer the next
 # dispatch — letting robots progress until a better batch becomes schedulable.
 DEFAULT_IDLE_DURATIONS: tuple[float, ...] = (0.01,)
+DEBUG_MODE = False
 
 
 def _serialize_action(action: "Batch | Idle") -> Any:
@@ -75,7 +76,10 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
 HORIZON = 1.0
 
 Batch: TypeAlias = tuple[RobotID, ...]
-SearchNode: namedtuple = namedtuple("SearchNode", ["schedule", "batch_to_queue", "next_time_server_available", "node"])
+SearchNode: namedtuple = namedtuple(
+    "SearchNode", ["schedule", "batch_to_queue", "next_time_server_available", "node"]
+)
+
 
 class IncrementalSearch:
     """Frontier-based BFS over batches in ``[start_time, end_time]``.
@@ -102,7 +106,9 @@ class IncrementalSearch:
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
         self.max_batch_size = max_batch_size
         self.idle_durations = tuple(idle_durations)
-        logger.debug("incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers)
+        logger.debug(
+            "incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers
+        )
 
         self.root_node = mirror.get_twin()
         self.root_node.chunk_id_counter = itertools.count(1)
@@ -238,14 +244,12 @@ class IncrementalSearch:
 
         return tuple(batches)
 
-    def _candidate_actions(
-        self, mirror: Mirror, *, allow_idle: bool
-    ) -> list["Batch | Idle"]:
+    def _candidate_actions(self, mirror: Mirror, *, allow_idle: bool) -> list["Batch | Idle"]:
         """Real dispatch batches plus, when ``allow_idle``, one synthetic idle
         per configured duration. ``allow_idle`` is False right after an idle so
         we never chain idles back-to-back (idle 10ms + idle 10ms is already
         covered by the single idle 20ms candidate)."""
-        actions: list["Batch | Idle"] = list(self._candidate_batches(mirror))
+        actions: list[Batch | Idle] = list(self._candidate_batches(mirror))
         if allow_idle:
             actions.extend(Idle(d) for d in self.idle_durations)
         return actions
@@ -355,23 +359,24 @@ class IncrementalSearch:
             * gained_times[rid]
             for rid in gained_times
         )
-        objective = gained
-        deadlines = eval_node.deadlines()
-        self.all_evaluated.append(
-            {
-                "schedule": [_serialize_action(b) for b in schedule],
-                "gpu_end_time": gpu_end_time,
-                "objective": objective,
-                "execution_times": dict(execution_times),
-                "gained": gained,
-                "gpu_time": gpu_time,
-                "old_execution_times": dict(self.initial_execution_times),
-                "execution_times": dict(execution_times),
-                "gained_times": dict(gained_times),
-                "deadlines": dict(deadlines),
-                "mirror_state": eval_node.to_dict(),
-            }
-        )
+        objective = gained / gpu_time
+        if DEBUG_MODE:
+            deadlines = node.deadlines()
+            self.all_evaluated.append(
+                {
+                    "schedule": [_serialize_action(b) for b in schedule],
+                    "gpu_end_time": gpu_end_time,
+                    "objective": objective,
+                    "execution_times": dict(execution_times),
+                    "gained": gained,
+                    "gpu_time": gpu_time,
+                    "old_execution_times": dict(self.initial_execution_times),
+                    "execution_times": dict(execution_times),
+                    "gained_times": dict(gained_times),
+                    "deadlines": dict(deadlines),
+                    "mirror_state": eval_node.to_dict(),
+                }
+            )
         if objective > self.best_objective:
             self.best_objective = objective
             self.best_schedule = list(schedule)
@@ -426,6 +431,7 @@ class IncrementalSearch:
     #             [b for b in schedule],
     #         )
 
+
 class LookaheadActionsScheduler(RequestScheduler):
     """Plan one batch per tick, using GPU slack to search.
 
@@ -454,7 +460,10 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.scheduling_buffer = scheduling_buffer
         self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
         self.idle_durations = tuple(idle_durations)
-        logger.debug("lookahead actions scheduler, action_horizon_multipliers=%s", self.action_horizon_multipliers)
+        logger.debug(
+            "lookahead actions scheduler, action_horizon_multipliers=%s",
+            self.action_horizon_multipliers,
+        )
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
@@ -509,7 +518,9 @@ class LookaheadActionsScheduler(RequestScheduler):
         }
 
         logger.debug(
-            "lookahead stage=search_init max_batch_size=%d max_depth=%d", self._max_batch_size, self.max_depth
+            "lookahead stage=search_init max_batch_size=%d max_depth=%d",
+            self._max_batch_size,
+            self.max_depth,
         )
 
         search_init_start = time.time()
@@ -526,9 +537,9 @@ class LookaheadActionsScheduler(RequestScheduler):
         search_iters = 0
         step_durations: list[float] = []
         step_end = search_started_at
-        while (
-            not search.is_done()
-            and (search_iters < 1 or (self.mirror.next_time_server_available() - time.time()) > self.scheduling_buffer) 
+        while not search.is_done() and (
+            search_iters < 1
+            or (self.mirror.next_time_server_available() - time.time()) > self.scheduling_buffer
         ):
             if self._drain_fn is not None:
                 self._drain_fn()
@@ -591,9 +602,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         # Commit the plan prefix: real batches become SlotRequest lists; idle
         # actions pass through as-is for base.schedule to dispatch as GPU sleeps.
         batches: list[list[SlotRequest] | Idle] = [
-            action
-            if isinstance(action, Idle)
-            else [self._latest_requests[rid] for rid in action]
+            action if isinstance(action, Idle) else [self._latest_requests[rid] for rid in action]
             for action in best[:dispatch_budget]
         ]
         _phase("postprocess", search_end, time.time())
