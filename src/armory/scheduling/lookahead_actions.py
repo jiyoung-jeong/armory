@@ -178,10 +178,6 @@ class IncrementalSearch:
 
         deadlines = mirror.deadlines()
         sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
-        # NOTE: shouldn't need this guard
-        if mirror.last_queued_batch_robot_ids:
-            prev_set = set(mirror.last_queued_batch_robot_ids)
-            sorted_robot_ids = [rid for rid in sorted_robot_ids if rid not in prev_set]
 
         if not sorted_robot_ids:
             return ()

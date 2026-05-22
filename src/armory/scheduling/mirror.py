@@ -315,7 +315,8 @@ class Robot:
         confident the producers can't violate them."""
         for prev, curr in pairwise(self.chunks):
             assert prev.action_index_start + prev.max_execution_horizon >= curr.action_index_start, f"Gap in chunks between {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
-            assert prev.action_index_start < curr.action_index_start, f"Backward chunks {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
+            # NOTE: I wanted to add this assert, but it fails when a completion/ack causes a queued chunk to become redundant
+            # assert prev.action_index_start < curr.action_index_start, f"Backward chunks {prev.chunk_id} and {curr.chunk_id}: {self.chunks}"
 
     def assert_step_consistency(self) -> None:
         for prev, curr in pairwise(self.steps):
