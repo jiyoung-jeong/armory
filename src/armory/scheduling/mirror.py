@@ -236,7 +236,7 @@ class Robot:
         control_step = self.get_latest_control_step_before(obs_cutoff)
 
         observation_step = control_step.observation_step
-        action_start_index = control_step.action_step or control_step.next_action_step
+        action_start_index = control_step.action_step if control_step.action_step is not None else control_step.next_action_step
 
         step = self.steps[-1]
         while step.time < arrival_time:
@@ -287,7 +287,7 @@ class Robot:
             control_step = step
 
         observation_step = control_step.observation_step
-        action_start_index = control_step.action_step or control_step.next_action_step
+        action_start_index = control_step.action_step if control_step.action_step is not None else control_step.next_action_step
 
         while step.time < arrival_time:
             step = self.advance_step(step)
