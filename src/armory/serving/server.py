@@ -495,7 +495,7 @@ def create_app(
         finally:
             send_task.cancel()
             await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
-            state.slots.free(robot_id)
+            state.slots.free(robot_id, expected_idx=slot_index)
             state.response_queues.pop(robot_id, None)
 
     # can also be used for health check

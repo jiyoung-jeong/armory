@@ -200,12 +200,20 @@ def _read_experiment_config(path: pathlib.Path) -> dict[str, Any]:
         "task_suite_name",
         "action_chunk_broker_type",
         "num_robots",
-        "trials_per_robot",
         "max_steps",
         "control_hz",
     ):
         if key not in experiment:
             raise ValueError(f"{path}: missing experiment.{key}")
+    # Either legacy-mode (trials_per_robot) or trial-mode
+    # (wall_clock_time_limit_s) must specify how a run terminates.
+    if "trials_per_robot" not in experiment and not experiment.get(
+        "wall_clock_time_limit_s"
+    ):
+        raise ValueError(
+            f"{path}: experiment must set either 'trials_per_robot' "
+            "or 'wall_clock_time_limit_s'."
+        )
     for idx in range(int(experiment["num_robots"])):
         robot = robots[f"robot_{idx}"]
         for key in ("min_execution_horizon", "max_execution_horizon"):

@@ -44,6 +44,29 @@ def create_mock_episodes(num_episodes: int) -> list[Episode]:
     ]
 
 
+def pick_subset_task_ids(task_suite_name: str, subset_size: int, seed: int) -> list[int]:
+    """Deterministically pick ``subset_size`` task ids from a task suite.
+
+    The selection is seeded by ``seed`` (independent of the global RNG) so that
+    each sweep seed → trial picks a different but reproducible subset.
+    ``subset_size <= 0`` or ``>= n_tasks`` returns all task ids.
+    """
+    from libero.libero import benchmark
+
+    task_suite: benchmark.Benchmark = benchmark.get_benchmark_dict()[task_suite_name]()
+    n_tasks = task_suite.n_tasks
+    if subset_size <= 0 or subset_size >= n_tasks:
+        return list(range(n_tasks))
+    return sorted(random.Random(seed).sample(range(n_tasks), subset_size))
+
+
+def assign_robots_to_tasks(num_robots: int, task_ids: list[int]) -> list[int]:
+    """Round-robin assign ``num_robots`` robots to ``task_ids`` (with wraparound)."""
+    if not task_ids:
+        raise ValueError("task_ids must be non-empty")
+    return [task_ids[i % len(task_ids)] for i in range(num_robots)]
+
+
 def create_episodes(task_suite_name: str, num_trials_per_task: int) -> list[Episode]:
     from libero.libero import benchmark
 

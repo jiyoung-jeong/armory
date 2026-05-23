@@ -85,6 +85,27 @@ class RobotSlots:
     def read(self, slot_idx: int) -> SlotData:
         return self._slots[slot_idx].read()
 
-    def free(self, robot_id: RobotID) -> None:
-        idx = self._robot_to_slot.pop(robot_id)
-        self._free.append(idx)
+    def free(self, robot_id: RobotID, expected_idx: int | None = None) -> None:
+        """Release the slot held by ``robot_id``.
+
+        When ``expected_idx`` is provided, only that slot index is recycled,
+        and the ``robot_id`` mapping is removed only if it still points to
+        ``expected_idx``. This makes the call safe against races where a
+        newer connection has re-registered the same ``robot_id`` before this
+        (older) connection's disconnect handler runs — common when a single
+        server is reused across sequential client runs with the same robot
+        ids (e.g. an interactive sweep that keeps serve.py up between cases).
+        """
+        if expected_idx is None:
+            idx = self._robot_to_slot.pop(robot_id, None)
+            if idx is not None:
+                self._free.append(idx)
+            return
+
+        current = self._robot_to_slot.get(robot_id)
+        if current == expected_idx:
+            del self._robot_to_slot[robot_id]
+        # If `current` differs, a newer connection has re-registered with a
+        # different slot — leave that newer mapping alone but still recycle
+        # the slot this stale handler owned.
+        self._free.append(expected_idx)

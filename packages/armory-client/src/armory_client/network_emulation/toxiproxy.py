@@ -62,9 +62,11 @@ def load_experiment_config(path: str | pathlib.Path) -> ExperimentConfig:
         .strip()
         .lower(),
         "num_robots": int(experiment_raw["num_robots"]),
-        "trials_per_robot": int(experiment_raw["trials_per_robot"]),
+        "trials_per_robot": int(experiment_raw.get("trials_per_robot", 1)),
         "max_steps": int(experiment_raw["max_steps"]),
         "control_hz": int(experiment_raw["control_hz"]),
+        "subset_size": int(experiment_raw.get("subset_size", 0)),
+        "wall_clock_time_limit_s": float(experiment_raw.get("wall_clock_time_limit_s", 0.0)),
     }
 
     toxiproxy = {

@@ -3,7 +3,7 @@
     "env": "libero",
     "task_suite_name": "libero_10",
     "action_chunk_broker_type": "naive_async",
-    "num_robots": 10,
+    "num_robots": 18,
     "max_steps": 600,
     "control_hz": 20,
     "subset_size": 2,
@@ -62,7 +62,7 @@
     },
     "robot_5": {
       "min_execution_horizon": 1,
-      "max_execution_horizon": 10,
+      "max_execution_horizon": 4,
       "uplink_median_ms": 0.0,
       "uplink_sigma": 0.0,
       "downlink_median_ms": 0.0,
@@ -70,7 +70,7 @@
     },
     "robot_6": {
       "min_execution_horizon": 1,
-      "max_execution_horizon": 10,
+      "max_execution_horizon": 4,
       "uplink_median_ms": 0.0,
       "uplink_sigma": 0.0,
       "downlink_median_ms": 0.0,
@@ -78,7 +78,7 @@
     },
     "robot_7": {
       "min_execution_horizon": 1,
-      "max_execution_horizon": 10,
+      "max_execution_horizon": 4,
       "uplink_median_ms": 0.0,
       "uplink_sigma": 0.0,
       "downlink_median_ms": 0.0,
@@ -86,13 +86,77 @@
     },
     "robot_8": {
       "min_execution_horizon": 1,
-      "max_execution_horizon": 10,
+      "max_execution_horizon": 4,
       "uplink_median_ms": 0.0,
       "uplink_sigma": 0.0,
       "downlink_median_ms": 0.0,
       "downlink_sigma": 0.0
     },
     "robot_9": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_10": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_11": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_12": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_13": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_14": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_15": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_16": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_17": {
       "min_execution_horizon": 1,
       "max_execution_horizon": 10,
       "uplink_median_ms": 0.0,
