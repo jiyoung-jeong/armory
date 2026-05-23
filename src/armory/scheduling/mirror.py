@@ -627,10 +627,14 @@ class Mirror:
         batch_id: int,
         *,
         origin: str = "queued",
+        fast_forward: bool = True,
     ) -> list[ActionChunk]:
         dispatch_time = self.next_time_server_available()
-        twin = self.get_twin()
-        twin.fast_forward(dispatch_time)
+        if fast_forward:
+            twin = self.get_twin()
+            twin.fast_forward(dispatch_time)
+        else:
+            twin = self
 
         infer_lat = self.latency_tracker.infer_latency(len(batch))
 
@@ -771,13 +775,18 @@ class Mirror:
         robot.apply_ack(ack)
 
     def schedulable_robot_ids(
-        self,
+        self, fast_forward: bool = True,
     ) -> list[RobotID]:
         schedulable_robot_ids: list[RobotID] = []
 
-        twin = self.get_twin()
-        dispatch_time = twin.next_time_server_available()
-        twin.fast_forward(dispatch_time)
+        if fast_forward:
+            twin = self.get_twin()
+            dispatch_time = twin.next_time_server_available()
+            twin.fast_forward(dispatch_time)
+        else:
+            twin = self
+
+            
         for robot_id in self.robots.keys():
             robot = twin.robots[robot_id]
             anticipated_chunk = robot.calculate_chunk_context(dispatch_time)

@@ -202,7 +202,7 @@ class IncrementalSearch:
     #     )
     # )
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
-        # schedulable_robot_ids = mirror.schedulable_robot_ids()
+        # schedulable_robot_ids = mirror.schedulable_robot_ids(fast_forward=False)
         # NOTE: commenting out for now to see why [0, 0, 0] is not available
         schedulable_robot_ids = mirror.robots.keys()
 
@@ -267,7 +267,8 @@ class IncrementalSearch:
             node.queue_idle(queued_batch.duration, next(self._search_batch_id))
         else:
             next_time = gpu_end_time + self.latency_tracker.infer_latency(len(queued_batch))
-            node.queue_batch(list(queued_batch), next(self._search_batch_id), origin="searched")
+            # don't need to fast forward since we've already fast_forwarded to time before batch
+            node.queue_batch(list(queued_batch), next(self._search_batch_id), origin="searched", fast_forward=False)
         schedule = parent_schedule + (queued_batch,)
         node.fast_forward(next_time)
 
