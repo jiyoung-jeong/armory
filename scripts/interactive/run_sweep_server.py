@@ -131,6 +131,9 @@ class _ResumeCase:
         self.action_horizon_multipliers: dict[str, Any] = (
             case_json.get("action_horizon_multipliers") or {}
         )
+        self.action_horizon_multiplier: float = float(
+            case_json.get("action_horizon_multiplier", 0.0) or 0.0
+        )
 
 
 def _load_existing_run(run_root: pathlib.Path) -> tuple[pathlib.Path, list[_ResumeCase]]:
@@ -185,6 +188,9 @@ def _materialize_new_run(
         seeds=parse_list_args(args.seeds, cast=int),
         max_batch_sizes=parse_list_args(args.max_batch_size, cast=int),
         alphas=parse_list_args(args.alpha, cast=float),
+        action_horizon_multipliers=parse_list_args(
+            args.action_horizon_multiplier, cast=float
+        ),
         stamp=stamp,
     )
 
@@ -514,6 +520,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", default="7")
     parser.add_argument("--max-batch-size", default="")
     parser.add_argument("--alpha", default="")
+    parser.add_argument(
+        "--action-horizon-multiplier",
+        default="",
+        help=(
+            "Comma-separated multipliers (e.g. '1,2,...,10'). For "
+            "lookahead-actions schedulers, each value overrides only the "
+            "shortest-horizon key in the base server config's "
+            "action_horizon_multipliers dict; longer-horizon weights are "
+            "left at their base values."
+        ),
+    )
     parser.add_argument("--stamp", default="")
     parser.add_argument(
         "--host",
