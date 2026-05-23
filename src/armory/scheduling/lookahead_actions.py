@@ -73,7 +73,7 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
         )
     return " | ".join(parts)
 
-HORIZON = 1.0
+HORIZON = 0.75
 GAMMA = 0.99
 
 Batch: TypeAlias = tuple[RobotID, ...]
@@ -204,9 +204,9 @@ class IncrementalSearch:
     #     )
     # )
     def _candidate_batches(self, mirror: Mirror) -> tuple[tuple[RobotID, ...], ...]:
-        # schedulable_robot_ids = mirror.schedulable_robot_ids(fast_forward=False)
+        schedulable_robot_ids = mirror.schedulable_robot_ids(fast_forward=False)
         # NOTE: commenting out for now to see why [0, 0, 0] is not available
-        schedulable_robot_ids = mirror.robots.keys()
+        # schedulable_robot_ids = mirror.robots.keys()
 
         deadlines = mirror.deadlines()
         sorted_robot_ids = sorted(schedulable_robot_ids, key=lambda rid: deadlines[rid])
@@ -500,7 +500,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         max_batch_size: int = 1,
         *,
         max_depth: int = 3,
-        max_in_flight: int = 3,
+        max_in_flight: int = 2,
         step_budget_nodes: int = 8,
         scheduling_buffer: float = 0.05,
         action_horizon_multipliers: Mapping[int | str, float] | None = None,

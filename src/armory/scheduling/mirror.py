@@ -819,8 +819,8 @@ class Mirror:
             twin.fast_forward(dispatch_time)
         else:
             twin = self
+            dispatch_time = twin.next_time_server_available()
 
-            
         for robot_id in self.robots.keys():
             robot = twin.robots[robot_id]
             anticipated_chunk = robot.calculate_chunk_context(dispatch_time)
