@@ -450,8 +450,7 @@ class Robot:
         # are monotonic non-decreasing across iterations. A cursor advances
         # past chunks whose entire range is below the current action_step so
         # we don't rescan them every tick.
-        steps = self.steps
-        prev_step = steps[-1]
+        prev_step = self.steps[-1]
         if prev_step.time >= time_end:
             return
 
@@ -478,7 +477,7 @@ class Robot:
             current_action_step = action_step if is_available else None
             next_action_step = action_step + 1 if is_available else action_step
 
-            steps.append(
+            self.steps.append(
                 ControlStep(
                     time=time,
                     observation_step=observation_step,
@@ -486,6 +485,8 @@ class Robot:
                     next_action_step=next_action_step,
                 )
             )
+
+            assert action_step is not None or action_step <= self.max_overall_action_step, f"action_step {action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
             time += dt
             observation_step += 1
             action_step = next_action_step
