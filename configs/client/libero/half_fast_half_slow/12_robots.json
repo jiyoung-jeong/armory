@@ -4,9 +4,10 @@
     "task_suite_name": "libero_10",
     "action_chunk_broker_type": "naive_async",
     "num_robots": 12,
-    "trials_per_robot": 2,
     "max_steps": 600,
-    "control_hz": 20
+    "control_hz": 20,
+    "subset_size": 2,
+    "wall_clock_time_limit_s": 60.0
   },
   "toxiproxy": {
     "api_url": "http://127.0.0.1:8474",
