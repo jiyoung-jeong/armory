@@ -185,7 +185,18 @@ class BidirectionalWebsocket:
 
     def reset(self) -> None:
         data = msgpack_numpy.packb(messages.ResetRequest(robot_id=self._robot_id))
-        self._ws.send(data)
+        try:
+            self._ws.send(data)
+        except Exception as exc:  # noqa: BLE001
+            # If the websocket is already torn down (e.g. server cleaned up the
+            # session after a stale ACK), don't bring the worker down here —
+            # the next inference attempt will surface the real failure with a
+            # clearer signal. ResetRequest is best-effort scheduler hygiene.
+            logger.warning(
+                "ws_client.reset for %s skipped (connection closed): %s",
+                self._robot_id,
+                exc,
+            )
 
     def send_episode_start(
         self,

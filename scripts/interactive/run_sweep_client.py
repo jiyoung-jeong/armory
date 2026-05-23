@@ -69,6 +69,9 @@ class _ClientCase:
         self.max_batch_size: int = int(case_json.get("max_batch_size", 0) or 0)
         self.alpha: float = float(case_json.get("alpha", 0.0) or 0.0)
         self.server_variant: str = case_json.get("server_variant", "") or ""
+        self.action_horizon_multipliers: dict[str, Any] = (
+            case_json.get("action_horizon_multipliers") or {}
+        )
 
 
 def _load_run(run_root: pathlib.Path) -> list[_ClientCase]:
@@ -114,7 +117,7 @@ def _wait_for_server_ready(
         if time.monotonic() - last_status > 5:
             display.set_status(f"waiting for server_ready ({int(elapsed)}s)")
             last_status = time.monotonic()
-        time.sleep(1.0)
+        time.sleep(0.1)
     return True
 
 

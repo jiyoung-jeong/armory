@@ -146,7 +146,13 @@ class BaseLiveDisplay:
 
     # ------------------------------------------------------------------ event API
 
-    def set_current(self, idx: int, case_dir: pathlib.Path) -> None:
+    def set_current(
+        self,
+        idx: int,
+        case_dir: pathlib.Path,
+        *,
+        case_budget_s: float | None = None,  # noqa: ARG002
+    ) -> None:
         with self._lock:
             self._current_idx = idx
             self._current_case_dir = case_dir
@@ -223,7 +229,11 @@ class BaseLiveDisplay:
             table.add_row("scheduler", str(case.scheduler))
             table.add_row("seed", str(case.seed))
             table.add_row("max_batch_size", str(case.max_batch_size))
-            table.add_row("alpha", str(case.alpha))
+            ahm = getattr(case, "action_horizon_multipliers", None) or {}
+            table.add_row(
+                "action_horizon_multipliers",
+                ", ".join(f"{k}={v}" for k, v in ahm.items()) if ahm else "-",
+            )
             table.add_row(
                 "experiment",
                 f"{case.experiment_name}   num_robots={case.num_robots}   "
@@ -305,7 +315,13 @@ class PrintDisplay:
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def set_current(self, idx: int, case_dir: pathlib.Path) -> None:
+    def set_current(
+        self,
+        idx: int,
+        case_dir: pathlib.Path,
+        *,
+        case_budget_s: float | None = None,  # noqa: ARG002
+    ) -> None:
         case = self.cases[idx]
         print(
             f"[{self.role}] case [{idx + 1}/{len(self.cases)}] {case.run_id}",

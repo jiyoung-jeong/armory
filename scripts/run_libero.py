@@ -247,9 +247,6 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     robot_idx = worker_args.robot_idx
     robot_id = f"robot_{robot_idx}"
 
-    # Stagger startup to avoid flooding the server with simultaneous warmup.
-    time.sleep(robot_idx * 0.5)
-
     ws_host = args.host
     ws_port = args.port
     pre_send_hook = None
@@ -296,6 +293,14 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     # Single instance reused across episodes so _done persists across iterations.
     startup_sync = _StartupSyncSubscriber()
 
+    # Shared across all Savers this worker builds: video encoding for episode N
+    # otherwise blocks the worker from starting episode N+1 (Saver.close() does
+    # executor.shutdown(wait=True)). With a shared pool, per-episode close() is
+    # a no-op and we drain once in the outer finally below.
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    saver_executor = ThreadPoolExecutor(max_workers=5)
+
     def _build_subscribers(episode: Episode, env: Any) -> list[_subscriber.Subscriber]:
         subs: list[_subscriber.Subscriber] = [
             startup_sync,
@@ -308,6 +313,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 task=episode.task,
                 robot_idx=robot_idx,
                 save_video=settings.env != "mock",
+                executor=saver_executor,
             ),
             TaskMetricsPublisher(
                 ws_client=ws_client,
@@ -353,6 +359,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 LiberoSimEnvironment=LiberoSimEnvironment,
                 build_subscribers=_build_subscribers,
                 run_one=_run_one,
+                startup_sync=startup_sync,
             )
         else:
             while True:
@@ -386,6 +393,13 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
 
                 _run_one(env, _build_subscribers(episode, env))
     finally:
+        # Drain any in-flight per-episode video / metadata saves before this
+        # worker exits. This is the only place we wait — per-episode close()
+        # on individual Savers is a no-op when sharing this executor.
+        try:
+            saver_executor.shutdown(wait=True)
+        except Exception:  # noqa: BLE001
+            pass
         if network_hook is not None:
             network_hook.close()
 
@@ -401,6 +415,7 @@ def _trial_loop(
     LiberoSimEnvironment: Any,  # noqa: N803
     build_subscribers,
     run_one,
+    startup_sync: "_StartupSyncSubscriber",
 ) -> None:
     """Trial-mode loop: pinned task, env reuse, wall-clock budget."""
     task_id = worker_args.assigned_task_id
@@ -427,10 +442,30 @@ def _trial_loop(
         task = _MockTask(language=f"mock task {task_id}")
         initial_states = np.zeros((1, 1), dtype=np.float32)
 
+    # Synchronize all workers right here, before anchoring the deadline.
+    # Without this, the startup barrier inside the first runtime.run() fires
+    # AFTER ``start_t`` is set, so early-arriving workers get their budget
+    # eaten by the wait for late-arriving peers. By draining the barrier here
+    # (and marking startup_sync done so it's a no-op when Runtime calls
+    # on_episode_start) every robot's wall-clock budget begins at the same
+    # post-sync instant.
+    if _start_barrier is not None:
+        try:
+            _start_barrier.wait()
+        except Exception as exc:  # noqa: BLE001
+            logging.warning("robot_%d: startup barrier wait failed: %s", robot_idx, exc)
+    startup_sync._done = True
+    if _progress_queue is not None:
+        try:
+            _progress_queue.put_nowait({"type": "run_start"})
+        except Exception:  # noqa: BLE001
+            pass
+
     try:
         start_t = time.monotonic()
+        deadline = start_t + settings.wall_clock_time_limit_s
         ep_idx = 0
-        while time.monotonic() - start_t < settings.wall_clock_time_limit_s:
+        while time.monotonic() < deadline:
             state = initial_states[ep_idx % len(initial_states)]
             episode = Episode(
                 idx=ep_idx + 1,
@@ -447,6 +482,7 @@ def _trial_loop(
                     resize_size=RESIZE_SIZE,
                     max_episode_steps=settings.max_steps,
                     control_hz=settings.control_hz,
+                    deadline_monotonic=deadline,
                 )
             else:
                 env = MockEnvironment(
@@ -454,6 +490,7 @@ def _trial_loop(
                     control_hz=settings.control_hz,
                     task_id=task_id,
                     episode_idx=episode.idx,
+                    deadline_monotonic=deadline,
                 )
             run_one(env, build_subscribers(episode, env))
             ep_idx += 1

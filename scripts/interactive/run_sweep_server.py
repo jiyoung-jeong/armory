@@ -128,6 +128,9 @@ class _ResumeCase:
         self.alpha: float = float(case_json.get("alpha", 0.0) or 0.0)
         self.server_variant: str = case_json.get("server_variant", "") or ""
         self.stamp: str = case_json.get("stamp", "")
+        self.action_horizon_multipliers: dict[str, Any] = (
+            case_json.get("action_horizon_multipliers") or {}
+        )
 
 
 def _load_existing_run(run_root: pathlib.Path) -> tuple[pathlib.Path, list[_ResumeCase]]:
@@ -280,7 +283,7 @@ def _wait_for_client_done(
             elapsed = int(time.monotonic() - start)
             display.set_status(f"client running ({elapsed}s elapsed)")
             last_status = time.monotonic()
-        time.sleep(1.0)
+        time.sleep(0.1)
 
 
 def _terminate(proc: subprocess.Popen, *, grace: float) -> None:

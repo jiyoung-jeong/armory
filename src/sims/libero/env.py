@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,6 +41,7 @@ class LiberoSimEnvironment(_environment.Environment):
         resize_size: int = 224,
         max_episode_steps: int = 300,
         control_hz: float = 100.0,
+        deadline_monotonic: float | None = None,
     ) -> None:
         self._env = env
         self._task_description = task_description
@@ -47,6 +49,12 @@ class LiberoSimEnvironment(_environment.Environment):
         self._resize_size = resize_size
         self._max_episode_steps = max_episode_steps
         self._control_hz = control_hz
+        # Hard wall-clock cutoff. When non-None and ``time.monotonic() >=
+        # deadline_monotonic``, ``is_episode_complete()`` returns True so the
+        # Runtime exits the inner step loop at the next checkpoint. Used by
+        # trial mode to honor the per-robot ``wall_clock_time_limit_s`` budget
+        # without waiting for the current episode to finish naturally.
+        self._deadline_monotonic = deadline_monotonic
 
         self._episode_idx = 0
         self._done = True
@@ -76,6 +84,16 @@ class LiberoSimEnvironment(_environment.Environment):
         self._episode_idx += 1
 
     def is_episode_complete(self) -> bool:
+        if (
+            not self._done
+            and self._deadline_monotonic is not None
+            and time.monotonic() >= self._deadline_monotonic
+        ):
+            # Wall-clock budget exhausted mid-episode. Mark done and record the
+            # current outcome (typically False, since libero_success would have
+            # set _done already if achieved) to keep _episode_results consistent.
+            self._done = True
+            self._episode_results.append(self._current_success)
         return self._done
 
     def get_observation(self) -> LiberoObservation:

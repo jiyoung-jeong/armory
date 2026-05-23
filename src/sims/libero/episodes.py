@@ -44,13 +44,35 @@ def create_mock_episodes(num_episodes: int) -> list[Episode]:
     ]
 
 
-def pick_subset_task_ids(task_suite_name: str, subset_size: int, seed: int) -> list[int]:
-    """Deterministically pick ``subset_size`` task ids from a task suite.
+# Fixed libero_10 trial layout: seed -> contiguous pair of task ids. Lets the
+# 5-trial sweep (seeds 1..5) cover all 10 libero_10 tasks exactly once with a
+# stable, paper-ready mapping. Falls back to seeded random sampling for any
+# (task_suite_name, subset_size, seed) combination outside this table.
+_LIBERO_10_SEED_PAIRS: dict[int, list[int]] = {
+    1: [0, 1],
+    2: [2, 3],
+    3: [4, 5],
+    4: [6, 7],
+    5: [8, 9],
+}
 
-    The selection is seeded by ``seed`` (independent of the global RNG) so that
-    each sweep seed → trial picks a different but reproducible subset.
+
+def pick_subset_task_ids(task_suite_name: str, subset_size: int, seed: int) -> list[int]:
+    """Pick ``subset_size`` task ids from a task suite.
+
+    For the canonical libero_10 5-trial layout (``task_suite_name="libero_10"``,
+    ``subset_size=2``, ``seed in {1,2,3,4,5}``), returns the hardcoded pair from
+    ``_LIBERO_10_SEED_PAIRS``. Otherwise falls back to a seeded random sample
+    so each (seed, subset_size) combination is still reproducible.
     ``subset_size <= 0`` or ``>= n_tasks`` returns all task ids.
     """
+    if (
+        task_suite_name == "libero_10"
+        and subset_size == 2
+        and seed in _LIBERO_10_SEED_PAIRS
+    ):
+        return list(_LIBERO_10_SEED_PAIRS[seed])
+
     from libero.libero import benchmark
 
     task_suite: benchmark.Benchmark = benchmark.get_benchmark_dict()[task_suite_name]()
