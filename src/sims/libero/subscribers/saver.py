@@ -49,6 +49,7 @@ class Saver(_subscriber.Subscriber):
         task: benchmark.Task,
         robot_idx: int,
         save_video: bool = True,
+        executor: ThreadPoolExecutor | None = None,
     ) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         self._out_dir = out_dir
@@ -62,7 +63,16 @@ class Saver(_subscriber.Subscriber):
         self._timestamps: list[Timestamp] = []
         self._control_hz = environment.control_hz
         self._observations_buffer: dict[int, Observation] = {}
-        self._executor = ThreadPoolExecutor(max_workers=5)
+        # When ``executor`` is provided, the caller owns its lifetime and the
+        # per-episode ``close()`` is a no-op — this lets repeated episodes
+        # within one worker submit saves to a shared pool without blocking
+        # the worker between episodes (mp4 encoding can take several seconds).
+        if executor is not None:
+            self._executor = executor
+            self._owns_executor = False
+        else:
+            self._executor = ThreadPoolExecutor(max_workers=5)
+            self._owns_executor = True
 
     @override
     def on_episode_start(self) -> None:
@@ -118,7 +128,11 @@ class Saver(_subscriber.Subscriber):
         self._executor.submit(self._save_all, data)
 
     def close(self) -> None:
-        self._executor.shutdown(wait=True)
+        # Only drain the executor if this Saver owns it. When a shared
+        # executor was injected, the worker process is responsible for
+        # shutting it down once at the very end.
+        if self._owns_executor:
+            self._executor.shutdown(wait=True)
 
     def _save_all(self, data: EpisodeSaveData) -> None:
         out_folder, dir_episode_idx = self._get_out_folder(data)
