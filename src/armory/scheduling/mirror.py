@@ -819,7 +819,12 @@ class Mirror:
             twin.fast_forward(dispatch_time)
         else:
             twin = self
-            dispatch_time = twin.next_time_server_available()
+            # fast_forward=False means the caller already simulated this mirror
+            # to the dispatch instant; that instant is latest_fast_forward_time.
+            # Re-deriving via next_time_server_available() would re-read the wall
+            # clock when the GPU queue is empty (max(time.time(), ...)) and drift
+            # past the simulated steps, tripping calculate_chunk_context's assert.
+            dispatch_time = twin.latest_fast_forward_time
 
         for robot_id in self.robots.keys():
             robot = twin.robots[robot_id]
