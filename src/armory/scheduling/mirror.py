@@ -46,16 +46,16 @@ from armory_client.messages import InferResponse
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ControlStep:
+@dataclass(slots=True)
+class ControlStep():
     time: float
     observation_step: int
     action_step: int | None  # which action index was executed at this step
     next_action_step: int
 
 
-@dataclass
-class ChunkContext:
+@dataclass(slots=True)
+class ChunkContext():
     observation_step: int  # step when observation was captured
     action_index_start: int  # action index of the first action in the chunk
     min_execution_horizon: int

@@ -12,7 +12,7 @@ from armory.serving.schemas import RobotID
 MAX_OBS_BYTES = 10 * 1024 * 1024  # 10MB per slot, enough for a few 224x224 images
 
 
-@dataclass
+@dataclass(slots=True)
 class SlotData:
     """Observation and request metadata written together atomically into a slot.
 

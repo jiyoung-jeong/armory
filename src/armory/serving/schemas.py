@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 RobotID: TypeAlias = str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SlotRequest:
     """Flows end-to-end: built by WS → sent to Scheduler → put in batch_queue → received by GPU."""
 
@@ -47,7 +47,7 @@ class SlotRequest:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AckNotification:
     """Sent from WS to scheduler when a client acks receipt of an InferResponse."""
 
@@ -65,21 +65,21 @@ class AckNotification:
     server_send_time: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BatchProfile:
     """Latency profile per batch size (seconds). Sent once from GPU to scheduler after warmup."""
 
     latencies: dict[int, float]
 
 
-@dataclass
-class WarmupSeed:
+@dataclass(slots=True)
+class WarmupSeed:   
     robot_id: RobotID
     obs_samples: list[tuple[float, float]]  # (arrival_ts, request_ts) per ping
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResetAll:
     """Server-internal: drop all per-robot AND mirror-wide state.
 
@@ -91,7 +91,7 @@ class ResetAll:
 
 
 # TODO: rename as ActionChunkMetadata
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
@@ -128,7 +128,7 @@ class ActionChunk:
         return self.action_index_start + self.max_execution_horizon - 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Idle:
     """Synthetic scheduler action: leave the GPU idle for ``duration`` seconds.
 
@@ -206,7 +206,7 @@ class SchedulerDecision:
 
 
 # TODO: copied over InferRequest, fix later
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class InternalRequest:
     robot_id: str
     observation: dict
