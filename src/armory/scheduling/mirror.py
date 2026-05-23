@@ -150,9 +150,14 @@ class Robot:
         self.chunks.append(chunk)
         self.assert_consistency()
 
-    def apply_response(self, chunk_id: int, response: InferResponse, arrival_time: float) -> None:
-        """A queued chunk has come back from inference. Refresh the chunk and
-        re-derive downstream chunks since this chunk's arrival time shifted."""
+    def apply_response(self, chunk_id: int, response: InferResponse, arrival_time: float) -> int:
+        """A queued chunk has come back from inference. Refresh the chunk in
+        place and return its index.
+
+        This only does the raw mutation: the caller must follow up with
+        ``recompute_and_check`` once every chunk's arrival_time has settled, so
+        each chunk's context is re-derived against fully updated neighbours
+        rather than half-rechained, stale ones."""
         i = self._find_index(chunk_id)
         self.chunks[i] = ActionChunk(
             chunk_id=chunk_id,
@@ -163,17 +168,18 @@ class Robot:
             arrival_time=arrival_time,
             origin="completed",
         )
-        self._recompute_from(i)
-        self.assert_consistency()
+        return i
 
-    def bump_arrival(self, chunk_id: int, arrival_time: float) -> None:
+    def bump_arrival(self, chunk_id: int, arrival_time: float) -> int:
         """An in-flight chunk's projected arrival shifted (e.g. an upstream
-        batch finished earlier/later than expected). Re-derive this chunk's
-        execution fields from the new arrival, then cascade downstream."""
+        batch finished earlier/later than expected). Set the new arrival in
+        place and return the chunk's index.
+
+        Raw mutation only — see ``apply_response`` for the
+        ``recompute_and_check`` contract."""
         i = self._find_index(chunk_id)
         self.chunks[i] = replace(self.chunks[i], arrival_time=arrival_time)
-        self._recompute_from(i)
-        self.assert_consistency()
+        return i
 
     def apply_ack(self, ack: AckNotification) -> None:
         """Client confirmed receipt: trust the ack's fields exactly, re-derive
@@ -193,10 +199,22 @@ class Robot:
         self._recompute_from(i + 1)
         self.assert_consistency()
 
-    def drop_chunk(self, chunk_id: int) -> None:
+    def drop_chunk(self, chunk_id: int) -> int:
+        """Remove a chunk. Returns the index it occupied (now the index of the
+        chunk that shifted into its place). Raw mutation only — see
+        ``apply_response`` for the ``recompute_and_check`` contract."""
         i = self._find_index(chunk_id)
         del self.chunks[i]
-        self._recompute_from(i)
+        return i
+
+    def recompute_and_check(self, start: int) -> None:
+        """Re-derive chunks[start:] against the now-settled arrival_times and
+        assert the deque invariants once. Pairs with the raw mutators
+        ``apply_response`` / ``bump_arrival`` / ``drop_chunk``: a batch update
+        sets every chunk's raw arrival_time first, then calls this once per
+        touched robot so each chunk's context is computed against fully updated
+        neighbours rather than half-rechained, stale ones."""
+        self._recompute_from(start)
         self.assert_consistency()
 
     def get_chunk(self, chunk_id: int) -> ActionChunk:
@@ -686,7 +704,21 @@ class Mirror:
         actual_completion = batch.inference_start_time + batch.inference_duration
         self.last_batch_completed_time = actual_completion
 
+        # Set every touched chunk's raw arrival_time first, tracking the lowest
+        # chunk index disturbed per robot, then re-derive each robot's deque in a
+        # single pass below. Recomputing chunk-by-chunk here would run each
+        # chunk's context against half-rechained neighbours (some already moved
+        # to their new arrival, some still on a stale one), which both computes
+        # wrong action_index_starts and trips assert_consistency on a transient
+        # state — the deque is only guaranteed consistent once the whole cascade
+        # has landed.
         responses_by_chunk = {response.chunk_id: response for response in batch.responses}
+        touched_from: dict[RobotID, int] = {}
+
+        def mark(robot_id: RobotID, index: int) -> None:
+            existing = touched_from.get(robot_id)
+            touched_from[robot_id] = index if existing is None else min(existing, index)
+
         for robot_id, chunk_id in zip(in_flight.robot_ids, in_flight.chunk_ids):
             robot = self.robots.get(robot_id)
             if robot is None:
@@ -694,10 +726,10 @@ class Mirror:
                 continue
             response = responses_by_chunk.get(chunk_id)
             if response is None:
-                robot.drop_chunk(chunk_id)
+                mark(robot_id, robot.drop_chunk(chunk_id))
             else:
                 arrival_time = actual_completion + self.latency_tracker.action_latency(robot_id)
-                robot.apply_response(chunk_id, response, arrival_time)
+                mark(robot_id, robot.apply_response(chunk_id, response, arrival_time))
 
         # Re-chain downstream batches off the actual completion of the head batch.
         prev_completion = actual_completion
@@ -713,8 +745,13 @@ class Mirror:
                 arrival_time = queued_batch.completion_time + self.latency_tracker.action_latency(
                     robot_id
                 )
-                robot.bump_arrival(chunk_id, arrival_time)
+                mark(robot_id, robot.bump_arrival(chunk_id, arrival_time))
             prev_completion = queued_batch.completion_time
+
+        # Now that every arrival_time is settled, re-derive each touched robot's
+        # chunks once, from the lowest index it disturbed.
+        for robot_id, start in touched_from.items():
+            self.robots[robot_id].recompute_and_check(start)
 
     def confirm_chunk(self, ack: AckNotification) -> None:
         robot = self.robots.get(ack.robot_id)
