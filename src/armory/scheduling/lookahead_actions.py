@@ -73,7 +73,7 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
         )
     return " | ".join(parts)
 
-HORIZON = 0.5
+HORIZON = 1.0
 GAMMA = 0.99
 
 Batch: TypeAlias = tuple[RobotID, ...]
