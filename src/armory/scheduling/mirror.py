@@ -246,7 +246,7 @@ class Robot:
         self, dispatch_time: float, arrival_time: float | None = None
     ) -> ChunkContext:
         # NOTE: assumes time has been simulated up until dispatch_time
-        assert self.steps[-1].time + (1 / self.control_hz) > dispatch_time, (
+        assert self.steps[-1].time + (1.0 / self.control_hz) > dispatch_time, (
             f"time has not been simulated up until dispatch_time {dispatch_time}, steps: {self.steps}, next step time would be {self.steps[-1].time + (1 / self.control_hz)}"
         )
         if arrival_time is None:
@@ -629,8 +629,17 @@ class Mirror:
         *,
         origin: str = "queued",
         fast_forward: bool = True,
+        dispatch_time: float | None = None,
     ) -> list[ActionChunk]:
-        dispatch_time = self.next_time_server_available()
+        # When the caller already knows the dispatch time (e.g. the search,
+        # which fast_forwarded the node to exactly this instant), it must pass
+        # it in. Re-deriving via next_time_server_available() would re-read the
+        # wall clock when the GPU is idle (empty in_flight_batches), drifting a
+        # few hundred microseconds past where the node was simulated and
+        # tripping calculate_chunk_context's "time simulated up to dispatch"
+        # assertion when that drift crosses a control-tick boundary.
+        if dispatch_time is None:
+            dispatch_time = self.next_time_server_available()
         if fast_forward:
             twin = self.get_twin()
             twin.fast_forward(dispatch_time)
@@ -672,7 +681,9 @@ class Mirror:
         self.last_queued_batch_robot_ids = tuple(batch)
         return chunks
 
-    def queue_idle(self, duration: float, batch_id: int) -> None:
+    def queue_idle(
+        self, duration: float, batch_id: int, *, dispatch_time: float | None = None
+    ) -> None:
         """Register a synthetic batch that occupies the server for ``duration``
         without producing any chunks.
 
@@ -680,8 +691,14 @@ class Mirror:
         a chained ``completion_time``) so ``next_time_server_available`` reflects
         the idle window — both in production and inside speculative search twins,
         where it keeps downstream ``schedulable_robot_ids`` / ``deadlines`` from
-        being computed at a too-early dispatch time."""
-        dispatch_time = self.next_time_server_available()
+        being computed at a too-early dispatch time.
+
+        ``dispatch_time`` is threaded through for the same reason as in
+        ``queue_batch``: the search supplies the instant it already
+        fast_forwarded the node to, so the chained ``completion_time`` doesn't
+        re-read the wall clock and drift away from the simulated steps."""
+        if dispatch_time is None:
+            dispatch_time = self.next_time_server_available()
         self.in_flight_batches.append(
             Batch(
                 batch_id=batch_id,

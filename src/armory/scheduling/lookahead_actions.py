@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Synthetic idle durations (seconds) the search may insert to defer the next
 # dispatch — letting robots progress until a better batch becomes schedulable.
-DEFAULT_IDLE_DURATIONS: tuple[float, ...] = (0.01,)
+DEFAULT_IDLE_DURATIONS: tuple[float, ...] = tuple()
 DEBUG_MODE = False
 
 
@@ -73,7 +73,7 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
         )
     return " | ".join(parts)
 
-HORIZON = 1.0
+HORIZON = 0.5
 
 Batch: TypeAlias = tuple[RobotID, ...]
 SearchNode: namedtuple = namedtuple(
@@ -264,11 +264,20 @@ class IncrementalSearch:
         node = parent_node.get_twin()
         if isinstance(queued_batch, Idle):
             next_time = gpu_end_time + queued_batch.duration
-            node.queue_idle(queued_batch.duration, next(self._search_batch_id))
+            node.queue_idle(queued_batch.duration, next(self._search_batch_id), dispatch_time=gpu_end_time)
         else:
             next_time = gpu_end_time + self.latency_tracker.infer_latency(len(queued_batch))
-            # don't need to fast forward since we've already fast_forwarded to time before batch
-            node.queue_batch(list(queued_batch), next(self._search_batch_id), origin="searched", fast_forward=False)
+            # don't need to fast forward since we've already fast_forwarded to time before batch.
+            # Pass dispatch_time explicitly: the node was fast_forwarded to exactly gpu_end_time, so
+            # reusing it keeps queue_batch from re-reading the wall clock (next_time_server_available
+            # falls through to time.time() when the GPU is idle) and drifting past the simulated steps.
+            node.queue_batch(
+                list(queued_batch),
+                next(self._search_batch_id),
+                origin="searched",
+                fast_forward=False,
+                dispatch_time=gpu_end_time,
+            )
         schedule = parent_schedule + (queued_batch,)
         node.fast_forward(next_time)
 
