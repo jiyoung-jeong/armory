@@ -5,6 +5,7 @@ import multiprocessing as mp
 import signal
 from multiprocessing.synchronize import Event
 
+import gc
 import zmq
 
 from armory.scheduling.action_deficit import ActionDeficitScheduler
@@ -126,6 +127,15 @@ class SchedulerWorker:
         self.ready_event.set()
         logger.info("Scheduler ready")
 
+        # Everything alive at this point (sockets, scheduler state, latency
+        # tables, imported modules) is permanent for the process lifetime.
+        # Move it into the frozen generation so full collections during the
+        # lookahead search only traverse per-search churn instead of the whole
+        # resident heap — the 844-collected-but-0.47s sweeps were almost
+        # entirely scanning these never-garbage objects.
+        gc.collect()
+        gc.freeze()
+
         tick = 0
         while True:
             tick += 1
@@ -145,7 +155,6 @@ class SchedulerWorker:
 
             # logger.debug("tick=%d stage=schedule_begin", tick)
             decisions = scheduler.schedule()
-            # logger.debug("tick=%d stage=schedule_done decisions=%d", tick, len(decisions))
 
             if self.scheduler_metrics_queue is not None:
                 try:
