@@ -74,6 +74,7 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
     return " | ".join(parts)
 
 HORIZON = 0.5
+GAMMA = 0.99
 
 Batch: TypeAlias = tuple[RobotID, ...]
 SearchNode: namedtuple = namedtuple(
@@ -113,6 +114,7 @@ class IncrementalSearch:
         self.root_node = mirror.get_twin()
         self.root_node.chunk_id_counter = itertools.count(1)
         self.root_node.fast_forward(self.start_time)
+        self.root_node.reset_scores(GAMMA)
         self.initial_action_times = _action_times(self.root_node)
         self.initial_starvation_times = _starvation_times(self.root_node)
 
@@ -353,6 +355,49 @@ class IncrementalSearch:
     #         #     [b for b in schedule],
     #         # )
 
+    # def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
+    #     gpu_time = gpu_end_time - self.start_time
+    #     if gpu_time <= 0:
+    #         return
+
+    #     end_time = self.start_time + HORIZON
+    #     eval_node = node.get_twin()
+    #     eval_node.fast_forward(end_time)
+
+    #     execution_times = _execution_times(eval_node)
+    #     gained_times = {rid: execution_times[rid] - self.initial_execution_times[rid] for rid in execution_times}
+    #     # scored_times = {rid: eval_node.robots[rid].score / eval_node.robots[rid].control_hz for rid in eval_node.robots}
+    #     # # for rid in scored_times:
+    #     # #     if gained_times[rid] != scored_times[rid]:
+    #     # #         logger.error(f"gained_times[rid] != scored_times[rid]: {gained_times[rid]} != {scored_times[rid]}")
+
+    #     gained = sum(
+    #         self.action_horizon_multipliers[eval_node.robots[rid].max_execution_horizon]
+    #         * gained_times[rid]
+    #         for rid in gained_times
+    #     )
+    #     objective = gained / gpu_time
+    #     if DEBUG_MODE:
+    #         deadlines = node.deadlines()
+    #         self.all_evaluated.append(
+    #             {
+    #                 "schedule": [_serialize_action(b) for b in schedule],
+    #                 "gpu_end_time": gpu_end_time,
+    #                 "objective": objective,
+    #                 "execution_times": dict(execution_times),
+    #                 "gained": gained,
+    #                 "gpu_time": gpu_time,
+    #                 "old_execution_times": dict(self.initial_execution_times),
+    #                 "execution_times": dict(execution_times),
+    #                 "gained_times": dict(gained_times),
+    #                 "deadlines": dict(deadlines),
+    #                 "mirror_state": eval_node.to_dict(),
+    #             }
+    #         )
+    #     if objective > self.best_objective:
+    #         self.best_objective = objective
+    #         self.best_schedule = list(schedule)
+
     def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
         gpu_time = gpu_end_time - self.start_time
         if gpu_time <= 0:
@@ -362,14 +407,12 @@ class IncrementalSearch:
         eval_node = node.get_twin()
         eval_node.fast_forward(end_time)
 
-        execution_times = _execution_times(eval_node)
-        gained_times = {rid: execution_times[rid] - self.initial_execution_times[rid] for rid in execution_times}
-        gained = sum(
-            self.action_horizon_multipliers[eval_node.robots[rid].max_execution_horizon]
-            * gained_times[rid]
-            for rid in gained_times
-        )
-        objective = gained / gpu_time
+        scores = {rid: eval_node.robots[rid].score / eval_node.robots[rid].control_hz for rid in eval_node.robots}
+        weighted_scores = {rid: scores[rid] * self.action_horizon_multipliers[eval_node.robots[rid].max_execution_horizon] for rid in scores}
+        score_sum = sum(weighted_scores.values())
+
+        objective = score_sum / gpu_time
+
         if DEBUG_MODE:
             deadlines = node.deadlines()
             self.all_evaluated.append(

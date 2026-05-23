@@ -64,7 +64,6 @@ class ChunkContext():
     execution_start_step: int = 0  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
 
-
 class Robot:
     """Mirror of a single robot's control steps and action chunks.
 
@@ -95,6 +94,7 @@ class Robot:
         # Includes chunks that are in-transit.
         self.chunks: deque[ActionChunk] = deque(maxlen=5)
         self.last_request: SlotRequest | None = None
+        self.reset_score()
 
     def step(self, request: SlotRequest) -> bool:
         if not self.steps:
@@ -486,6 +486,8 @@ class Robot:
                     next_action_step=next_action_step,
                 )
             )
+            reward = 1.0 if is_available and self.chunks[chunk_idx].origin == "searched" else 0.0
+            self.update_score(reward)
 
             assert action_step is not None or action_step <= self.max_overall_action_step, f"action_step {action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
             time += dt
@@ -512,6 +514,9 @@ class Robot:
         twin.steps = deque(self.steps)
         twin.chunks = deque(self.chunks)
         twin.last_request = self.last_request  # NOTE: bad hack
+        twin.score = self.score
+        twin.discount = self.discount
+        twin.gamma = self.gamma
         return twin
 
     def to_dict(self, now: float) -> dict:
@@ -538,8 +543,18 @@ class Robot:
             ),
             "steps": [str(s) for s in self.steps],
             "chunks": [str(c) for c in self.chunks],
+            "score": self.score,
+            "discount": self.discount,
         }
 
+    def reset_score(self, gamma: float = 1.0) -> None:
+        self.score = 0
+        self.discount = 1.0
+        self.gamma = gamma
+
+    def update_score(self, reward: float) -> None:
+        self.score += self.discount * reward
+        self.discount *= self.gamma
 
 @dataclass
 class Batch:
@@ -871,3 +886,7 @@ class Mirror:
             ),
             "latest_fast_forward_time": self.latest_fast_forward_time,
         }
+
+    def reset_scores(self, discount: float = 1.0) -> None:
+        for robot in self.robots.values():
+            robot.reset_score(discount)
