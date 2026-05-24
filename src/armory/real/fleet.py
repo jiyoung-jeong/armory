@@ -642,6 +642,20 @@ class FleetController:
                 'fi; '
                 'rm -f /tmp/armory_webcam.pid; '
                 'mkdir -p /tmp/armory_webcam; '
+                # Pin manual exposure so the stream isn't washed out by the
+                # C922's aggressive auto-exposure. UVC: auto_exposure=1 means
+                # "Manual Mode" (3 is aperture-priority/auto). exposure_time_absolute
+                # is in 100us units; 250 ≈ 25ms. Both ctrl names have older
+                # aliases (exposure_auto / exposure_absolute) — try both so it
+                # works across kernel versions. Failures are non-fatal.
+                'v4l2-ctl -d "$device" '
+                '--set-ctrl=auto_exposure=1 '
+                '--set-ctrl=exposure_time_absolute=750 '
+                '>/dev/null 2>&1 '
+                '|| v4l2-ctl -d "$device" '
+                '--set-ctrl=exposure_auto=1 '
+                '--set-ctrl=exposure_absolute=750 '
+                '>/dev/null 2>&1 || true; '
                 'nohup ffmpeg -nostdin -hide_banner -loglevel error '
                 '-f v4l2 -input_format mjpeg -framerate 30 -video_size 1280x720 '
                 '-i "$device" '
