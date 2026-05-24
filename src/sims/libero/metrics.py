@@ -2137,10 +2137,10 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
         generate_per_robot_success_rate_plot,
         generate_actions_left_heatmap,
         generate_starvation_plot,
-        generate_starvation_tail_metrics_plot,
+        # generate_starvation_tail_metrics_plot,
         generate_starvation_variance_plot,
         # generate_per_robot_starvation_rate_gif,  # slow (~5-10s per run); run manually if needed
-        generate_jains_starvation_over_time_plot,
+        # generate_jains_starvation_over_time_plot,
         generate_staleness_plot,
         generate_batch_size_plot,
         # generate_server_timings_plot,

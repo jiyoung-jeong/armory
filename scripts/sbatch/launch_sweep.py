@@ -114,6 +114,7 @@ class Case:
         max_batch_size: int,
         alpha: float,
         server_variant: str = "",
+        action_horizon_multiplier: float = 0.0,
     ) -> None:
         self.server_args = server_args
         self.client_args = client_args
@@ -125,6 +126,7 @@ class Case:
         self.max_batch_size = max_batch_size
         self.alpha = alpha
         self.server_variant = server_variant
+        self.action_horizon_multiplier = action_horizon_multiplier
 
     @property
     def num_robots(self) -> int:
@@ -142,6 +144,8 @@ class Case:
         ]
         if self.server_variant:
             parts.append(f"server={self.server_variant}")
+        if self.action_horizon_multiplier:
+            parts.append(f"ahm={self.action_horizon_multiplier}")
         return "__".join(parts)
 
 
@@ -200,12 +204,20 @@ def _read_experiment_config(path: pathlib.Path) -> dict[str, Any]:
         "task_suite_name",
         "action_chunk_broker_type",
         "num_robots",
-        "trials_per_robot",
         "max_steps",
         "control_hz",
     ):
         if key not in experiment:
             raise ValueError(f"{path}: missing experiment.{key}")
+    # Either legacy-mode (trials_per_robot) or trial-mode
+    # (wall_clock_time_limit_s) must specify how a run terminates.
+    if "trials_per_robot" not in experiment and not experiment.get(
+        "wall_clock_time_limit_s"
+    ):
+        raise ValueError(
+            f"{path}: experiment must set either 'trials_per_robot' "
+            "or 'wall_clock_time_limit_s'."
+        )
     for idx in range(int(experiment["num_robots"])):
         robot = robots[f"robot_{idx}"]
         for key in ("min_execution_horizon", "max_execution_horizon"):
@@ -238,6 +250,7 @@ def _make_cases(
     seeds: list[int],
     max_batch_sizes: list[int],
     alphas: list[float],
+    action_horizon_multipliers: list[float] | None = None,
     stamp: str,
 ) -> list[Case]:
     if max_batch_sizes and alphas:
@@ -248,6 +261,7 @@ def _make_cases(
         max_batch_sizes = [int(server_variants[0][1].get("max_batch_size", 1))]
     if not alphas:
         alphas = [float(server_variants[0][1].get("alpha", 1.0))]
+    action_horizon_multipliers = action_horizon_multipliers or []
 
     cases: list[Case] = []
     for seed in seeds:
@@ -257,40 +271,76 @@ def _make_cases(
                 if scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
                 else server_variants[:1]
             )
+            # The shortest-horizon multiplier override only affects the
+            # config-sensitive lookahead schedulers; other schedulers ignore
+            # action_horizon_multipliers, so sweeping them would just create
+            # duplicate baseline cases.
+            scheduler_ahms: list[float | None] = (
+                action_horizon_multipliers
+                if action_horizon_multipliers
+                and scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
+                else [None]
+            )
             for server_variant, server_args in active_server_variants:
                 for experiment_name, experiment_config in experiment_configs:
                     for max_batch_size in max_batch_sizes:
                         for alpha in alphas:
-                            server = {
-                                **server_args,
-                                "seed": seed,
-                                "scheduling_algorithm": scheduler,
-                                "max_batch_size": max_batch_size,
-                                "alpha": alpha,
-                            }
-                            client = {
-                                **client_args,
-                                "seed": seed,
-                                "progress_type": "logging",
-                                "overwrite": True,
-                            }
-                            cases.append(
-                                Case(
-                                    server_args=server,
-                                    client_args=client,
-                                    experiment_config=experiment_config,
-                                    experiment_name=experiment_name,
-                                    stamp=stamp,
-                                    scheduler=scheduler,
-                                    seed=seed,
-                                    max_batch_size=max_batch_size,
-                                    alpha=alpha,
-                                    server_variant=(
-                                        server_variant if len(server_variants) > 1 else ""
-                                    ),
+                            for ahm in scheduler_ahms:
+                                server = {
+                                    **server_args,
+                                    "seed": seed,
+                                    "scheduling_algorithm": scheduler,
+                                    "max_batch_size": max_batch_size,
+                                    "alpha": alpha,
+                                }
+                                if ahm is not None:
+                                    server["action_horizon_multipliers"] = (
+                                        _override_shortest_horizon(
+                                            server_args.get("action_horizon_multipliers"),
+                                            ahm,
+                                        )
+                                    )
+                                client = {
+                                    **client_args,
+                                    "seed": seed,
+                                    "progress_type": "logging",
+                                    "overwrite": True,
+                                }
+                                cases.append(
+                                    Case(
+                                        server_args=server,
+                                        client_args=client,
+                                        experiment_config=experiment_config,
+                                        experiment_name=experiment_name,
+                                        stamp=stamp,
+                                        scheduler=scheduler,
+                                        seed=seed,
+                                        max_batch_size=max_batch_size,
+                                        alpha=alpha,
+                                        server_variant=(
+                                            server_variant if len(server_variants) > 1 else ""
+                                        ),
+                                        action_horizon_multiplier=(ahm or 0.0),
+                                    )
                                 )
-                            )
     return cases
+
+
+def _override_shortest_horizon(
+    base: dict[str, Any] | None, multiplier: float
+) -> dict[str, Any]:
+    """Override only the shortest-horizon key of ``base`` with ``multiplier``.
+
+    Keys are horizon lengths (as strings); longer-horizon weights are left at
+    their base values. With no base dict the multiplier can't be placed, so the
+    result is empty.
+    """
+    result = dict(base or {})
+    if not result:
+        return result
+    shortest_key = min(result, key=lambda k: float(k))
+    result[shortest_key] = multiplier
+    return result
 
 
 def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
@@ -325,6 +375,7 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
             "max_batch_size": case.max_batch_size,
             "alpha": case.alpha,
             "server_variant": case.server_variant,
+            "action_horizon_multiplier": case.action_horizon_multiplier,
             "action_horizon_multipliers": case.server_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "output_dir": str(output_dir),
@@ -630,6 +681,7 @@ def main() -> None:
             "max_batch_size": case.max_batch_size,
             "alpha": case.alpha,
             "server_variant": case.server_variant,
+            "action_horizon_multiplier": case.action_horizon_multiplier,
             "action_horizon_multipliers": case.server_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "status": "dry_run" if args.dry_run else "submitted",

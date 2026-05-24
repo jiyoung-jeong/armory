@@ -5,6 +5,7 @@ import multiprocessing as mp
 import signal
 from multiprocessing.synchronize import Event
 
+import gc
 import zmq
 
 from armory.scheduling.action_deficit import ActionDeficitScheduler
@@ -126,26 +127,34 @@ class SchedulerWorker:
         self.ready_event.set()
         logger.info("Scheduler ready")
 
+        # Everything alive at this point (sockets, scheduler state, latency
+        # tables, imported modules) is permanent for the process lifetime.
+        # Move it into the frozen generation so full collections during the
+        # lookahead search only traverse per-search churn instead of the whole
+        # resident heap — the 844-collected-but-0.47s sweeps were almost
+        # entirely scanning these never-garbage objects.
+        gc.collect()
+        gc.freeze()
+
         tick = 0
         while True:
             tick += 1
-            logger.debug("tick=%d stage=poll_wait", tick)
+            # logger.debug("tick=%d stage=poll_wait", tick)
             events = poller.poll(timeout=1)
             ready = {
                 "req": any(s is req_sock for s, _ in events),
                 "result": any(s is result_sock for s, _ in events),
             }
-            logger.debug("tick=%d stage=poll_done ready=%s", tick, ready)
+            # logger.debug("tick=%d stage=poll_done ready=%s", tick, ready)
 
-            logger.debug("tick=%d stage=process_engine", tick)
+            # logger.debug("tick=%d stage=process_engine", tick)
             self._process_engine_messages(scheduler, result_sock)
 
-            logger.debug("tick=%d stage=process_server", tick)
+            # logger.debug("tick=%d stage=process_server", tick)
             self._process_server_messages(scheduler, req_sock)
 
-            logger.debug("tick=%d stage=schedule_begin", tick)
+            # logger.debug("tick=%d stage=schedule_begin", tick)
             decisions = scheduler.schedule()
-            logger.debug("tick=%d stage=schedule_done decisions=%d", tick, len(decisions))
 
             if self.scheduler_metrics_queue is not None:
                 try:
@@ -164,10 +173,9 @@ class SchedulerWorker:
         while True:
             if result_sock.poll(timeout=100):
                 msg = result_sock.recv_pyobj()
-                if isinstance(msg, BatchProfile):
-                    return msg.latencies
-                logger.warning("Unexpected message before batch profile: %s", type(msg).__name__)
-
+                assert isinstance(msg, BatchProfile), f"Unexpected message: {type(msg).__name__}"
+                return msg.latencies
+                
     def _process_engine_messages(
         self, scheduler: RequestScheduler, result_sock: zmq.Socket
     ) -> None:

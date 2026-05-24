@@ -311,6 +311,8 @@ class BatchSummary(NamedTuple):
     inference_start_time: float
     inference_end_time: float
     batch_size: int | None = None
+    # > 0 marks a synthetic idle batch: the GPU slept this long, no inference.
+    idle_duration: float = 0.0
 
     @classmethod
     def from_json(cls, data: BatchSummary | dict | list) -> BatchSummary:

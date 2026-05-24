@@ -400,7 +400,22 @@ def create_app(
                             continue
                         case "ack":
                             ack = ResponseAck(**msg)
-                            response = pending_responses.pop(ack.request_id)
+                            response = pending_responses.pop(ack.request_id, None)
+                            if response is None:
+                                # ACK arrived for a request whose pending entry
+                                # was already consumed or never registered. Most
+                                # commonly this is a late ACK from before a
+                                # client-side broker.reset() — the client's
+                                # background _receive_actions thread keeps
+                                # ACKing in-flight responses while the main
+                                # thread resets. Drop quietly instead of
+                                # tearing down the websocket.
+                                logger.debug(
+                                    "ACK for unknown request_id=%s on %s; ignoring (likely post-reset)",
+                                    ack.request_id,
+                                    robot_id,
+                                )
+                                continue
                             state.metrics_store.record_response(robot_id, response, ack)
                             await state.scheduler_sock.send_pyobj(
                                 AckNotification(
@@ -495,7 +510,7 @@ def create_app(
         finally:
             send_task.cancel()
             await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
-            state.slots.free(robot_id)
+            state.slots.free(robot_id, expected_idx=slot_index)
             state.response_queues.pop(robot_id, None)
 
     # can also be used for health check
