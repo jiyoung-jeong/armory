@@ -30,10 +30,11 @@ import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from multiprocessing.synchronize import Event
+from typing import Any
 
 import uvicorn
 import zmq.asyncio
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.concurrency import asynccontextmanager
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
@@ -41,10 +42,11 @@ from starlette.websockets import WebSocketDisconnect
 from armory.serving.engine import GpuWorker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
-from armory.serving.scheduler import SchedulerWorker
+from armory.serving.scheduler import SCHEDULER_REGISTRY, SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
+    Reconfigure,
     ResetAll,
     ResponseBatch,
     RobotID,
@@ -91,6 +93,32 @@ class ServerState:
     metrics_store: MetricsStore
     robot_metadata: dict[str, ConnectRequest]
     batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
+    # Current effective scheduler config. Mutated by POST /reconfigure so
+    # /metadata always reports what the scheduler subprocess is actually using.
+    # boot_alpha is preserved across reconfigures (alpha is server-startup-only).
+    current_algorithm: str
+    current_scheduler_kwargs: dict[str, Any]
+    boot_alpha: float
+    boot_action_horizon_multipliers: dict[int, float]
+
+
+def _build_scheduler_kwargs(
+    algorithm: str,
+    *,
+    alpha: float,
+    action_horizon_multipliers: dict[int, float],
+) -> dict[str, Any]:
+    """Dispatch table mirroring ``scripts/serve.py:build_scheduler_kwargs``.
+
+    Lives here too so ``POST /reconfigure`` can rebuild kwargs without
+    importing from ``scripts/``. Schedulers that don't consume either field
+    receive an empty dict.
+    """
+    if algorithm == "dynamic-action":
+        return {"alpha": alpha}
+    if algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
+        return {"action_horizon_multipliers": dict(action_horizon_multipliers)}
+    return {}
 
 
 async def _router_task(
@@ -331,6 +359,12 @@ def create_app(
 
         response_queues: dict[str, asyncio.Queue] = {}
 
+        boot_kwargs = dict(scheduler_kwargs or {})
+        boot_alpha = float(boot_kwargs.get("alpha", 1.0))
+        boot_multipliers = {
+            int(k): float(v)
+            for k, v in (boot_kwargs.get("action_horizon_multipliers") or {}).items()
+        }
         app.state.server = ServerState(
             scheduler_sock=scheduler_sock,
             response_queues=response_queues,
@@ -340,6 +374,10 @@ def create_app(
             metrics_store=metrics_store,
             robot_metadata={},
             batch_queue=batch_queue,
+            current_algorithm=metadata.scheduling_algorithm,
+            current_scheduler_kwargs=dict(boot_kwargs),
+            boot_alpha=boot_alpha,
+            boot_action_horizon_multipliers=boot_multipliers,
         )
 
         router = asyncio.create_task(_router_task(response_sock, response_queues, metrics_store))
@@ -515,8 +553,70 @@ def create_app(
 
     # can also be used for health check
     @app.get("/metadata")
-    async def server_metadata() -> dict:
-        return asdict(metadata)
+    async def server_metadata(request: Request) -> dict:
+        state: ServerState | None = getattr(request.app.state, "server", None)
+        payload = asdict(metadata)
+        if state is not None:
+            payload["scheduling_algorithm"] = state.current_algorithm
+            payload["scheduler_kwargs"] = dict(state.current_scheduler_kwargs)
+        return payload
+
+    @app.post("/reconfigure")
+    async def reconfigure(request: Request) -> dict:
+        """Swap the scheduler's algorithm and/or multipliers in place.
+
+        Body: ``{"scheduling_algorithm": str?, "action_horizon_multipliers": dict?}``.
+        Either field is optional; omitted fields preserve the current value.
+        Returns the resulting effective scheduler_kwargs.
+        """
+        state: ServerState = request.app.state.server
+        body = await request.json() if await request.body() else {}
+        algorithm = body.get("scheduling_algorithm") or state.current_algorithm
+        if algorithm not in SCHEDULER_REGISTRY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown scheduling_algorithm {algorithm!r}; "
+                f"available: {sorted(SCHEDULER_REGISTRY)}",
+            )
+
+        if "action_horizon_multipliers" in body and body["action_horizon_multipliers"] is not None:
+            try:
+                multipliers = {
+                    int(k): float(v) for k, v in body["action_horizon_multipliers"].items()
+                }
+            except (TypeError, ValueError, AttributeError) as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"action_horizon_multipliers must be a dict of "
+                    f"int->float pairs ({e})",
+                ) from e
+        else:
+            multipliers = dict(
+                state.current_scheduler_kwargs.get("action_horizon_multipliers")
+                or state.boot_action_horizon_multipliers
+            )
+
+        kwargs = _build_scheduler_kwargs(
+            algorithm,
+            alpha=state.boot_alpha,
+            action_horizon_multipliers=multipliers,
+        )
+
+        await state.scheduler_sock.send_pyobj(
+            Reconfigure(algorithm=algorithm, scheduler_kwargs=dict(kwargs))
+        )
+        state.current_algorithm = algorithm
+        state.current_scheduler_kwargs = dict(kwargs)
+        logger.info(
+            "Reconfigure requested: algorithm=%s scheduler_kwargs=%s",
+            algorithm,
+            kwargs,
+        )
+        return {
+            "status": "ok",
+            "scheduling_algorithm": algorithm,
+            "scheduler_kwargs": dict(kwargs),
+        }
 
     @app.get("/")
     async def get_metrics(
