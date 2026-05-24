@@ -1,12 +1,13 @@
 {
   "experiment": {
-    "action_chunk_broker_type": "rtc",
-    "num_robots": 5,
-    "trials_per_robot": 2,
-    "env": "mock",
-    "task_suite_name": "mock",
-    "max_steps": 50,
-    "control_hz": 20
+    "env": "libero",
+    "task_suite_name": "libero_10",
+    "action_chunk_broker_type": "naive_async",
+    "num_robots": 4,
+    "max_steps": 600,
+    "control_hz": 20,
+    "subset_size": 2,
+    "wall_clock_time_limit_s": 60.0
   },
   "toxiproxy": {
     "api_url": "http://127.0.0.1:8474",
@@ -20,44 +21,36 @@
   },
   "robots": {
     "robot_0": {
-      "max_execution_horizon": 4,
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 6,
       "uplink_median_ms": 0.0,
       "uplink_sigma": 0.0,
       "downlink_median_ms": 0.0,
-      "downlink_sigma": 0.0,
-      "min_execution_horizon": 0
+      "downlink_sigma": 0.0
     },
     "robot_1": {
-      "max_execution_horizon": 4,
-      "uplink_median_ms": 0.0,
-      "uplink_sigma": 0.0,
-      "downlink_median_ms": 0.0,
-      "downlink_sigma": 0.0,
-      "min_execution_horizon": 0
-    },
-    "robot_2": {
-      "max_execution_horizon": 4,
-      "uplink_median_ms": 0.0,
-      "uplink_sigma": 0.0,
-      "downlink_median_ms": 0.0,
-      "downlink_sigma": 0.0,
-      "min_execution_horizon": 0
-    },
-    "robot_3": {
-      "max_execution_horizon": 4,
-      "uplink_median_ms": 0.0,
-      "uplink_sigma": 0.0,
-      "downlink_median_ms": 0.0,
-      "downlink_sigma": 0.0,
-      "min_execution_horizon": 0
-    },
-    "robot_4": {
+      "min_execution_horizon": 1,
       "max_execution_horizon": 10,
       "uplink_median_ms": 0.0,
       "uplink_sigma": 0.0,
       "downlink_median_ms": 0.0,
-      "downlink_sigma": 0.0,
-      "min_execution_horizon": 0
+      "downlink_sigma": 0.0
+    },
+    "robot_2": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
+    },
+    "robot_3": {
+      "min_execution_horizon": 1,
+      "max_execution_horizon": 10,
+      "uplink_median_ms": 0.0,
+      "uplink_sigma": 0.0,
+      "downlink_median_ms": 0.0,
+      "downlink_sigma": 0.0
     }
   }
 }

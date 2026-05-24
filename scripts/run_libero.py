@@ -130,6 +130,14 @@ class Args(JsonArgs):
     port: int = 8080
 
     #################################################################################################################
+    # Per-run scheduler overrides (sent to the server via POST /reconfigure)
+    # so the same server process can switch scheduler/multipliers between cases
+    # without a restart. ``None`` leaves the server's current value untouched.
+    #################################################################################################################
+    scheduling_algorithm: str | None = None
+    action_horizon_multipliers: dict[int, float] | None = None
+
+    #################################################################################################################
     # Network emulation parameters
     #################################################################################################################
     experiment_config: str = ""
@@ -153,6 +161,8 @@ class Args(JsonArgs):
         return {
             "host": self.host,
             "port": self.port,
+            "scheduling_algorithm": self.scheduling_algorithm,
+            "action_horizon_multipliers": self.action_horizon_multipliers,
             "experiment_config": self.experiment_config,
             "toxiproxy_server_bin": self.toxiproxy_server_bin,
             "seed": self.seed,
@@ -170,6 +180,8 @@ class Args(JsonArgs):
             kwargs["output_dir"] = pathlib.Path(kwargs["output_dir"])
         if "log_dir" in kwargs and kwargs["log_dir"] is not None:
             kwargs["log_dir"] = pathlib.Path(kwargs["log_dir"])
+        if (m := kwargs.get("action_horizon_multipliers")) is not None:
+            kwargs["action_horizon_multipliers"] = {int(k): float(v) for k, v in m.items()}
         return cls(**kwargs)
 
 
@@ -614,6 +626,42 @@ def reset_server(args: Args) -> None:
         logging.warning(f"Could not reset server metrics: {e}")
 
 
+def reconfigure_server(args: Args, server_metadata: ServerMetadata) -> None:
+    """Push per-run scheduler config to the server via POST /reconfigure.
+
+    Skipped if both ``scheduling_algorithm`` and ``action_horizon_multipliers``
+    are ``None`` on ``args`` (i.e. the client didn't request an override).
+    On success, mutates ``server_metadata`` in place so the on-disk
+    ``server_metadata.json`` reflects what the scheduler is actually using
+    for this run.
+    """
+    if args.scheduling_algorithm is None and args.action_horizon_multipliers is None:
+        return
+    body: dict[str, Any] = {}
+    if args.scheduling_algorithm is not None:
+        body["scheduling_algorithm"] = args.scheduling_algorithm
+    if args.action_horizon_multipliers is not None:
+        body["action_horizon_multipliers"] = {
+            str(k): float(v) for k, v in args.action_horizon_multipliers.items()
+        }
+    resp = requests.post(f"{args.http_base}/reconfigure", json=body, timeout=10.0)
+    if not resp.ok:
+        raise RuntimeError(
+            f"POST /reconfigure {resp.status_code}: {resp.text}"
+        )
+    result = resp.json()
+    server_metadata.scheduling_algorithm = result.get(
+        "scheduling_algorithm", server_metadata.scheduling_algorithm
+    )
+    if "scheduler_kwargs" in result:
+        server_metadata.scheduler_kwargs = result["scheduler_kwargs"]
+    logging.info(
+        "Reconfigured server: scheduling_algorithm=%s scheduler_kwargs=%s",
+        server_metadata.scheduling_algorithm,
+        server_metadata.scheduler_kwargs,
+    )
+
+
 def _normalize_metrics_times(history: dict) -> dict:
     """Subtract start_time from all absolute timestamps for readability."""
     t0 = history.get("start_time", 0.0)
@@ -828,6 +876,7 @@ def main(args: Args) -> None:
             episodes = create_mock_episodes(settings.num_trials_per_task * settings.num_robots)
 
     server_metadata = fetch_server_metadata(args)
+    reconfigure_server(args, server_metadata)
     if settings.use_trial_mode:
         active_workers = 1 if args.debug else settings.num_robots
     else:
