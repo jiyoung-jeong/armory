@@ -90,6 +90,22 @@ class ResetAll:
     """
 
 
+@dataclass(frozen=True, slots=True)
+class Reconfigure:
+    """Server-internal: rebuild the scheduler in-place with a new algorithm/kwargs.
+
+    Published from the WS main process on POST /reconfigure. The scheduler
+    subprocess constructs a fresh ``RequestScheduler`` from
+    ``SCHEDULER_REGISTRY[algorithm]`` with ``scheduler_kwargs`` and swaps it
+    in. The previously-seeded batch latency profile is re-applied to the new
+    instance; per-robot latency state is left to be re-seeded by the next
+    warmup phase.
+    """
+
+    algorithm: str
+    scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
+
+
 # TODO: rename as ActionChunkMetadata
 @dataclass(frozen=True, slots=True)
 class ActionChunk:

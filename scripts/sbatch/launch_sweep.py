@@ -286,25 +286,39 @@ def _make_cases(
                     for max_batch_size in max_batch_sizes:
                         for alpha in alphas:
                             for ahm in scheduler_ahms:
+                                # scheduling_algorithm and
+                                # action_horizon_multipliers used to live on the
+                                # server config, but they are now hot-swappable
+                                # via POST /reconfigure (issued by run_libero on
+                                # startup). Keeping them server-side too would
+                                # force the interactive sweep driver to restart
+                                # the server for every case that varies them.
+                                # ``max_batch_size`` and ``alpha`` stay
+                                # server-startup-only.
                                 server = {
                                     **server_args,
                                     "seed": seed,
-                                    "scheduling_algorithm": scheduler,
                                     "max_batch_size": max_batch_size,
                                     "alpha": alpha,
                                 }
+                                server.pop("scheduling_algorithm", None)
+                                server.pop("action_horizon_multipliers", None)
                                 if ahm is not None:
-                                    server["action_horizon_multipliers"] = (
-                                        _override_shortest_horizon(
-                                            server_args.get("action_horizon_multipliers"),
-                                            ahm,
-                                        )
+                                    case_multipliers = _override_shortest_horizon(
+                                        server_args.get("action_horizon_multipliers"),
+                                        ahm,
+                                    )
+                                else:
+                                    case_multipliers = dict(
+                                        server_args.get("action_horizon_multipliers") or {}
                                     )
                                 client = {
                                     **client_args,
                                     "seed": seed,
                                     "progress_type": "logging",
                                     "overwrite": True,
+                                    "scheduling_algorithm": scheduler,
+                                    "action_horizon_multipliers": case_multipliers,
                                 }
                                 cases.append(
                                     Case(
@@ -376,7 +390,7 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
             "alpha": case.alpha,
             "server_variant": case.server_variant,
             "action_horizon_multiplier": case.action_horizon_multiplier,
-            "action_horizon_multipliers": case.server_args.get("action_horizon_multipliers", {}),
+            "action_horizon_multipliers": case.client_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "output_dir": str(output_dir),
         },
@@ -682,7 +696,7 @@ def main() -> None:
             "alpha": case.alpha,
             "server_variant": case.server_variant,
             "action_horizon_multiplier": case.action_horizon_multiplier,
-            "action_horizon_multipliers": case.server_args.get("action_horizon_multipliers", {}),
+            "action_horizon_multipliers": case.client_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "status": "dry_run" if args.dry_run else "submitted",
             "job_id": "",
