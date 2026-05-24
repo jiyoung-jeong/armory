@@ -73,8 +73,8 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
         )
     return " | ".join(parts)
 
-HORIZON = 0.75
-GAMMA = 0.99
+HORIZON = 1.0
+GAMMA = 0.95
 
 Batch: TypeAlias = tuple[RobotID, ...]
 SearchNode: namedtuple = namedtuple(
@@ -499,7 +499,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
         *,
-        max_depth: int = 3,
+        max_depth: int = 2,
         max_in_flight: int = 2,
         step_budget_nodes: int = 8,
         scheduling_buffer: float = 0.05,
