@@ -58,7 +58,7 @@ CONTROL_HZ_DEFAULT = 20.0
 
 SCENARIO_TOKEN_RE = re.compile(r"(hom|\d+f\d+s)", re.IGNORECASE)
 LOOKAHEAD_SCHEDULER = "lookahead-actions"
-METRICS = ("starv", "thr_fast", "thr_slow", "worst", "n")
+METRICS = ("starv", "starv_fast", "starv_slow", "thr_fast", "thr_slow", "worst", "n")
 
 
 @dataclass
@@ -72,8 +72,10 @@ class CaseRow:
     worst_starvation: float | None
     fast_success_sum: float
     fast_observed_steps_sum: float
+    fast_starvation_steps_sum: float
     slow_success_sum: float
     slow_observed_steps_sum: float
+    slow_starvation_steps_sum: float
 
 
 def _infer_scenario(run_root: pathlib.Path, override: str | None) -> str:
@@ -130,7 +132,7 @@ def _load_case(
     except Exception as e:
         print(f"WARN: bad results.csv in {case_dir.name}: {e}", file=sys.stderr)
         return None
-    needed = {"robot_idx", "success", "observed_steps"}
+    needed = {"robot_idx", "success", "observed_steps", "starvation_steps"}
     if not needed.issubset(df.columns):
         return None
     df = df[df["robot_idx"].notna()].copy()
@@ -153,8 +155,10 @@ def _load_case(
         worst_starvation=result.get("max_starvation"),
         fast_success_sum=float(fast_df["success_num"].sum()),
         fast_observed_steps_sum=float(fast_df["observed_steps"].sum()),
+        fast_starvation_steps_sum=float(fast_df["starvation_steps"].sum()),
         slow_success_sum=float(slow_df["success_num"].sum()),
         slow_observed_steps_sum=float(slow_df["observed_steps"].sum()),
+        slow_starvation_steps_sum=float(slow_df["starvation_steps"].sum()),
     )
 
 
@@ -180,23 +184,37 @@ def _aggregate_cell(group: pd.DataFrame, control_hz: float) -> dict[str, float |
     starvs = group["mean_starvation"].dropna().tolist()
     worsts = group["worst_starvation"].dropna().tolist()
 
-    def tier_throughput(success_col: str, steps_col: str) -> float | None:
-        per_seed: list[float] = []
+    def per_seed_ratio(numer_col: str, denom_col: str) -> float | None:
+        vals: list[float] = []
         for _, r in group.iterrows():
-            steps = r[steps_col]
-            if steps and steps > 0:
-                per_seed.append(r[success_col] * control_hz / steps)
-        if not per_seed:
+            denom = r[denom_col]
+            if denom and denom > 0:
+                vals.append(r[numer_col] / denom)
+        if not vals:
             return None
-        return sum(per_seed) / len(per_seed)
+        return sum(vals) / len(vals)
 
     return {
         "starv": sum(starvs) / len(starvs) if starvs else None,
         "worst": sum(worsts) / len(worsts) if worsts else None,
-        "thr_fast": tier_throughput("fast_success_sum", "fast_observed_steps_sum"),
-        "thr_slow": tier_throughput("slow_success_sum", "slow_observed_steps_sum"),
+        "starv_fast": per_seed_ratio("fast_starvation_steps_sum", "fast_observed_steps_sum"),
+        "starv_slow": per_seed_ratio("slow_starvation_steps_sum", "slow_observed_steps_sum"),
+        # Throughput = successes / observed_seconds = successes * control_hz / observed_steps.
+        "thr_fast": _tier_throughput(group, "fast_success_sum", "fast_observed_steps_sum", control_hz),
+        "thr_slow": _tier_throughput(group, "slow_success_sum", "slow_observed_steps_sum", control_hz),
         "n": float(len(group)),
     }
+
+
+def _tier_throughput(group: pd.DataFrame, success_col: str, steps_col: str, control_hz: float) -> float | None:
+    per_seed: list[float] = []
+    for _, r in group.iterrows():
+        steps = r[steps_col]
+        if steps and steps > 0:
+            per_seed.append(r[success_col] * control_hz / steps)
+    if not per_seed:
+        return None
+    return sum(per_seed) / len(per_seed)
 
 
 def _aggregate(
