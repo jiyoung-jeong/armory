@@ -57,7 +57,7 @@ LA_AHM_RE = re.compile(r"^lookahead-actions@ahm=(\d+(?:\.\d+)?)$")
 MBS_RE = re.compile(r"results_max_batch_size=(\d+)\.csv$")
 COL_RE = re.compile(
     r"^(?P<scenario>[^_]+(?:_[^_]+)*?)__(?P<scheduler>.+?)__"
-    r"(?P<metric>starv|starv_fast|starv_slow|thr_fast|thr_slow|worst|n)$"
+    r"(?P<metric>starv|starv_fast|starv_slow|thr_fast|thr_slow|thr_total|worst|n)$"
 )
 
 
@@ -178,16 +178,6 @@ def _cell_pair(row: pd.Series, cols, scenario: str, sched: str,
     if rank == "sum":
         return (text, sum(vals))
     return (text, sum(vals) / len(vals))
-
-
-def _cell_sum(row: pd.Series, cols, scenario: str, sched: str,
-              metric_a: str, metric_b: str, decimals: int) -> tuple[str, float | None]:
-    a = _get_raw(row, cols, scenario, sched, metric_a)
-    b = _get_raw(row, cols, scenario, sched, metric_b)
-    if a is None and b is None:
-        return ("--", None)
-    total = (a or 0.0) + (b or 0.0)
-    return (_fmt_num(total, decimals), total)
 
 
 # --- table generation ---------------------------------------------------------
@@ -401,14 +391,14 @@ def main() -> None:
             (
                 TableSpec(
                     name="system_throughput",
-                    caption="System throughput: fast + slow (successes per second)",
+                    caption="System throughput: cluster total (successes per second)",
                     label="sys_thr",
                     direction="max",
-                    cell_fn=lambda row, cols, sc, sch: _cell_sum(
-                        row, cols, sc, sch, "thr_fast", "thr_slow", thr_dec
+                    cell_fn=lambda row, cols, sc, sch: _cell_single(
+                        row, cols, sc, sch, "thr_total", thr_dec, 1.0
                     ),
                 ),
-                ["thr_fast", "thr_slow"],
+                ["thr_total"],
             ),
         ]
 

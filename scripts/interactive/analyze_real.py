@@ -231,6 +231,17 @@ def _agg(samples: list, key_attr: str, want_fast: bool | None) -> float | None:
     return _mean(vals)
 
 
+def _per_trial_total_throughput(samples: list[ThrSample]) -> float | None:
+    """Sum legos/min across all robots within each trial, then average across
+    trials. This is the correct cluster-level system throughput — naive
+    fast_mean + slow_mean weights tiers equally regardless of population."""
+    by_trial: dict[int, list[float]] = defaultdict(list)
+    for s in samples:
+        by_trial[s.trial_idx].append(s.legos_per_minute)
+    per_trial_totals = [sum(vals) for vals in by_trial.values() if vals]
+    return _mean(per_trial_totals)
+
+
 # -------- plots --------------------------------------------------------------
 
 
@@ -313,9 +324,9 @@ def _plot_grouped_bars(
 
 
 METRIC_ORDER = [
-    ("thr_fast", "thr fast",  "max", ".2f"),
-    ("thr_slow", "thr slow",  "max", ".2f"),
-    ("thr_sys",  "thr sys",   "max", ".2f"),
+    ("thr_fast",  "thr fast",  "max", ".2f"),
+    ("thr_slow",  "thr slow",  "max", ".2f"),
+    ("thr_total", "thr total", "max", ".2f"),
     ("starv_avg",  "starv avg",  "min", ".2f"),
     ("starv_fast", "starv fast", "min", ".2f"),
     ("starv_slow", "starv slow", "min", ".2f"),
@@ -518,11 +529,10 @@ def main() -> None:
         for sch in scen_scheds:
             thr_s = [s for s in thr if s.scheduler == sch]
             stv_s = [s for s in starv if s.scheduler == sch]
-            tf = _agg(thr_s, "legos_per_minute", True)
-            ts = _agg(thr_s, "legos_per_minute", False)
-            cells[(sch, "thr_fast")] = tf
-            cells[(sch, "thr_slow")] = ts
-            cells[(sch, "thr_sys")] = (tf or 0.0) + (ts or 0.0) if (tf is not None or ts is not None) else None
+            cells[(sch, "thr_fast")] = _agg(thr_s, "legos_per_minute", True)
+            cells[(sch, "thr_slow")] = _agg(thr_s, "legos_per_minute", False)
+            # Cluster total = sum of all robots' legos/min within a trial, mean over trials.
+            cells[(sch, "thr_total")] = _per_trial_total_throughput(thr_s)
             cells[(sch, "starv_avg")] = _scaled(_agg(stv_s, "starv_rate", None), starv_scale)
             cells[(sch, "starv_fast")] = _scaled(_agg(stv_s, "starv_rate", True), starv_scale)
             cells[(sch, "starv_slow")] = _scaled(_agg(stv_s, "starv_rate", False), starv_scale)

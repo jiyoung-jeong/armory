@@ -58,7 +58,7 @@ CONTROL_HZ_DEFAULT = 20.0
 
 SCENARIO_TOKEN_RE = re.compile(r"(hom|\d+f\d+s)", re.IGNORECASE)
 LOOKAHEAD_SCHEDULER = "lookahead-actions"
-METRICS = ("starv", "starv_fast", "starv_slow", "thr_fast", "thr_slow", "worst", "n")
+METRICS = ("starv", "starv_fast", "starv_slow", "thr_fast", "thr_slow", "thr_total", "worst", "n")
 
 
 @dataclass
@@ -202,6 +202,11 @@ def _aggregate_cell(group: pd.DataFrame, control_hz: float) -> dict[str, float |
         # Throughput = successes / observed_seconds = successes * control_hz / observed_steps.
         "thr_fast": _tier_throughput(group, "fast_success_sum", "fast_observed_steps_sum", control_hz),
         "thr_slow": _tier_throughput(group, "slow_success_sum", "slow_observed_steps_sum", control_hz),
+        # Cluster total throughput: sum of per-robot throughputs across the
+        # whole scenario, averaged across seeds. Naive fast+slow weights tiers
+        # equally regardless of population, so we reconstruct the true total
+        # from raw success/step sums + num_robots for this case.
+        "thr_total": _cluster_total_throughput(group, control_hz),
         "n": float(len(group)),
     }
 
@@ -212,6 +217,25 @@ def _tier_throughput(group: pd.DataFrame, success_col: str, steps_col: str, cont
         steps = r[steps_col]
         if steps and steps > 0:
             per_seed.append(r[success_col] * control_hz / steps)
+    if not per_seed:
+        return None
+    return sum(per_seed) / len(per_seed)
+
+
+def _cluster_total_throughput(group: pd.DataFrame, control_hz: float) -> float | None:
+    """Per seed: total_successes * control_hz * num_robots / total_observed_steps.
+
+    This equals the sum of per-robot throughput rates across the whole
+    scenario (assuming all robots observe similar total step counts — true
+    in trial mode with a fixed wall_clock_time_limit_s).
+    """
+    per_seed: list[float] = []
+    for _, r in group.iterrows():
+        total_steps = float(r["fast_observed_steps_sum"]) + float(r["slow_observed_steps_sum"])
+        total_succ = float(r["fast_success_sum"]) + float(r["slow_success_sum"])
+        nr = int(r["num_robots"])
+        if total_steps > 0:
+            per_seed.append(total_succ * control_hz * nr / total_steps)
     if not per_seed:
         return None
     return sum(per_seed) / len(per_seed)
