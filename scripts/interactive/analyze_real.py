@@ -244,11 +244,62 @@ def _per_trial_total_throughput(samples: list[ThrSample]) -> float | None:
 
 # -------- plots --------------------------------------------------------------
 
+# Paper-ready scheduler display labels.
+SCHED_PAPER_LABEL = {
+    "max-batch": "MB",
+    "round-robin": "RR",
+}
+LA_AHM_PAPER_RE = re.compile(r"^lookahead-actions@ahm=(\d+(?:\.\d+)?)$")
 
-def _annotate(ax, x: float, y: float, val: float | None, fmt: str = ".2f") -> None:
+# Paper-ready scenario display labels.
+SCENARIO_PAPER_LABEL = {
+    "hom": "10f",
+    "1f9s": "1f9s",
+    "5f5s": "5f5s",
+}
+
+
+def _scheduler_paper_label(name: str) -> str:
+    if name in SCHED_PAPER_LABEL:
+        return SCHED_PAPER_LABEL[name]
+    m = LA_AHM_PAPER_RE.match(name)
+    if m:
+        w = m.group(1)
+        if w.endswith(".0"):
+            w = w.split(".")[0]
+        return f"LA@{w}"
+    return name
+
+
+def _scenario_paper_label(name: str) -> str:
+    return SCENARIO_PAPER_LABEL.get(name, name)
+
+
+def _annotate_top(ax, x: float, y: float, val: float | None, fmt: str = ".2f") -> None:
     if val is None:
         return
     ax.text(x, y, format(val, fmt), ha="center", va="bottom", fontsize=8)
+
+
+def _annotate_inside(ax, x: float, y: float, val: float | None, fmt: str, fontsize: int) -> None:
+    """Place the value text inside the bar (white, near the top edge)."""
+    if val is None or y <= 0:
+        return
+    ax.text(
+        x, y * 0.96,
+        format(val, fmt),
+        ha="center", va="top",
+        fontsize=fontsize, color="white", fontweight="bold",
+    )
+
+
+def _strip_chrome(ax) -> None:
+    """Paper-ready: no spines, no grid, white background, bigger ticks."""
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.grid(False)
+    ax.set_facecolor("white")
+    ax.tick_params(axis="both", which="major", length=8, width=1.5, labelsize=14)
 
 
 def _plot_single_bar(
@@ -259,23 +310,41 @@ def _plot_single_bar(
     ylabel: str,
     color: str,
     fmt: str = ".2f",
+    paper_style: bool = False,
 ) -> None:
     keep = [(s, v) for s, v in zip(schedulers, values) if v is not None]
     if not keep:
         return
     schedulers_k, values_k = zip(*keep)
+    display_labels = [_scheduler_paper_label(s) if paper_style else s for s in schedulers_k]
+
     fig, ax = plt.subplots(figsize=(max(6, 0.9 * len(schedulers_k) + 3), 4.5))
+    fig.set_facecolor("white")
     xs = np.arange(len(schedulers_k))
-    bars = ax.bar(xs, values_k, color=color, edgecolor="black", linewidth=0.6)
-    for x, b, v in zip(xs, bars, values_k):
-        _annotate(ax, x, b.get_height(), v, fmt=fmt)
+    edge = "none" if paper_style else "black"
+    lw = 0 if paper_style else 0.6
+    bars = ax.bar(xs, values_k, color=color, edgecolor=edge, linewidth=lw)
+
+    if paper_style:
+        for x, b, v in zip(xs, bars, values_k):
+            _annotate_inside(ax, x, b.get_height(), v, fmt=fmt, fontsize=14)
+    else:
+        for x, b, v in zip(xs, bars, values_k):
+            _annotate_top(ax, x, b.get_height(), v, fmt=fmt)
+
     ax.set_xticks(xs)
-    ax.set_xticklabels(schedulers_k, rotation=20, ha="right")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(axis="y", linestyle=":", alpha=0.5)
+    if paper_style:
+        ax.set_xticklabels(display_labels, rotation=0, ha="center", fontsize=14)
+        ax.set_ylabel(ylabel, fontsize=14)
+        ax.set_title(title, fontsize=16)
+        _strip_chrome(ax)
+    else:
+        ax.set_xticklabels(display_labels, rotation=20, ha="right")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=130)
+    fig.savefig(out_path, dpi=130, facecolor="white")
     plt.close(fig)
 
 
@@ -286,6 +355,7 @@ def _plot_grouped_bars(
     title: str,
     ylabel: str,
     fmt: str = ".2f",
+    paper_style: bool = False,
 ) -> None:
     keep_idx = [
         i for i in range(len(schedulers))
@@ -295,28 +365,43 @@ def _plot_grouped_bars(
         return
     schedulers_k = [schedulers[i] for i in keep_idx]
     series_k = [(lab, [vs[i] for i in keep_idx], col) for lab, vs, col in series]
+    display_labels = [_scheduler_paper_label(s) if paper_style else s for s in schedulers_k]
 
     n_series = len(series_k)
     width = 0.8 / n_series
     xs = np.arange(len(schedulers_k))
     fig, ax = plt.subplots(figsize=(max(7, 1.1 * len(schedulers_k) + 3), 4.8))
+    fig.set_facecolor("white")
+    edge = "none" if paper_style else "black"
+    lw = 0 if paper_style else 0.6
     for s_idx, (label, vals, color) in enumerate(series_k):
         offset = (s_idx - (n_series - 1) / 2) * width
         plot_vals = [0.0 if v is None else v for v in vals]
         bars = ax.bar(
             xs + offset, plot_vals, width=width,
-            label=label, color=color, edgecolor="black", linewidth=0.6,
+            label=label, color=color, edgecolor=edge, linewidth=lw,
         )
-        for x, b, raw in zip(xs + offset, bars, vals):
-            _annotate(ax, x, b.get_height(), raw, fmt=fmt)
+        if paper_style:
+            for x, b, raw in zip(xs + offset, bars, vals):
+                _annotate_inside(ax, x, b.get_height(), raw, fmt=fmt, fontsize=12)
+        else:
+            for x, b, raw in zip(xs + offset, bars, vals):
+                _annotate_top(ax, x, b.get_height(), raw, fmt=fmt)
     ax.set_xticks(xs)
-    ax.set_xticklabels(schedulers_k, rotation=20, ha="right")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.legend(loc="best", framealpha=0.9)
-    ax.grid(axis="y", linestyle=":", alpha=0.5)
+    if paper_style:
+        ax.set_xticklabels(display_labels, rotation=0, ha="center", fontsize=14)
+        ax.set_ylabel(ylabel, fontsize=14)
+        ax.set_title(title, fontsize=16)
+        _strip_chrome(ax)
+        # No legend (tier color encoding stands on its own).
+    else:
+        ax.set_xticklabels(display_labels, rotation=20, ha="right")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.legend(loc="best", framealpha=0.9)
+        ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=130)
+    fig.savefig(out_path, dpi=130, facecolor="white")
     plt.close(fig)
 
 
@@ -464,7 +549,8 @@ def main() -> None:
         if not thr and not starv:
             continue
 
-        # Throughput plot
+        # Throughput plot (paper-ready)
+        scen_label = _scenario_paper_label(scenario)
         if scenario == HOM_SCENARIO:
             fast_vals = [
                 _agg([s for s in thr if s.scheduler == sch], "legos_per_minute", True)
@@ -473,9 +559,10 @@ def main() -> None:
             _plot_single_bar(
                 plots_dir / f"throughput__{scenario}__real.png",
                 schedulers, fast_vals,
-                title=f"{scenario} throughput (real)",
+                title=f"{scen_label} Throughput",
                 ylabel="Throughput (legos / minute)",
-                color="#1f77b4",
+                color="#37A3D2",
+                paper_style=True,
             )
         else:
             fast = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", True) for sch in schedulers]
@@ -483,9 +570,10 @@ def main() -> None:
             _plot_grouped_bars(
                 plots_dir / f"throughput__{scenario}__real.png",
                 schedulers,
-                series=[("fast tier", fast, "#1f77b4"), ("slow tier", slow, "#ff7f0e")],
-                title=f"{scenario} throughput (real)",
+                series=[("fast tier", fast, "#37A3D2"), ("slow tier", slow, "#F94144")],
+                title=f"{scen_label} Throughput",
                 ylabel="Throughput (legos / minute)",
+                paper_style=True,
             )
 
         # Starvation plot (per tier, scaled to %).

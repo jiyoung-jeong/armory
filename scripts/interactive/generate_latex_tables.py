@@ -216,7 +216,7 @@ def _build_table(
 
     col_groups = [len(scheds) for _, scheds in scenarios_used]
     total_data_cols = sum(col_groups)
-    colspec = f"Q[c,wd=1.05cm] *{{{total_data_cols}}}{{X[c]}}"
+    colspec = f"Q[c,wd=1.0cm] *{{{total_data_cols}}}{{X[c]}}"
 
     # cmidrule ranges.
     cmidrules = []
@@ -273,14 +273,14 @@ def _build_table(
         "\\centering\n"
         f"\\caption{{{spec.caption} (max batch size = {mbs}).}}\n"
         f"\\label{{tab:{spec.label}_mbs{mbs}}}\n"
-        "\\small\n"
+        "\\footnotesize\n"
         "\\begin{tblr}{\n"
         f"  colspec = {{{colspec}}},\n"
         "  cells = {c},\n"
         "  row{1,2} = {font=\\bfseries},\n"
         "  column{1} = {font=\\bfseries},\n"
         "  colsep = 3pt,\n"
-        "  rowsep = 2pt,\n"
+        "  rowsep = 3pt,\n"
         "}\n"
         "\\toprule\n"
         f"{header_line}\n"
@@ -318,7 +318,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--starv-as-percent", action="store_true", default=True,
                    help="Render starvation as percentage (×100). Default on.")
     p.add_argument("--starv-decimals", type=int, default=2)
-    p.add_argument("--thr-decimals", type=int, default=4)
+    p.add_argument("--thr-decimals", type=int, default=2)
+    p.add_argument("--thr-scale", type=float, default=100.0,
+                   help="Multiply throughput values by this before rendering. "
+                        "100 gives '7.25 / 8.43' instead of '0.0725 / 0.0843' "
+                        "(units become successes per 100s).")
     p.add_argument(
         "--num-robots",
         type=str,
@@ -339,6 +343,10 @@ def main() -> None:
     starv_scale = 100.0 if args.starv_as_percent else 1.0
     starv_dec = args.starv_decimals
     thr_dec = args.thr_decimals
+    thr_scale = args.thr_scale
+    thr_unit_suffix = " ($\\times 100$)" if abs(thr_scale - 100.0) < 1e-9 else (
+        "" if abs(thr_scale - 1.0) < 1e-9 else f" ($\\times {thr_scale:g}$)"
+    )
 
     nr_filter: set[int] | None = None
     if args.num_robots:
@@ -378,12 +386,12 @@ def main() -> None:
             (
                 TableSpec(
                     name="tier_throughput",
-                    caption="Per-tier throughput: fast / slow (successes per second)",
+                    caption=f"Per-tier throughput: fast / slow (successes per second){thr_unit_suffix}",
                     label="tier_thr",
                     direction="max",
                     cell_fn=lambda row, cols, sc, sch: _cell_pair(
                         row, cols, sc, sch, "thr_fast", "thr_slow",
-                        thr_dec, 1.0, rank="sum",
+                        thr_dec, thr_scale, rank="sum",
                     ),
                 ),
                 ["thr_fast", "thr_slow"],
@@ -395,7 +403,7 @@ def main() -> None:
                     label="sys_thr",
                     direction="max",
                     cell_fn=lambda row, cols, sc, sch: _cell_single(
-                        row, cols, sc, sch, "thr_total", thr_dec, 1.0
+                        row, cols, sc, sch, "thr_total", 4, 1.0
                     ),
                 ),
                 ["thr_total"],

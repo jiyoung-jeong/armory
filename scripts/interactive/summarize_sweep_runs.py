@@ -58,7 +58,12 @@ CONTROL_HZ_DEFAULT = 20.0
 
 SCENARIO_TOKEN_RE = re.compile(r"(hom|\d+f\d+s)", re.IGNORECASE)
 LOOKAHEAD_SCHEDULER = "lookahead-actions"
-METRICS = ("starv", "starv_fast", "starv_slow", "thr_fast", "thr_slow", "thr_total", "worst", "n")
+METRICS = (
+    "starv", "starv_fast", "starv_slow",
+    "thr_fast", "thr_slow", "thr_total",
+    "successes", "successes_fast", "successes_slow",
+    "worst", "n",
+)
 
 
 @dataclass
@@ -207,8 +212,17 @@ def _aggregate_cell(group: pd.DataFrame, control_hz: float) -> dict[str, float |
         # equally regardless of population, so we reconstruct the true total
         # from raw success/step sums + num_robots for this case.
         "thr_total": _cluster_total_throughput(group, control_hz),
+        # Mean success counts per seed: total (fleet-wide), fast tier, slow tier.
+        "successes":      _mean_col_sum(group, ("fast_success_sum", "slow_success_sum")),
+        "successes_fast": _mean_col_sum(group, ("fast_success_sum",)),
+        "successes_slow": _mean_col_sum(group, ("slow_success_sum",)),
         "n": float(len(group)),
     }
+
+
+def _mean_col_sum(group: pd.DataFrame, cols: tuple[str, ...]) -> float | None:
+    per_seed = [sum(float(r[c]) for c in cols) for _, r in group.iterrows()]
+    return sum(per_seed) / len(per_seed) if per_seed else None
 
 
 def _tier_throughput(group: pd.DataFrame, success_col: str, steps_col: str, control_hz: float) -> float | None:
