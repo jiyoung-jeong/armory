@@ -524,6 +524,180 @@ def _fmt(v: float | None, spec: str) -> str:
     return format(v, spec)
 
 
+def _build_real_all_metrics_table(
+    scenarios_in_order: list[str],
+    schedulers_per_scenario: dict[str, list[str]],
+    cells: dict[tuple[str, str, str], float | None],
+) -> str:
+    """One combined table with all six metrics across scenarios.
+
+    Layout: Config (rowspan) | Scheduler | thr fast | thr slow | thr total
+                            | starv avg | starv fast | starv slow.
+    Super-header groups columns into Throughput / Starvation. Bold = best per
+    (scenario, metric column)."""
+    if not scenarios_in_order:
+        return ""
+
+    metrics = [
+        ("thr_fast",   "fast",  "max"),
+        ("thr_slow",   "slow",  "max"),
+        ("thr_total",  "total", "max"),
+        ("starv_avg",  "avg",   "min"),
+        ("starv_fast", "fast",  "min"),
+        ("starv_slow", "slow",  "min"),
+    ]
+    thr_n = sum(1 for m in metrics if m[0].startswith("thr"))
+    starv_n = len(metrics) - thr_n
+    colspec = f"l l *{{{len(metrics)}}}{{c}}"
+
+    # Super-header row.
+    super_cells = [
+        "", "",
+        f"\\SetCell[c={thr_n}]{{c}} Throughput (legos/min)",
+        *[""] * (thr_n - 1),
+        f"\\SetCell[c={starv_n}]{{c}} Starvation (\\%)",
+        *[""] * (starv_n - 1),
+    ]
+    super_line = " & ".join(super_cells) + " \\\\"
+    cmid_thr = f"\\cmidrule[lr]{{3-{2 + thr_n}}}"
+    cmid_starv = f"\\cmidrule[lr]{{{3 + thr_n}-{2 + thr_n + starv_n}}}"
+    cmidrule_line = f"{cmid_thr} {cmid_starv}"
+
+    sub_header_cells = ["Config", "Scheduler"] + [m[1] for m in metrics]
+    sub_header_line = " & ".join(sub_header_cells) + " \\\\"
+
+    body_lines: list[str] = []
+    last_scenario = scenarios_in_order[-1]
+    for scenario in scenarios_in_order:
+        scen_scheds = schedulers_per_scenario.get(scenario, [])
+        if not scen_scheds:
+            continue
+
+        scen_label = _scenario_paper_label(scenario)
+        n_rows = len(scen_scheds)
+        for i, sch in enumerate(scen_scheds):
+            if i == 0:
+                scen_cell = (
+                    f"\\SetCell[r={n_rows}]{{}} {scen_label}"
+                    if n_rows > 1 else scen_label
+                )
+            else:
+                scen_cell = ""
+            row_cells = [scen_cell, _scheduler_display(sch)]
+            for name, _label, _direction in metrics:
+                v = cells.get((scenario, sch, name))
+                row_cells.append("--" if v is None else format(v, ".2f"))
+            body_lines.append(" & ".join(row_cells) + " \\\\")
+        if scenario != last_scenario:
+            body_lines.append("\\midrule")
+
+    if not body_lines:
+        return ""
+    body = "\n".join(body_lines)
+    return (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        "\\caption{Real-world: per-tier throughput (legos / min) and "
+        "starvation rate (\\%) across scenarios.}\n"
+        "\\label{tab:real_all_metrics}\n"
+        "\\footnotesize\n"
+        "\\setlength{\\tabcolsep}{4pt}\n"
+        "\\begin{tblr}{\n"
+        f"  colspec = {{{colspec}}},\n"
+        "  row{1,2} = {font=\\bfseries},\n"
+        "  column{1,2} = {font=\\bfseries},\n"
+        "  colsep = 4pt,\n"
+        "  rowsep = 1.5pt,\n"
+        "}\n"
+        "\\toprule\n"
+        f"{super_line}\n"
+        f"{cmidrule_line}\n"
+        f"{sub_header_line}\n"
+        "\\midrule\n"
+        f"{body}\n"
+        "\\bottomrule\n"
+        "\\end{tblr}\n"
+        "\\end{table}\n"
+    )
+
+
+def _build_real_combined_table(
+    scenarios_in_order: list[str],
+    schedulers_per_scenario: dict[str, list[str]],
+    cells: dict[tuple[str, str, str], float | None],
+    *,
+    thr_scale: float = 1.0,
+    thr_decimals: int = 2,
+    starv_decimals: int = 1,
+    thr_unit_label: str = "legos/min",
+) -> str:
+    """One combined table: rows = scenarios, columns = schedulers (union).
+    Each cell stacks total throughput (top) over avg starvation (bottom, gray).
+    No bolding."""
+    all_scheds: list[str] = []
+    for scenario in scenarios_in_order:
+        for s in schedulers_per_scenario.get(scenario, []):
+            if s not in all_scheds:
+                all_scheds.append(s)
+    all_scheds = _ordered_schedulers(all_scheds)
+    if not all_scheds or not scenarios_in_order:
+        return ""
+
+    n_sched = len(all_scheds)
+    colspec = f"l *{{{n_sched}}}{{c}}"
+
+    header_cells = ["Config"] + [_scheduler_display(s) for s in all_scheds]
+    header_line = " & ".join(header_cells) + " \\\\"
+
+    body_lines: list[str] = []
+    for scenario in scenarios_in_order:
+        scen_scheds = schedulers_per_scenario.get(scenario, [])
+        if not scen_scheds:
+            continue
+        row = [_scenario_paper_label(scenario)]
+        for sch in all_scheds:
+            thr_v = cells.get((scenario, sch, "thr_total"))
+            if sch not in scen_scheds or thr_v is None:
+                row.append("--")
+                continue
+            starv_v = cells.get((scenario, sch, "starv_avg"))
+            thr_s = format(thr_v * thr_scale, f".{thr_decimals}f")
+            starv_s = (
+                "--" if starv_v is None
+                else format(starv_v, f".{starv_decimals}f")
+            )
+            row.append(f"\\cell{{{thr_s}}}{{{starv_s}}}")
+        body_lines.append(" & ".join(row) + " \\\\")
+    if not body_lines:
+        return ""
+
+    body = "\n".join(body_lines)
+    return (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        f"\\caption{{Real-world: throughput ({thr_unit_label}) and average "
+        f"starvation (\\%, \\textcolor{{gray}}{{gray}}).}}\n"
+        "\\label{tab:real_combined}\n"
+        "\\footnotesize\n"
+        "\\setlength{\\tabcolsep}{4pt}\n"
+        "\\newcommand{\\cell}[2]{#1 \\\\ {\\scriptsize\\textcolor{gray}{#2\\%}}}\n"
+        "\\begin{tblr}{\n"
+        f"  colspec = {{{colspec}}},\n"
+        "  row{1} = {font=\\bfseries},\n"
+        "  column{1} = {font=\\bfseries},\n"
+        "  colsep = 4pt,\n"
+        "  rowsep = 1.5pt,\n"
+        "}\n"
+        "\\toprule\n"
+        f"{header_line}\n"
+        "\\midrule\n"
+        f"{body}\n"
+        "\\bottomrule\n"
+        "\\end{tblr}\n"
+        "\\end{table}\n"
+    )
+
+
 def _build_real_table(
     scenario: str,
     schedulers: list[str],
@@ -715,7 +889,15 @@ def main() -> None:
     print(f"Wrote plots under {plots_dir}")
 
     # ---- LaTeX tables ----
+    # Per-scenario tables are no longer emitted; remove stale ones.
+    for scenario in SCENARIOS:
+        (latex_dir / f"real_{scenario}.tex").unlink(missing_ok=True)
+
     all_blocks: list[str] = []
+    all_metric_cells: dict[tuple[str, str, str], float | None] = {}
+    combined_cells: dict[tuple[str, str, str], float | None] = {}
+    combined_scheds: dict[str, list[str]] = {}
+    combined_scenarios: list[str] = []
     for scenario in SCENARIOS:
         thr = [s for s in all_thr if s.scenario == scenario]
         starv = [s for s in all_starv if s.scenario == scenario]
@@ -725,24 +907,37 @@ def main() -> None:
         if not scen_scheds:
             continue
 
-        cells: dict[tuple[str, str], float | None] = {}
         for sch in scen_scheds:
             thr_s = [s for s in thr if s.scheduler == sch]
             stv_s = [s for s in starv if s.scheduler == sch]
-            cells[(sch, "thr_fast")] = _agg(thr_s, "legos_per_minute", True)
-            cells[(sch, "thr_slow")] = _agg(thr_s, "legos_per_minute", False)
+            all_metric_cells[(scenario, sch, "thr_fast")] = _agg(thr_s, "legos_per_minute", True)
+            all_metric_cells[(scenario, sch, "thr_slow")] = _agg(thr_s, "legos_per_minute", False)
             # Cluster total = sum of all robots' legos/min within a trial, mean over trials.
-            cells[(sch, "thr_total")] = _per_trial_total_throughput(thr_s)
-            cells[(sch, "starv_avg")] = _scaled(_agg(stv_s, "starv_rate", None), starv_scale)
-            cells[(sch, "starv_fast")] = _scaled(_agg(stv_s, "starv_rate", True), starv_scale)
-            cells[(sch, "starv_slow")] = _scaled(_agg(stv_s, "starv_rate", False), starv_scale)
+            all_metric_cells[(scenario, sch, "thr_total")] = _per_trial_total_throughput(thr_s)
+            all_metric_cells[(scenario, sch, "starv_avg")] = _scaled(_agg(stv_s, "starv_rate", None), starv_scale)
+            all_metric_cells[(scenario, sch, "starv_fast")] = _scaled(_agg(stv_s, "starv_rate", True), starv_scale)
+            all_metric_cells[(scenario, sch, "starv_slow")] = _scaled(_agg(stv_s, "starv_rate", False), starv_scale)
+            for metric in ("thr_total", "starv_avg"):
+                combined_cells[(scenario, sch, metric)] = all_metric_cells[(scenario, sch, metric)]
 
-        block = _build_real_table(scenario, scen_scheds, cells)
-        if not block:
-            continue
-        (latex_dir / f"real_{scenario}.tex").write_text(block)
-        all_blocks.append(f"% --- real / {scenario} ---")
-        all_blocks.append(block)
+        combined_scenarios.append(scenario)
+        combined_scheds[scenario] = scen_scheds
+
+    all_metrics_block = _build_real_all_metrics_table(
+        combined_scenarios, combined_scheds, all_metric_cells,
+    )
+    if all_metrics_block:
+        (latex_dir / "real_all_metrics.tex").write_text(all_metrics_block)
+        all_blocks.append("% --- real / all metrics (replaces per-scenario tables) ---")
+        all_blocks.append(all_metrics_block)
+
+    combined_block = _build_real_combined_table(
+        combined_scenarios, combined_scheds, combined_cells,
+    )
+    if combined_block:
+        (latex_dir / "real_combined.tex").write_text(combined_block)
+        all_blocks.append("% --- real / combined (throughput + starvation stacked) ---")
+        all_blocks.append(combined_block)
 
     combined = data_dir / "tables.tex"
     combined.write_text("\n".join(all_blocks) + "\n")

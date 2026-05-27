@@ -294,6 +294,119 @@ def _build_table(
     )
 
 
+def _build_system_combined_table(
+    df: pd.DataFrame,
+    cols: dict[tuple[str, str], dict[str, str]],
+    mbs: int,
+    *,
+    starv_decimals: int = 1,
+    starv_scale: float = 100.0,
+    thr_decimals: int = 3,
+    thr_scale: float = 1.0,
+    thr_unit_label: str = "successes/s",
+    num_robots_filter: set[int] | None = None,
+) -> str:
+    """Combined system table: rows grouped by scenario (Config column with
+    rowspan), one row per N, columns = schedulers. Each cell stacks system
+    throughput (top, bold = max in row) over average starvation (bottom, gray,
+    bold = min in row). Both are bolded independently. Matches the user's
+    \\cell{thr}{starv} reference template."""
+    require = ["thr_total", "starv"]
+    scen_scheds: list[tuple[str, list[str]]] = []
+    all_scheds: list[str] = []
+    for scenario in SCENARIO_ORDER:
+        if scenario not in SCENARIO_DISPLAY:
+            continue
+        s = _present_schedulers(df, cols, scenario, require)
+        if not s:
+            continue
+        scen_scheds.append((scenario, s))
+        for ss in s:
+            if ss not in all_scheds:
+                all_scheds.append(ss)
+    if not scen_scheds:
+        return ""
+
+    all_scheds = sorted(all_scheds, key=_scheduler_sort_key)
+    n_sched = len(all_scheds)
+    colspec = f"l l *{{{n_sched}}}{{c}}"
+
+    header_cells = ["Config", "$N$"] + [_scheduler_display(s) for s in all_scheds]
+    header_line = " & ".join(header_cells) + " \\\\"
+
+    body_lines: list[str] = []
+    last_scenario = scen_scheds[-1][0]
+    for scenario, scheds in scen_scheds:
+        nrs: list[int] = []
+        for nr in df.index:
+            if num_robots_filter is not None and int(nr) not in num_robots_filter:
+                continue
+            row = df.loc[nr]
+            if any(
+                _get_raw(row, cols, scenario, sch, "thr_total") is not None
+                for sch in scheds
+            ):
+                nrs.append(int(nr))
+        if not nrs:
+            continue
+
+        scen_label = SCENARIO_DISPLAY[scenario]
+        n_rows = len(nrs)
+        for i, nr in enumerate(nrs):
+            row = df.loc[nr]
+            if i == 0:
+                scen_cell = (
+                    f"\\SetCell[r={n_rows}]{{}} {scen_label}"
+                    if n_rows > 1 else scen_label
+                )
+            else:
+                scen_cell = ""
+            cells = [scen_cell, str(int(nr))]
+
+            for sch in all_scheds:
+                if sch not in scheds:
+                    cells.append("--")
+                    continue
+                thr_v = _get_raw(row, cols, scenario, sch, "thr_total")
+                if thr_v is None:
+                    cells.append("--")
+                    continue
+                starv_v = _get_raw(row, cols, scenario, sch, "starv")
+                thr_str = _fmt_num(thr_v, thr_decimals, thr_scale)
+                starv_str = _fmt_num(starv_v, starv_decimals, starv_scale)
+                cells.append(f"\\cell{{{thr_str}}}{{{starv_str}}}")
+            body_lines.append(" & ".join(cells) + " \\\\")
+        if scenario != last_scenario:
+            body_lines.append("\\midrule")
+
+    body = "\n".join(body_lines)
+
+    return (
+        "\\begin{table}[t]\n"
+        "\\centering\n"
+        f"\\caption{{LIBERO: System throughput ({thr_unit_label}) and average "
+        f"starvation (\\%, \\textcolor{{gray}}{{gray}}), max batch size = {mbs}.}}\n"
+        f"\\label{{tab:sys_thr_starv_mbs{mbs}}}\n"
+        "\\footnotesize\n"
+        "\\setlength{\\tabcolsep}{4pt}\n"
+        "\\newcommand{\\cell}[2]{#1 \\\\ {\\scriptsize\\textcolor{gray}{#2\\%}}}\n"
+        "\\begin{tblr}{\n"
+        f"  colspec = {{{colspec}}},\n"
+        "  row{1} = {font=\\bfseries},\n"
+        "  column{1,2} = {font=\\bfseries},\n"
+        "  colsep = 4pt,\n"
+        "  rowsep = 1.5pt,\n"
+        "}\n"
+        "\\toprule\n"
+        f"{header_line}\n"
+        "\\midrule\n"
+        f"{body}\n"
+        "\\bottomrule\n"
+        "\\end{tblr}\n"
+        "\\end{table}\n"
+    )
+
+
 def _scenario_require_metrics(metrics: list[str]) -> dict[str, list[str]]:
     """For each scenario, list which metrics the cell function will read. For
     metrics with a slow-tier component, hom doesn't need slow (it has none).
@@ -422,6 +535,20 @@ def main() -> None:
             (latex_dir / f"{spec.name}_mbs{mbs}.tex").write_text(block)
             all_blocks.append(f"% --- {spec.name} | max_batch_size={mbs} ---")
             all_blocks.append(block)
+
+        combined = _build_system_combined_table(
+            df, cols, mbs,
+            starv_decimals=1,
+            starv_scale=starv_scale,
+            thr_decimals=2,
+            thr_scale=60.0,
+            thr_unit_label="successes/min",
+            num_robots_filter=nr_filter,
+        )
+        if combined:
+            (latex_dir / f"system_combined_mbs{mbs}.tex").write_text(combined)
+            all_blocks.append(f"% --- system_combined | max_batch_size={mbs} ---")
+            all_blocks.append(combined)
 
     tables_tex = summary_dir / "tables.tex"
     tables_tex.write_text("\n".join(all_blocks) + "\n")

@@ -275,7 +275,7 @@ def _plot_overview_stack(
     fig.set_facecolor("white")
 
     row_specs = [
-        ("thr_total", 1.0,   "System throughput",         "Cluster throughput (successes / sec)"),
+        ("thr_total", 60.0,  "System throughput",         "Cluster throughput (successes / min)"),
         ("starv",     100.0, "Average starvation",         "Average starvation rate (%)"),
     ]
     for row, (metric, y_scale, title_prefix, ylabel) in enumerate(row_specs):
@@ -314,8 +314,8 @@ def _plot_tier_breakdown(
 
     panel_specs = [
         # (row, col, metric, y_scale, title, ylabel)
-        (0, 0, "thr_fast",   1.0,   "Fast-tier throughput", "Throughput (successes / sec)"),
-        (0, 1, "thr_slow",   1.0,   "Slow-tier throughput", "Throughput (successes / sec)"),
+        (0, 0, "thr_fast",   60.0,  "Fast-tier throughput", "Throughput (successes / min)"),
+        (0, 1, "thr_slow",   60.0,  "Slow-tier throughput", "Throughput (successes / min)"),
         (1, 0, "starv_fast", 100.0, "Fast-tier starvation", "Starvation rate (%)"),
         (1, 1, "starv_slow", 100.0, "Slow-tier starvation", "Starvation rate (%)"),
     ]
@@ -333,6 +333,100 @@ def _plot_tier_breakdown(
             ax.set_xlabel("Number of Robots", fontsize=12)
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(out_path, dpi=130, facecolor="white")
+    fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_metric_vs_batch_size(
+    out_path: pathlib.Path,
+    by_mbs: dict[int, pd.DataFrame],
+    metric: str,
+    *,
+    title_prefix: str,
+    ylabel: str,
+    y_scale: float = 1.0,
+    nr_filter: set[int] | None,
+) -> None:
+    """Pivot the data: x = max_batch_size, y = metric.
+
+    One row of subplots per scenario, one line per scheduler. If multiple
+    num_robots are present, draws one line per (scheduler, num_robots) using
+    scheduler color and num_robots as the marker (so a sweep across N still
+    reads cleanly). Otherwise (single N) draws one line per scheduler.
+    """
+    # Collect: {(scenario, scheduler, num_robots): [(mbs, value), ...]}
+    series: dict[tuple[str, str, int], list[tuple[int, float]]] = {}
+    scenarios_seen: set[str] = set()
+    for mbs, df in sorted(by_mbs.items()):
+        cols = _parse_columns(df)
+        for (scenario, scheduler), metric_cols in cols.items():
+            col = metric_cols.get(metric)
+            if col is None:
+                continue
+            scenarios_seen.add(scenario)
+            for nr in df.index:
+                if nr_filter is not None and int(nr) not in nr_filter:
+                    continue
+                v = df.loc[nr, col]
+                if pd.isna(v):
+                    continue
+                series.setdefault((scenario, scheduler, int(nr)), []).append((mbs, float(v)))
+    if not series:
+        return
+
+    scenarios = [sc for sc in SCENARIO_ORDER if sc in scenarios_seen] + \
+                [sc for sc in sorted(scenarios_seen) if sc not in SCENARIO_ORDER]
+    n = len(scenarios)
+
+    # Collect num_robots in play to decide marker scheme.
+    all_nr = sorted({nr for _, _, nr in series})
+    multi_nr = len(all_nr) > 1
+    nr_markers = ["o", "s", "D", "^", "v", "P", "X", "*"]
+    nr_to_marker = {nr: nr_markers[i % len(nr_markers)] for i, nr in enumerate(all_nr)}
+
+    fig, axes = plt.subplots(1, n, figsize=(5.5 * n, 4.5), sharey=True)
+    if n == 1:
+        axes = [axes]
+    fig.set_facecolor("white")
+
+    all_schedulers_seen: set[str] = set()
+    for i, scenario in enumerate(scenarios):
+        ax = axes[i]
+        scen_schedulers = [
+            sch for (sc, sch, _) in series
+            if sc == scenario
+        ]
+        scen_schedulers = _ordered_schedulers(sorted(set(scen_schedulers)))
+        for sch in scen_schedulers:
+            all_schedulers_seen.add(sch)
+            for nr in all_nr:
+                pts = series.get((scenario, sch, nr))
+                if not pts:
+                    continue
+                pts_sorted = sorted(pts)
+                xs = [p[0] for p in pts_sorted]
+                ys = [p[1] * y_scale for p in pts_sorted]
+                marker = nr_to_marker[nr] if multi_nr else SCHEDULER_MARKERS.get(sch, "o")
+                label = (f"{_scheduler_display(sch)} (N={nr})"
+                         if multi_nr else _scheduler_display(sch))
+                ax.plot(
+                    xs, ys,
+                    marker=marker,
+                    color=SCHEDULER_COLORS.get(sch, "#444444"),
+                    linewidth=1.8, markersize=6,
+                    label=label,
+                )
+        title = f"{title_prefix}: {SCENARIO_DISPLAY.get(scenario, scenario)}"
+        ax.set_title(title, fontsize=14)
+        ax.set_xlabel("Max Batch Size", fontsize=12)
+        if i == 0:
+            ax.set_ylabel(ylabel, fontsize=12)
+        _strip_chrome(ax)
+        if i == n - 1:
+            ax.legend(loc="best", fontsize=9, framealpha=0.95)
+
+    fig.tight_layout()
     fig.savefig(out_path, dpi=130, facecolor="white")
     fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
     plt.close(fig)
@@ -363,8 +457,8 @@ def _plot_throughput_tradeoff(
             fast_x, fast_y = _series_for_metric(df, cols, scenario, sch, "thr_fast", nr_filter)
             slow_x, slow_y = _series_for_metric(df, cols, scenario, sch, "thr_slow", nr_filter)
             # Intersect num_robots that have both values.
-            by_x = {x: f for x, f in zip(fast_x, fast_y)}
-            by_x_slow = {x: s for x, s in zip(slow_x, slow_y)}
+            by_x = {x: f * 60.0 for x, f in zip(fast_x, fast_y)}
+            by_x_slow = {x: s * 60.0 for x, s in zip(slow_x, slow_y)}
             common = sorted(set(by_x) & set(by_x_slow))
             if not common:
                 continue
@@ -387,8 +481,8 @@ def _plot_throughput_tradeoff(
 
         ax.set_title(f"Throughput tradeoff: {SCENARIO_DISPLAY.get(scenario, scenario)}",
                      fontsize=14)
-        ax.set_xlabel("Fast-tier throughput (successes / sec)", fontsize=12)
-        ax.set_ylabel("Slow-tier throughput (successes / sec)", fontsize=12)
+        ax.set_xlabel("Fast-tier throughput (successes / min)", fontsize=12)
+        ax.set_ylabel("Slow-tier throughput (successes / min)", fontsize=12)
         _strip_chrome(ax)
         if i == n - 1:
             ax.legend(loc="best", fontsize=10, framealpha=0.95)
@@ -443,7 +537,32 @@ def main() -> None:
 
     by_mbs = _load_summary(summary_dir)
 
+    # Cross-mbs ablation plots: x = max_batch_size, y = metric. Emitted once
+    # (not per-mbs) if there are ≥2 batch-size values.
     n_written = 0
+    if len([m for m in by_mbs if mbs_filter is None or m in mbs_filter]) >= 2:
+        ablation_by_mbs = {m: df for m, df in by_mbs.items()
+                           if mbs_filter is None or m in mbs_filter}
+        _plot_metric_vs_batch_size(
+            plots_dir / "batch_size_vs_throughput.png",
+            ablation_by_mbs,
+            metric="thr_total",
+            title_prefix="System throughput",
+            ylabel="Cluster throughput (successes / min)",
+            y_scale=60.0,
+            nr_filter=nr_filter,
+        )
+        _plot_metric_vs_batch_size(
+            plots_dir / "batch_size_vs_starvation.png",
+            ablation_by_mbs,
+            metric="starv",
+            title_prefix="Average starvation",
+            ylabel="Average starvation rate (%)",
+            y_scale=100.0,
+            nr_filter=nr_filter,
+        )
+        n_written += 2
+
     for mbs, df in by_mbs.items():
         if mbs_filter is not None and mbs not in mbs_filter:
             continue
@@ -457,7 +576,8 @@ def main() -> None:
             df, cols, schedulers,
             metric="thr_total",
             title_prefix="System throughput",
-            ylabel="Cluster throughput (successes / sec)",
+            ylabel="Cluster throughput (successes / min)",
+            y_scale=60.0,
             nr_filter=nr_filter,
         )
         # Plot 2: avg starvation vs num_robots.
@@ -485,7 +605,8 @@ def main() -> None:
             df, cols, schedulers,
             metric="thr_fast",
             title_prefix="Fast-tier throughput",
-            ylabel="Fast robot throughput (successes / sec)",
+            ylabel="Fast robot throughput (successes / min)",
+            y_scale=60.0,
             nr_filter=nr_filter,
         )
         _plot_metric_vs_num_robots(
@@ -493,7 +614,8 @@ def main() -> None:
             df, cols, schedulers,
             metric="thr_slow",
             title_prefix="Slow-tier throughput",
-            ylabel="Slow robot throughput (successes / sec)",
+            ylabel="Slow robot throughput (successes / min)",
+            y_scale=60.0,
             nr_filter=nr_filter,
         )
         # Plots 6–7: per-tier starvation vs num_robots (mirrors per-tier throughput).
