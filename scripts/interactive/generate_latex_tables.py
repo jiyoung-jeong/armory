@@ -42,15 +42,15 @@ import pandas as pd
 # --- formatting / labels -------------------------------------------------------
 
 SCENARIO_DISPLAY = {
-    "hom": "all fast",
-    "1f9s": "1 fast",
-    "5f5s": "half fast",
+    "hom": "10 Fast",
+    "1f9s": "One Fast",
+    "5f5s": "Half Fast",
 }
 SCENARIO_ORDER = ["hom", "1f9s", "5f5s"]
 
 SCHEDULER_HEADERS = {
     "round-robin": "RR",
-    "max-batch": "MB",
+    "max-batch": "EDF",
 }
 LA_AHM_RE = re.compile(r"^lookahead-actions@ahm=(\d+(?:\.\d+)?)$")
 
@@ -216,7 +216,7 @@ def _build_table(
 
     col_groups = [len(scheds) for _, scheds in scenarios_used]
     total_data_cols = sum(col_groups)
-    colspec = f"Q[c,wd=1.0cm] *{{{total_data_cols}}}{{X[c]}}"
+    colspec = f"Q[c,wd=1.1cm] *{{{total_data_cols}}}{{X[c]}}"
 
     # cmidrule ranges.
     cmidrules = []
@@ -279,8 +279,8 @@ def _build_table(
         "  cells = {c},\n"
         "  row{1,2} = {font=\\bfseries},\n"
         "  column{1} = {font=\\bfseries},\n"
-        "  colsep = 3pt,\n"
-        "  rowsep = 3pt,\n"
+        "  colsep = 4pt,\n"
+        "  rowsep = 5pt,\n"
         "}\n"
         "\\toprule\n"
         f"{header_line}\n"

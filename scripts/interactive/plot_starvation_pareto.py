@@ -37,14 +37,15 @@ BASELINE_SCHEDULERS = ("max-batch", "greedy-deadline", "round-robin")
 SWEPT_SCHEDULER = "lookahead-actions"
 
 BASELINE_STYLE: dict[str, dict[str, str]] = {
-    "max-batch":       {"marker": "s", "color": "#1f77b4"},
-    "greedy-deadline": {"marker": "^", "color": "#2ca02c"},
-    "round-robin":     {"marker": "D", "color": "#d62728"},
+    "max-batch":       {"marker": "s", "color": "#F94144"},
+    "greedy-deadline": {"marker": "^", "color": "#F7B801"},
+    "round-robin":     {"marker": "D", "color": "#F9C74F"},
 }
 
-# Single-hue teal gradient mirroring the old alpha-sweep plot's conventions.
+# Single-hue blue gradient anchored on #37A3D2 — keeps clear contrast with
+# the EDF red and RR yellow baselines.
 SWEEP_CMAP = LinearSegmentedColormap.from_list(
-    "lookahead_ahm_teal", ["#a8e0dc", "#0c4f4f"]
+    "lookahead_ahm_blue", ["#A8D9EC", "#154A60"]
 )
 
 
@@ -296,6 +297,7 @@ def _save_one_plot(
         plt.tight_layout()
         out = plots_dir / f"{name_prefix}__num_robots={num_robots}.png"
         fig.savefig(out, dpi=150, bbox_inches="tight")
+        fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
         plt.close(fig)
         print(f"Wrote {out}")
 

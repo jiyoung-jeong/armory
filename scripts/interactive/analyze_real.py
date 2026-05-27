@@ -61,7 +61,7 @@ PREFERRED_SCHEDULER_ORDER = [
     "lookahead-actions@ahm=5",
 ]
 SCHEDULER_DISPLAY = {
-    "max-batch": "MB",
+    "max-batch": "EDF",
     "round-robin": "RR",
 }
 LA_AHM_RE = re.compile(r"^lookahead-actions@ahm=(\d+(?:\.\d+)?)$")
@@ -246,16 +246,16 @@ def _per_trial_total_throughput(samples: list[ThrSample]) -> float | None:
 
 # Paper-ready scheduler display labels.
 SCHED_PAPER_LABEL = {
-    "max-batch": "MB",
+    "max-batch": "EDF",
     "round-robin": "RR",
 }
 LA_AHM_PAPER_RE = re.compile(r"^lookahead-actions@ahm=(\d+(?:\.\d+)?)$")
 
 # Paper-ready scenario display labels.
 SCENARIO_PAPER_LABEL = {
-    "hom": "10f",
-    "1f9s": "1f9s",
-    "5f5s": "5f5s",
+    "hom": "10 Fast",
+    "1f9s": "One Fast",
+    "5f5s": "Half Fast",
 }
 
 
@@ -294,10 +294,16 @@ def _annotate_inside(ax, x: float, y: float, val: float | None, fmt: str, fontsi
 
 
 def _strip_chrome(ax) -> None:
-    """Paper-ready: no spines, no grid, white background, bigger ticks."""
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.grid(False)
+    """Paper-ready: keep bottom/left axes + horizontal grid, drop top/right
+    spines, white background, bigger ticks."""
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(True)
+    ax.spines["bottom"].set_linewidth(1.2)
+    ax.spines["left"].set_visible(True)
+    ax.spines["left"].set_linewidth(1.2)
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", linestyle="-", color="#dddddd", linewidth=0.8, alpha=1.0)
     ax.set_facecolor("white")
     ax.tick_params(axis="both", which="major", length=8, width=1.5, labelsize=14)
 
@@ -345,6 +351,7 @@ def _plot_single_bar(
         ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=130, facecolor="white")
+    fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -402,6 +409,99 @@ def _plot_grouped_bars(
         ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=130, facecolor="white")
+    fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _draw_throughput_panel(
+    ax,
+    schedulers: list[str],
+    series: list[tuple[list[float | None], str]],
+    title: str,
+    show_ylabel: bool,
+    ylabel: str,
+) -> None:
+    """Draw a paper-style throughput panel on an existing Axes.
+
+    series = [(values_per_scheduler, color), ...]   1 series for hom, 2 for tiered.
+    Bars with no data are skipped (the scheduler column is dropped).
+    """
+    keep_idx = [
+        i for i in range(len(schedulers))
+        if any(s[0][i] is not None for s in series)
+    ]
+    schedulers_k = [schedulers[i] for i in keep_idx]
+    series_k = [([vs[i] for i in keep_idx], col) for vs, col in series]
+    display_labels = [_scheduler_paper_label(s) for s in schedulers_k]
+
+    n_series = len(series_k)
+    width = 0.8 / n_series
+    xs = np.arange(len(schedulers_k))
+    for s_idx, (vals, color) in enumerate(series_k):
+        offset = (s_idx - (n_series - 1) / 2) * width
+        plot_vals = [0.0 if v is None else v for v in vals]
+        bars = ax.bar(
+            xs + offset, plot_vals, width=width,
+            color=color, edgecolor="none", linewidth=0,
+        )
+        for x, b, raw in zip(xs + offset, bars, vals):
+            _annotate_inside(ax, x, b.get_height(), raw, fmt=".2f", fontsize=12)
+
+    ax.set_xticks(xs)
+    ax.set_xticklabels(display_labels, rotation=0, ha="center", fontsize=14)
+    if show_ylabel:
+        ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_title(title, fontsize=16)
+    _strip_chrome(ax)
+
+
+def _plot_throughput_combined(
+    out_path: pathlib.Path,
+    scenarios_in_order: list[str],
+    schedulers: list[str],
+    all_thr: list[ThrSample],
+    ylabel: str = "Throughput (legos / minute)",
+) -> None:
+    """One figure, 3 panels side-by-side (one per scenario). Shared y-axis."""
+    n = len(scenarios_in_order)
+    if n == 0:
+        return
+    fig, axes = plt.subplots(
+        1, n, figsize=(5.5 * n, 4.8), sharey=True,
+    )
+    if n == 1:
+        axes = [axes]
+    fig.set_facecolor("white")
+
+    for i, scenario in enumerate(scenarios_in_order):
+        ax = axes[i]
+        thr = [s for s in all_thr if s.scenario == scenario]
+        scen_label = _scenario_paper_label(scenario)
+        if scenario == HOM_SCENARIO:
+            # Render the homogeneous panel in the *slow* visual slot (red,
+            # right of the tick) — geometry matches the tiered panels via a
+            # phantom fast series of all-None.
+            hom_vals = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", True) for sch in schedulers]
+            phantom_fast: list[float | None] = [None] * len(schedulers)
+            _draw_throughput_panel(
+                ax, schedulers,
+                series=[(phantom_fast, "#37A3D2"), (hom_vals, "#F94144")],
+                title=f"{scen_label}",
+                show_ylabel=(i == 0), ylabel=ylabel,
+            )
+        else:
+            fast = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", True) for sch in schedulers]
+            slow = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", False) for sch in schedulers]
+            _draw_throughput_panel(
+                ax, schedulers,
+                series=[(fast, "#37A3D2"), (slow, "#F94144")],
+                title=f"{scen_label}",
+                show_ylabel=(i == 0), ylabel=ylabel,
+            )
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=130, facecolor="white")
+    fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -559,7 +659,7 @@ def main() -> None:
             _plot_single_bar(
                 plots_dir / f"throughput__{scenario}__real.png",
                 schedulers, fast_vals,
-                title=f"{scen_label} Throughput",
+                title=f"{scen_label}",
                 ylabel="Throughput (legos / minute)",
                 color="#37A3D2",
                 paper_style=True,
@@ -571,7 +671,7 @@ def main() -> None:
                 plots_dir / f"throughput__{scenario}__real.png",
                 schedulers,
                 series=[("fast tier", fast, "#37A3D2"), ("slow tier", slow, "#F94144")],
-                title=f"{scen_label} Throughput",
+                title=f"{scen_label}",
                 ylabel="Throughput (legos / minute)",
                 paper_style=True,
             )
@@ -599,6 +699,18 @@ def main() -> None:
                 title=f"{scenario} starvation (real)",
                 ylabel=f"Starvation rate ({starv_unit})",
             )
+
+    # Combined side-by-side throughput figure (paper-ready).
+    scenarios_with_data = [
+        sc for sc in SCENARIOS
+        if any(s.scenario == sc for s in all_thr)
+    ]
+    _plot_throughput_combined(
+        plots_dir / "throughput__combined__real.png",
+        scenarios_with_data,
+        schedulers,
+        all_thr,
+    )
 
     print(f"Wrote plots under {plots_dir}")
 

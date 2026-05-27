@@ -116,6 +116,7 @@ def _plot_single_bar(
     ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
+    fig.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
@@ -158,6 +159,7 @@ def _plot_grouped_bars(
     ax.grid(axis="y", linestyle=":", alpha=0.5)
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
+    fig.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
     plt.close(fig)
 
 
