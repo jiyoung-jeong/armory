@@ -39,6 +39,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 # -------- constants & helpers -------------------------------------------------
@@ -334,6 +335,145 @@ def _plot_tier_breakdown(
 
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     fig.savefig(out_path, dpi=130, facecolor="white")
+    fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_tier_breakdown_combined(
+    out_path: pathlib.Path,
+    df: pd.DataFrame,
+    cols: dict[tuple[str, str], dict[str, str]],
+    schedulers: list[str],
+    scenarios: list[str],
+    nr_filter: set[int] | None,
+    share_y: bool = False,
+) -> None:
+    """2 rows × (2 × N) cols tier breakdown for multiple tiered scenarios in
+    one figure. Rows = throughput / starvation; within each scenario the two
+    columns are fast / slow tier. Single shared legend on top. sharex=True
+    ties x-axes.
+
+    share_y: when True, every panel in a row is forced to the same y-range
+    (the union across that row) so panels are directly comparable. Tick labels
+    stay on all panels. Default False leaves each panel auto-scaled."""
+    scenarios = [sc for sc in scenarios if any(sc == k[0] for k in cols)]
+    if not scenarios:
+        return
+    n_scen = len(scenarios)
+    n_cols = 2 * n_scen
+    fig, axes = plt.subplots(
+        2, n_cols, figsize=(4.2 * n_cols, 8.5),
+        sharex=True,
+    )
+    if n_cols == 1:
+        axes = axes.reshape(2, 1)
+    fig.set_facecolor("white")
+
+    panel_specs = [
+        # (row, tier_col_offset, metric, y_scale, tier_label, row_ylabel)
+        (0, 0, "thr_fast",   60.0,  "Fast tier", "Throughput (successes / min)"),
+        (0, 1, "thr_slow",   60.0,  "Slow tier", "Throughput (successes / min)"),
+        (1, 0, "starv_fast", 100.0, "Fast tier", "Starvation rate (%)"),
+        (1, 1, "starv_slow", 100.0, "Slow tier", "Starvation rate (%)"),
+    ]
+    for s_idx, scenario in enumerate(scenarios):
+        scen_label = SCENARIO_DISPLAY.get(scenario, scenario)
+        for row, tier_off, metric, y_scale, tier_label, ylabel in panel_specs:
+            col = s_idx * 2 + tier_off
+            ax = axes[row, col]
+            _draw_series_on_axis(
+                ax, df, cols, schedulers, scenario, metric,
+                y_scale=y_scale, nr_filter=nr_filter,
+                show_legend=False,
+            )
+            if row == 0:
+                ax.set_title(f"{scen_label} — {tier_label}", fontsize=13)
+            if col == 0:
+                ax.set_ylabel(ylabel, fontsize=12)
+            if row == 1:
+                ax.set_xlabel("Number of Robots", fontsize=12)
+
+    def _fmt_outlier(v: float) -> str:
+        return f"{v:.1f}" if abs(v) < 10 else f"{v:.0f}"
+
+    if share_y:
+        for row in range(2):
+            row_axes = [axes[row, c] for c in range(n_cols)]
+            # Gather all plotted y-values across the row's data series.
+            all_y: list[float] = []
+            for ax in row_axes:
+                for line in ax.get_lines():
+                    all_y.extend(float(v) for v in line.get_ydata()
+                                 if np.isfinite(v))
+            if not all_y:
+                continue
+            arr = np.asarray(all_y, dtype=float)
+            data_min, data_max = float(arr.min()), float(arr.max())
+
+            # Robust clip (Q1−1.5·IQR, Q3+1.5·IQR) so a single extreme point
+            # doesn't squash every other panel in the shared row. Points beyond
+            # the fence are annotated off-chart instead of stretching the axis.
+            q1, q3 = np.percentile(arr, [25, 75])
+            iqr = q3 - q1
+            lo_fence, hi_fence = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+            within = arr[(arr >= lo_fence) & (arr <= hi_fence)]
+            lo = float(within.min()) if within.size else data_min
+            hi = float(within.max()) if within.size else data_max
+            span = (hi - lo) or 1.0
+            low_clipped = lo > data_min
+            high_clipped = hi < data_max
+            ymin = (lo - 0.10 * span) if low_clipped else min(0.0, data_min)
+            ymax = (hi + 0.12 * span) if high_clipped else data_max + 0.05 * span
+
+            for c, ax in enumerate(row_axes):
+                ax.set_ylim(ymin, ymax)
+                if c > 0:  # aligned scale → drop redundant tick labels
+                    ax.tick_params(axis="y", labelleft=False)
+                for line in ax.get_lines():
+                    color = line.get_color()
+                    for xv, yv in zip(line.get_xdata(), line.get_ydata()):
+                        if not np.isfinite(yv):
+                            continue
+                        if high_clipped and yv > ymax:
+                            ax.plot([xv], [ymax], marker="^", color=color,
+                                    markersize=8, clip_on=False, zorder=6)
+                            ax.annotate(
+                                _fmt_outlier(float(yv)), xy=(xv, ymax),
+                                xytext=(0, 6), textcoords="offset points",
+                                ha="center", va="bottom", fontsize=8,
+                                color=color, fontweight="bold",
+                                annotation_clip=False,
+                            )
+                        elif low_clipped and yv < ymin:
+                            ax.plot([xv], [ymin], marker="v", color=color,
+                                    markersize=8, clip_on=False, zorder=6)
+                            ax.annotate(
+                                _fmt_outlier(float(yv)), xy=(xv, ymin),
+                                xytext=(0, -6), textcoords="offset points",
+                                ha="center", va="top", fontsize=8,
+                                color=color, fontweight="bold",
+                                annotation_clip=False,
+                            )
+
+    # Gather legend handles from any non-empty axis.
+    handles, labels = [], []
+    for ax in axes.flat:
+        h, l = ax.get_legend_handles_labels()
+        if h:
+            seen = set(labels)
+            for hh, ll in zip(h, l):
+                if ll not in seen:
+                    handles.append(hh)
+                    labels.append(ll)
+                    seen.add(ll)
+    if handles:
+        fig.legend(
+            handles, labels,
+            loc="upper center", bbox_to_anchor=(0.5, 1.0),
+            ncol=len(labels), fontsize=12, framealpha=0.95, frameon=False,
+        )
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(out_path, dpi=130, facecolor="white", bbox_inches="tight")
     fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
     plt.close(fig)
 
@@ -647,14 +787,26 @@ def main() -> None:
 
         # Plots 9+: per-scenario tier breakdown — 2×2 grid of (throughput/starv) ×
         # (fast/slow). Only emitted for scenarios that have both tiers (1f9s, 5f5s).
-        for scenario in TIERED_SCENARIOS:
-            if not any(scenario == k[0] for k in cols):
-                continue
+        tiered_present = [sc for sc in TIERED_SCENARIOS if any(sc == k[0] for k in cols)]
+        for scenario in tiered_present:
             _plot_tier_breakdown(
                 plots_dir / f"tier_breakdown__{scenario}__mbs{mbs}.png",
                 df, cols, schedulers, scenario, nr_filter=nr_filter,
             )
             n_written += 1
+        # Plot N+1: combined tier breakdown for all tiered scenarios side by
+        # side. Two variants: auto-scaled per panel, and y-aligned per row.
+        if len(tiered_present) >= 2:
+            _plot_tier_breakdown_combined(
+                plots_dir / f"tier_breakdown_combined__mbs{mbs}.png",
+                df, cols, schedulers, tiered_present, nr_filter=nr_filter,
+            )
+            _plot_tier_breakdown_combined(
+                plots_dir / f"tier_breakdown_combined_aligned__mbs{mbs}.png",
+                df, cols, schedulers, tiered_present, nr_filter=nr_filter,
+                share_y=True,
+            )
+            n_written += 2
 
     print(f"Wrote {n_written} PNGs to {plots_dir}")
 

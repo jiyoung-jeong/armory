@@ -19,6 +19,7 @@ class EnvMode(str, enum.Enum):
     ALOHA_SIM = "aloha_sim"
     DROID = "droid"
     LIBERO = "libero"
+    LIBERO_20 = "libero_20"
     LIBERO_PI0 = "libero_pi0"
     LIBERO_PYTORCH = "libero_pytorch"
     LIBERO_REALTIME = "libero_realtime"
@@ -52,6 +53,7 @@ def _make_example_fn(env_mode: EnvMode | None):
         return _make_real_example
     if env_mode in (
         EnvMode.LIBERO,
+        EnvMode.LIBERO_20,
         EnvMode.LIBERO_PI0,
         EnvMode.LIBERO_PYTORCH,
         EnvMode.LIBERO_REALTIME,

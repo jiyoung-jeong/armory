@@ -242,6 +242,20 @@ def _per_trial_total_throughput(samples: list[ThrSample]) -> float | None:
     return _mean(per_trial_totals)
 
 
+def _per_trial_tier_throughput(samples: list[ThrSample], want_fast: bool) -> float | None:
+    """Sum legos/min across robots of one tier within each trial, then average
+    over trials. Because all trials in a scenario share the same tier makeup,
+    fast_total + slow_total equals _per_trial_total_throughput — so stacking the
+    two tiers gives a bar whose height is the cluster system throughput."""
+    by_trial: dict[int, list[float]] = defaultdict(list)
+    for s in samples:
+        if s.is_fast != want_fast:
+            continue
+        by_trial[s.trial_idx].append(s.legos_per_minute)
+    per_trial = [sum(vals) for vals in by_trial.values() if vals]
+    return _mean(per_trial)
+
+
 # -------- plots --------------------------------------------------------------
 
 # Paper-ready scheduler display labels.
@@ -253,7 +267,7 @@ LA_AHM_PAPER_RE = re.compile(r"^lookahead-actions@ahm=(\d+(?:\.\d+)?)$")
 
 # Paper-ready scenario display labels.
 SCENARIO_PAPER_LABEL = {
-    "hom": "10 Fast",
+    "hom": "All Fast",
     "1f9s": "One Fast",
     "5f5s": "Half Fast",
 }
@@ -420,11 +434,16 @@ def _draw_throughput_panel(
     title: str,
     show_ylabel: bool,
     ylabel: str,
+    bar_width: float | None = None,
 ) -> None:
     """Draw a paper-style throughput panel on an existing Axes.
 
     series = [(values_per_scheduler, color), ...]   1 series for hom, 2 for tiered.
     Bars with no data are skipped (the scheduler column is dropped).
+
+    bar_width: override the computed bar width (default 0.8/n_series). Used to
+    keep single-series panels visually consistent with tiered panels (pass 0.4
+    so a centered hom bar matches the half-tier bar thickness).
     """
     keep_idx = [
         i for i in range(len(schedulers))
@@ -435,7 +454,7 @@ def _draw_throughput_panel(
     display_labels = [_scheduler_paper_label(s) for s in schedulers_k]
 
     n_series = len(series_k)
-    width = 0.8 / n_series
+    width = bar_width if bar_width is not None else (0.8 / n_series)
     xs = np.arange(len(schedulers_k))
     for s_idx, (vals, color) in enumerate(series_k):
         offset = (s_idx - (n_series - 1) / 2) * width
@@ -455,14 +474,23 @@ def _draw_throughput_panel(
     _strip_chrome(ax)
 
 
+FAST_TIER_COLOR = "#37A3D2"  # blue
+SLOW_TIER_COLOR = "#F94144"  # red
+
+
 def _plot_throughput_combined(
     out_path: pathlib.Path,
     scenarios_in_order: list[str],
     schedulers: list[str],
     all_thr: list[ThrSample],
-    ylabel: str = "Throughput (legos / minute)",
+    ylabel: str = "System throughput (legos / minute)",
 ) -> None:
-    """One figure, 3 panels side-by-side (one per scenario). Shared y-axis."""
+    """One figure, N panels side-by-side (one per scenario). Each scheduler is a
+    single stacked bar: fast tier (blue) on the bottom, slow tier (red) on top,
+    so the total bar height equals the cluster system throughput. Total is
+    annotated above each bar. One shared red/blue tier legend on top."""
+    from matplotlib.patches import Patch
+
     n = len(scenarios_in_order)
     if n == 0:
         return
@@ -473,33 +501,84 @@ def _plot_throughput_combined(
         axes = [axes]
     fig.set_facecolor("white")
 
+    width = 0.55
+    panel_data: list[tuple] = []  # (ax, xs, fast_vals, slow_vals)
     for i, scenario in enumerate(scenarios_in_order):
         ax = axes[i]
         thr = [s for s in all_thr if s.scenario == scenario]
         scen_label = _scenario_paper_label(scenario)
-        if scenario == HOM_SCENARIO:
-            # Render the homogeneous panel in the *slow* visual slot (red,
-            # right of the tick) — geometry matches the tiered panels via a
-            # phantom fast series of all-None.
-            hom_vals = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", True) for sch in schedulers]
-            phantom_fast: list[float | None] = [None] * len(schedulers)
-            _draw_throughput_panel(
-                ax, schedulers,
-                series=[(phantom_fast, "#37A3D2"), (hom_vals, "#F94144")],
-                title=f"{scen_label}",
-                show_ylabel=(i == 0), ylabel=ylabel,
-            )
-        else:
-            fast = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", True) for sch in schedulers]
-            slow = [_agg([s for s in thr if s.scheduler == sch], "legos_per_minute", False) for sch in schedulers]
-            _draw_throughput_panel(
-                ax, schedulers,
-                series=[(fast, "#37A3D2"), (slow, "#F94144")],
-                title=f"{scen_label}",
-                show_ylabel=(i == 0), ylabel=ylabel,
-            )
 
-    fig.tight_layout()
+        keep: list[tuple[str, float, float]] = []
+        for sch in schedulers:
+            sch_samples = [s for s in thr if s.scheduler == sch]
+            if not sch_samples:
+                continue
+            fast_total = _per_trial_tier_throughput(sch_samples, True) or 0.0
+            slow_total = _per_trial_tier_throughput(sch_samples, False) or 0.0
+            keep.append((sch, fast_total, slow_total))
+        if not keep:
+            continue
+
+        labels = [_scheduler_paper_label(s) for s, _, _ in keep]
+        fast_vals = [f for _, f, _ in keep]
+        slow_vals = [s for _, _, s in keep]
+        xs = np.arange(len(keep))
+
+        ax.bar(xs, slow_vals, width=width, color=SLOW_TIER_COLOR,
+               edgecolor="none", label="Slow tier")
+        ax.bar(xs, fast_vals, width=width, bottom=slow_vals, color=FAST_TIER_COLOR,
+               edgecolor="none", label="Fast tier")
+
+        # Annotate the cluster system throughput (stack total) above each bar.
+        for x, f, s in zip(xs, fast_vals, slow_vals):
+            total = f + s
+            ax.text(x, total, f"{total:.0f}", ha="center", va="bottom",
+                    fontsize=13, fontweight="bold")
+
+        ax.set_xticks(xs)
+        ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=14)
+        ax.set_xlim(-0.6, len(keep) - 0.4)
+        if i == 0:
+            ax.set_ylabel(ylabel, fontsize=14)
+        ax.set_title(scen_label, fontsize=16)
+        _strip_chrome(ax)
+        panel_data.append((ax, xs, fast_vals, slow_vals))
+
+    # Per-tier breakdown labels. Done after all bars are drawn so the shared
+    # y-range is final. Tall segments get a white centered label; segments too
+    # thin to hold text get a small label just to the right of the bar.
+    if panel_data:
+        _, ymax = axes[0].get_ylim()
+        min_h = 0.07 * ymax
+        for ax, xs, fast_vals, slow_vals in panel_data:
+            for x, f, s in zip(xs, fast_vals, slow_vals):
+                # Skip the in-bar breakdown when only one tier exists (the
+                # stack total above the bar already shows it).
+                if s <= 0 or f <= 0:
+                    continue
+                for bottom, height, color_seg in (
+                    (0.0, s, SLOW_TIER_COLOR),
+                    (s, f, FAST_TIER_COLOR),
+                ):
+                    cy = bottom + height / 2
+                    if height >= min_h:
+                        ax.text(x, cy, f"{height:.0f}", ha="center", va="center",
+                                fontsize=10, fontweight="bold", color="white")
+                    else:
+                        ax.text(x + width / 2 + 0.05, cy, f"{height:.0f}",
+                                ha="left", va="center", fontsize=9,
+                                fontweight="bold", color=color_seg)
+
+    legend_handles = [
+        Patch(facecolor=FAST_TIER_COLOR, label="Fast tier"),
+        Patch(facecolor=SLOW_TIER_COLOR, label="Slow tier"),
+    ]
+    fig.legend(
+        handles=legend_handles, loc="upper center", ncol=2,
+        frameon=False, fontsize=13, bbox_to_anchor=(0.5, 1.02),
+    )
+
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(out_path, dpi=130, facecolor="white")
     fig.savefig(out_path.with_suffix(".pdf"), facecolor="white", bbox_inches="tight")
     plt.close(fig)

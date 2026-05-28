@@ -29,6 +29,10 @@ OPENPI_CHECKPOINT: dict[EnvMode, OpenPiCheckpointEntry] = {
         "config": "pi05_libero",
         "dir": "gs://openpi-assets/checkpoints/pi05_libero",
     },
+    EnvMode.LIBERO_20: {
+        "config": "pi05_libero_act_horizon_20",
+        "dir": "/coc/flash7/rbansal66/vvla/openpi/checkpoints/pi05_libero_act_horizon_20/finetune_libero_act_horizon_20/7000",
+    },
     EnvMode.LIBERO_PI0: {
         "config": "pi0_libero",
         "dir": "gs://openpi-assets/checkpoints/pi0_libero",

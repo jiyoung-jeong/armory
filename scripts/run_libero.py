@@ -141,7 +141,7 @@ class Args(JsonArgs):
     # Network emulation parameters
     #################################################################################################################
     experiment_config: str = ""
-    toxiproxy_server_bin: str | None = "../toxiproxy-server-linux-amd64"
+    toxiproxy_server_bin: str | None = "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
 
     #################################################################################################################
     # Utils

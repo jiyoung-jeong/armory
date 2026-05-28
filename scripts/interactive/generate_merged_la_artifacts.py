@@ -41,6 +41,7 @@ from plot_summary_lines import (
     _parse_columns as _parse_plot_cols,
     _plot_overview_stack,
     _plot_tier_breakdown,
+    _plot_tier_breakdown_combined,
 )
 
 LA_COL_RE = re.compile(r"__lookahead-actions@ahm=")
@@ -140,14 +141,19 @@ def main() -> None:
     )
 
     tier_paths: list[pathlib.Path] = []
-    for scenario in TIERED_SCENARIOS:
-        if not any(scenario == k[0] for k in plot_cols):
-            continue
+    tiered_present = [sc for sc in TIERED_SCENARIOS if any(sc == k[0] for k in plot_cols)]
+    for scenario in tiered_present:
         path = plots_dir / f"tier_breakdown__{scenario}__mbs{args.base_mbs}.png"
         _plot_tier_breakdown(
             path, merged, plot_cols, schedulers, scenario, nr_filter=nr_filter,
         )
         tier_paths.append(path)
+    if len(tiered_present) >= 2:
+        combined_path = plots_dir / f"tier_breakdown_combined__mbs{args.base_mbs}.png"
+        _plot_tier_breakdown_combined(
+            combined_path, merged, plot_cols, schedulers, tiered_present, nr_filter=nr_filter,
+        )
+        tier_paths.append(combined_path)
 
     print(f"Lookahead source : {la_csv}")
     print(f"Base source      : {base_csv}")
