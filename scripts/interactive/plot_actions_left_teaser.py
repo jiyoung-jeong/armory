@@ -140,8 +140,9 @@ def main() -> None:
     # Two gradients sharing the same scale: blue for slow robots, amber for
     # the fast robot (identified per-run via runtime_metadata.json). 0
     # (starvation) renders as white in both.
-    cmap_slow = _build_listed_cmap("#37A3D2", "#D9EEF7", "#0E3B4F", vmax)
-    cmap_fast = _build_listed_cmap("#F94144", "#FBD5D5", "#5A0608", vmax)
+    # Match the throughput plot: slow tier gray (#777B7F), fast tier blue (#37A3D2).
+    cmap_slow = _build_listed_cmap("#777B7F", "#D8DADC", "#3A3D40", vmax)
+    cmap_fast = _build_listed_cmap("#37A3D2", "#D9EEF7", "#0E3B4F", vmax)
 
     fast_rows_a = _identify_fast_rows(args.run_a, robots_a)
     fast_rows_b = _identify_fast_rows(args.run_b, robots_b)
@@ -207,7 +208,7 @@ def main() -> None:
         cbar_slow = fig.colorbar(im_slow, cax=cax_slow)
         cbar_fast = fig.colorbar(im_fast, cax=cax_fast)
         _minimal_cbar(cbar_slow, show_ticklabels=True)
-        _minimal_cbar(cbar_fast, show_ticklabels=False)
+        _minimal_cbar(cbar_fast, show_ticklabels=True)
     else:
         cbar_slow = fig.colorbar(im_slow, ax=axes, fraction=0.018, pad=0.02)
         _minimal_cbar(cbar_slow, show_ticklabels=True)

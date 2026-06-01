@@ -70,11 +70,11 @@ TIERED_SCENARIOS = ["1f9s", "5f5s"]
 # three distinct schedulers). Blue family is anchored on #37A3D2; baseline
 # categorical colors are red and yellow for visual contrast.
 SCHEDULER_COLORS = {
-    "max-batch":   "#F94144",  # red
-    "round-robin": "#F9C74F",  # yellow
-    "lookahead-actions@ahm=1": "#A8D9EC",  # light blue
-    "lookahead-actions@ahm=3": "#37A3D2",  # mid blue
-    "lookahead-actions@ahm=5": "#154A60",  # dark blue
+    "max-batch":   "#8E6CA8",  # muted purple (no red/yellow)
+    "round-robin": "#5FA86F",  # muted green
+    "lookahead-actions@ahm=1": "#6FB0D6",  # blue family, tighter spread
+    "lookahead-actions@ahm=3": "#3C86B8",
+    "lookahead-actions@ahm=5": "#1E5C84",
 }
 SCHEDULER_MARKERS = {
     "max-batch":              "s",
@@ -100,7 +100,7 @@ def _scheduler_display(name: str) -> str:
         w = m.group(1)
         if w.endswith(".0"):
             w = w.split(".")[0]
-        return f"LA@{w}"
+        return "LA" if w == "1" else f"LA@{w}"
     return name
 
 

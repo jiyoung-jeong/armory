@@ -242,6 +242,15 @@ def _per_trial_total_throughput(samples: list[ThrSample]) -> float | None:
     return _mean(per_trial_totals)
 
 
+def _per_trial_total_values(samples: list[ThrSample]) -> list[float]:
+    """Per-trial cluster totals (sum of all robots' legos/min within each
+    trial). Used for both the mean system throughput and its spread."""
+    by_trial: dict[int, list[float]] = defaultdict(list)
+    for s in samples:
+        by_trial[s.trial_idx].append(s.legos_per_minute)
+    return [sum(vals) for vals in by_trial.values() if vals]
+
+
 def _per_trial_tier_throughput(samples: list[ThrSample], want_fast: bool) -> float | None:
     """Sum legos/min across robots of one tier within each trial, then average
     over trials. Because all trials in a scenario share the same tier makeup,
@@ -281,7 +290,7 @@ def _scheduler_paper_label(name: str) -> str:
         w = m.group(1)
         if w.endswith(".0"):
             w = w.split(".")[0]
-        return f"LA@{w}"
+        return "LA" if w == "1" else f"LA@{w}"
     return name
 
 
@@ -475,7 +484,7 @@ def _draw_throughput_panel(
 
 
 FAST_TIER_COLOR = "#37A3D2"  # blue
-SLOW_TIER_COLOR = "#F94144"  # red
+SLOW_TIER_COLOR = "#777B7F"  # gray (paired with blue, no red; dark enough for white labels)
 
 
 def _plot_throughput_combined(
@@ -483,7 +492,7 @@ def _plot_throughput_combined(
     scenarios_in_order: list[str],
     schedulers: list[str],
     all_thr: list[ThrSample],
-    ylabel: str = "System throughput (legos / minute)",
+    ylabel: str = "System throughput (successes / minute)",
 ) -> None:
     """One figure, N panels side-by-side (one per scenario). Each scheduler is a
     single stacked bar: fast tier (blue) on the bottom, slow tier (red) on top,
@@ -502,26 +511,31 @@ def _plot_throughput_combined(
     fig.set_facecolor("white")
 
     width = 0.55
-    panel_data: list[tuple] = []  # (ax, xs, fast_vals, slow_vals)
+    panel_data: list[tuple] = []  # (ax, xs, fast_vals, slow_vals, stds)
+    top_reach = 0.0  # tallest (total + error bar) across panels, for headroom
     for i, scenario in enumerate(scenarios_in_order):
         ax = axes[i]
         thr = [s for s in all_thr if s.scenario == scenario]
         scen_label = _scenario_paper_label(scenario)
 
-        keep: list[tuple[str, float, float]] = []
+        keep: list[tuple[str, float, float, float]] = []
         for sch in schedulers:
             sch_samples = [s for s in thr if s.scheduler == sch]
             if not sch_samples:
                 continue
             fast_total = _per_trial_tier_throughput(sch_samples, True) or 0.0
             slow_total = _per_trial_tier_throughput(sch_samples, False) or 0.0
-            keep.append((sch, fast_total, slow_total))
+            # System-throughput std across trials (per-trial cluster totals).
+            per_trial = list(_per_trial_total_values(sch_samples))
+            total_std = float(np.std(per_trial, ddof=1)) if len(per_trial) > 1 else 0.0
+            keep.append((sch, fast_total, slow_total, total_std))
         if not keep:
             continue
 
-        labels = [_scheduler_paper_label(s) for s, _, _ in keep]
-        fast_vals = [f for _, f, _ in keep]
-        slow_vals = [s for _, _, s in keep]
+        labels = [_scheduler_paper_label(s) for s, _, _, _ in keep]
+        fast_vals = [f for _, f, _, _ in keep]
+        slow_vals = [s for _, _, s, _ in keep]
+        stds = [d for _, _, _, d in keep]
         xs = np.arange(len(keep))
 
         ax.bar(xs, slow_vals, width=width, color=SLOW_TIER_COLOR,
@@ -529,11 +543,16 @@ def _plot_throughput_combined(
         ax.bar(xs, fast_vals, width=width, bottom=slow_vals, color=FAST_TIER_COLOR,
                edgecolor="none", label="Fast tier")
 
-        # Annotate the cluster system throughput (stack total) above each bar.
-        for x, f, s in zip(xs, fast_vals, slow_vals):
-            total = f + s
-            ax.text(x, total, f"{total:.0f}", ha="center", va="bottom",
+        # Error bars on the stack total (cluster system-throughput spread).
+        totals = [f + s for f, s in zip(fast_vals, slow_vals)]
+        ax.errorbar(xs, totals, yerr=stds, fmt="none", ecolor="#333333",
+                    elinewidth=1.3, capsize=4, capthick=1.3, zorder=5)
+
+        # Annotate the system throughput above each error bar.
+        for x, total, d in zip(xs, totals, stds):
+            ax.text(x, total + d, f"{total:.0f}", ha="center", va="bottom",
                     fontsize=13, fontweight="bold")
+            top_reach = max(top_reach, total + d)
 
         ax.set_xticks(xs)
         ax.set_xticklabels(labels, rotation=0, ha="center", fontsize=14)
@@ -542,7 +561,12 @@ def _plot_throughput_combined(
             ax.set_ylabel(ylabel, fontsize=14)
         ax.set_title(scen_label, fontsize=16)
         _strip_chrome(ax)
-        panel_data.append((ax, xs, fast_vals, slow_vals))
+        panel_data.append((ax, xs, fast_vals, slow_vals, stds))
+
+    # Headroom so error-bar caps + value labels aren't clipped (sharey: setting
+    # one axis propagates to all).
+    if top_reach > 0 and len(axes):
+        axes[0].set_ylim(0, top_reach * 1.12)
 
     # Per-tier breakdown labels. Done after all bars are drawn so the shared
     # y-range is final. Tall segments get a white centered label; segments too
@@ -550,7 +574,7 @@ def _plot_throughput_combined(
     if panel_data:
         _, ymax = axes[0].get_ylim()
         min_h = 0.07 * ymax
-        for ax, xs, fast_vals, slow_vals in panel_data:
+        for ax, xs, fast_vals, slow_vals, _stds in panel_data:
             for x, f, s in zip(xs, fast_vals, slow_vals):
                 # Skip the in-bar breakdown when only one tier exists (the
                 # stack total above the bar already shows it).
@@ -562,9 +586,14 @@ def _plot_throughput_combined(
                 ):
                     cy = bottom + height / 2
                     if height >= min_h:
-                        ax.text(x, cy, f"{height:.0f}", ha="center", va="center",
-                                fontsize=10, fontweight="bold", color="white")
+                        # Shift left of the bar centerline so the centered
+                        # error bar doesn't cross the digits.
+                        ax.text(x - 0.16, cy, f"{height:.0f}", ha="center",
+                                va="center", fontsize=10, fontweight="bold",
+                                color="white")
                     else:
+                        # Thin segment → label to the right of the bar (also
+                        # clear of the centered error bar).
                         ax.text(x + width / 2 + 0.05, cy, f"{height:.0f}",
                                 ha="left", va="center", fontsize=9,
                                 fontweight="bold", color=color_seg)
