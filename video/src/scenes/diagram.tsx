@@ -58,7 +58,9 @@ const SECTION_LABEL_FONT_SIZE = 104;
 const CAPTION_Y = -760;
 const CAPTION_W = 3150;
 const CAPTION_FONT_SIZE = 74;
-const CAPTION_SLOT_DUR = 3;
+const CAPTION_LEAD_IN_DUR = 3;
+const CAPTION_SLOT_DUR = 5;
+const CAPTION_TAIL_DUR = 5;
 
 // Pixels per simulated second on the timeline.
 const PPS = 260;
@@ -123,18 +125,19 @@ function makeSchedule(membersByBatch: number[][]): Batch[] {
 }
 
 const BATCHES = makeSchedule(BATCH_MEMBERS);
-const T_TOTAL = Math.max(...BATCHES.map((b) => b.end)) + 0.8;
 const CAPTIONS = [
   'Robots continuously consume actions and send observations to the server.',
   'Some robots have shorter execution horizons, requiring more frequent inferences.',
   'Larger batches have higher throughput, but also higher latency.',
   'Effective serving requires scheduling which robots to serve at which time.',
 ] as const;
+const T_RENDER =
+  CAPTION_LEAD_IN_DUR + CAPTIONS.length * CAPTION_SLOT_DUR + CAPTION_TAIL_DUR;
 
 function observations(): ObsEvent[] {
   const obsEvents: ObsEvent[] = [];
   for (let i = 0; i < NUM_ROBOTS; i++) {
-    for (let t = PHASES[i]; t < T_TOTAL; t += T_OBS) {
+    for (let t = PHASES[i]; t < T_RENDER; t += T_OBS) {
       obsEvents.push({t, robotIdx: i, batchIdx: -1});
     }
   }
@@ -320,7 +323,7 @@ export default makeScene2D(function* (view) {
   // Animation primitives.
   //
   // Math: the scroll group's local x animates linearly from (NOW_X - CLIP_CX)
-  // to (NOW_X - CLIP_CX - PPS * T_TOTAL). So at simulated time t, the
+  // to (NOW_X - CLIP_CX - PPS * T_RENDER). So at simulated time t, the
   // scroll-group view origin sits at view-x = NOW_X - PPS * t.
   //
   // A batch [t_s, t_s + D] is added at local x = PPS * t_s and has width
@@ -352,6 +355,7 @@ export default makeScene2D(function* (view) {
   }
 
   function* showCaptions(): ThreadGenerator {
+    yield* waitFor(CAPTION_LEAD_IN_DUR);
     for (let i = 0; i < CAPTIONS.length; i++) {
       caption().text(CAPTIONS[i]);
       yield* caption().opacity(1, 0.28, easeInOutCubic);
@@ -359,6 +363,7 @@ export default makeScene2D(function* (view) {
       yield* caption().opacity(0, 0.28, easeInOutCubic);
       yield* waitFor(0.16);
     }
+    yield* waitFor(CAPTION_TAIL_DUR);
   }
 
   // -------------------------------------------------------------------
@@ -373,8 +378,8 @@ export default makeScene2D(function* (view) {
   // Continuous scroll for the whole run.
   animations.push(
     scrollGroup().x(
-      NOW_X - CLIP_CX - PPS * T_TOTAL,
-      T_TOTAL,
+      NOW_X - CLIP_CX - PPS * T_RENDER,
+      T_RENDER,
       linear,
     ),
   );
@@ -394,6 +399,8 @@ export default makeScene2D(function* (view) {
   // Batch lifecycle: scheduled batches scroll from the right; action
   // chunks send dots along A_t once each batch has fully exited through the cursor.
   for (const batch of BATCHES) {
+    if (batch.end > T_RENDER) continue;
+
     for (const robotIdx of batch.members) {
       robotQueueEvents[robotIdx].push({t: batch.end, kind: 'replenish'});
     }
@@ -429,6 +436,4 @@ export default makeScene2D(function* (view) {
   }
 
   yield* all(...animations);
-
-  yield* waitFor(0.5);
 });
