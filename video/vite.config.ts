@@ -5,7 +5,8 @@ import {createRequire} from 'module';
 // default export. Pull it via createRequire so we get the function directly.
 const require = createRequire(import.meta.url);
 const motionCanvas = require('@motion-canvas/vite-plugin').default;
+const ffmpeg = require('@motion-canvas/ffmpeg').default;
 
 export default defineConfig({
-  plugins: [motionCanvas()],
+  plugins: [motionCanvas(), ffmpeg()],
 });

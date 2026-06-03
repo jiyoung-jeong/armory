@@ -15,11 +15,12 @@ export interface RobotProps extends LayoutProps {
 // Dimensions taken from the Figma export.
 export const ROBOT_PANEL_W = 1408;
 export const ROBOT_PANEL_H = 312;
-export const ROBOT_SCREENSHOT_W = 272;
-export const ROBOT_SCREENSHOT_H = 272;
-export const ROBOT_SCREENSHOT_GAP = 24;
-export const ROBOT_TOTAL_W =
-  ROBOT_PANEL_W + ROBOT_SCREENSHOT_GAP + ROBOT_SCREENSHOT_W;
+// Screenshot placeholder temporarily hidden. Keep the dimensions nearby so the
+// right-side box can be restored without remeasuring the layout.
+// export const ROBOT_SCREENSHOT_W = 272;
+// export const ROBOT_SCREENSHOT_H = 272;
+// export const ROBOT_SCREENSHOT_GAP = 24;
+export const ROBOT_TOTAL_W = ROBOT_PANEL_W;
 export const ROBOT_TOTAL_H = ROBOT_PANEL_H;
 
 // Inside the panel (panel-local center origin):
@@ -39,7 +40,8 @@ const PANEL_LOCAL = {
 
 // Panel center within Robot Layout's coords.
 const PANEL_OFFSET_X = -ROBOT_TOTAL_W / 2 + ROBOT_PANEL_W / 2;
-const SCREENSHOT_OFFSET_X = ROBOT_TOTAL_W / 2 - ROBOT_SCREENSHOT_W / 2;
+// const SCREENSHOT_OFFSET_X = ROBOT_TOTAL_W / 2 - ROBOT_SCREENSHOT_W / 2;
+const PANEL_RIGHT_X = PANEL_OFFSET_X + ROBOT_PANEL_W / 2;
 
 function robotLocal(panelLocal: [number, number]): [number, number] {
   return [PANEL_OFFSET_X + panelLocal[0], panelLocal[1]];
@@ -47,17 +49,17 @@ function robotLocal(panelLocal: [number, number]): [number, number] {
 
 export class Robot extends Layout {
   public readonly queue: ActionQueue;
-  public readonly screenshot: Rect;
+  // public readonly screenshot: Rect;
 
   // Anchors (Robot-local coords) for arrows in/out of this robot.
   // Top anchor — observation going to server.
   // Bottom anchor — action coming from server.
   public readonly obsAnchor: [number, number] = [
-    SCREENSHOT_OFFSET_X + ROBOT_SCREENSHOT_W / 2,
+    PANEL_RIGHT_X,
     -ROBOT_PANEL_H / 2 + 92.7,
   ];
   public readonly actAnchor: [number, number] = [
-    SCREENSHOT_OFFSET_X + ROBOT_SCREENSHOT_W / 2,
+    PANEL_RIGHT_X,
     -ROBOT_PANEL_H / 2 + 214.7,
   ];
 
@@ -114,26 +116,27 @@ export class Robot extends Layout {
     );
 
     // "actions left" label inside the queue panel.
-    this.add(
-      <Rect
-        position={robotLocal(PANEL_LOCAL.actionsLabelCenter)}
-        size={PANEL_LOCAL.actionsLabelSize}
-        fill={null}
-        layout
-        alignItems={'center'}
-        justifyContent={'end'}
-        padding={[0, 16, 0, 0]}
-      >
+    const actionsLabelRightX =
+      robotLocal(PANEL_LOCAL.actionsLabelCenter)[0] +
+      PANEL_LOCAL.actionsLabelSize[0] / 2 -
+      16;
+    const actionsLabelCenterY = robotLocal(PANEL_LOCAL.actionsLabelCenter)[1];
+    for (const [line, y] of [
+      ['actions', actionsLabelCenterY - 23],
+      ['left', actionsLabelCenterY + 23],
+    ] as const) {
+      this.add(
         <Txt
-          text={'actions\nleft'}
+          position={[actionsLabelRightX, y]}
+          offset={[1, 0]}
+          text={line}
           fontFamily={'Helvetica Neue'}
           fontWeight={700}
           fontSize={40}
           fill="#000000"
-          textAlign={'right'}
-        />
-      </Rect>,
-    );
+        />,
+      );
+    }
 
     // The animated action queue chunks.
     this.queue = new ActionQueue({
@@ -145,21 +148,22 @@ export class Robot extends Layout {
     });
     this.add(this.queue);
 
-    // Screenshot placeholder to the right.
-    this.screenshot = (
-      <Rect
-        x={SCREENSHOT_OFFSET_X}
-        size={[ROBOT_SCREENSHOT_W, ROBOT_SCREENSHOT_H]}
-        fill={'#E8E8E8'}
-        stroke={DARK}
-        lineWidth={10}
-        radius={25}
-        clip
-      >
-        {props.screenshotChildren}
-      </Rect>
-    ) as Rect;
-    this.add(this.screenshot);
+    // Screenshot placeholder to the right. Temporarily disabled to remove the
+    // gray box and its layout space between the robot panel and server.
+    // this.screenshot = (
+    //   <Rect
+    //     x={SCREENSHOT_OFFSET_X}
+    //     size={[ROBOT_SCREENSHOT_W, ROBOT_SCREENSHOT_H]}
+    //     fill={'#E8E8E8'}
+    //     stroke={DARK}
+    //     lineWidth={10}
+    //     radius={25}
+    //     clip
+    //   >
+    //     {props.screenshotChildren}
+    //   </Rect>
+    // ) as Rect;
+    // this.add(this.screenshot);
   }
 
   public *consumeAction(duration = 0.4) {

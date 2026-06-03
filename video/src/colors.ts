@@ -3,6 +3,7 @@ export const GREY = '#777B7F';
 export const DARK = '#3A3A3A';
 export const RED = '#F94144';
 export const YELLOW = '#F9C74F';
+export const GREEN = '#43AA8B';
 export const BG = '#FFFFFF';
 
 export function withAlpha(color: string, alpha: number): string {
