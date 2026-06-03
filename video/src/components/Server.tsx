@@ -4,7 +4,7 @@ import {DARK} from '../colors';
 export interface ServerProps extends LayoutProps {}
 
 export const SERVER_W = 1699;
-export const SERVER_H = 1512;
+export const SERVER_H = 1300;
 
 export class Server extends Layout {
   public constructor(props?: ServerProps) {

@@ -1,4 +1,4 @@
-import {makeScene2D, Rect, Img, Line, Layout} from '@motion-canvas/2d';
+import {makeScene2D, Rect, Img, Line, Layout, Txt} from '@motion-canvas/2d';
 import {
   createRef,
   all,
@@ -19,10 +19,12 @@ import OLabel from '../o_t.svg';
 // =====================================================================
 // Layout (all coords are view-centered).
 // =====================================================================
-const SERVER_POS: [number, number] = [829.5, 0];
+const DIAGRAM_Y = 140;
+const SERVER_POS: [number, number] = [829.5, DIAGRAM_Y];
 
 const ROBOT_X = -1009;
-const ROBOT_YS = [-600, -200, 200, 600];
+const SERVER_ROW_YS = [-490, -163, 163, 490];
+const ROBOT_YS = SERVER_ROW_YS.map((y) => y + DIAGRAM_Y);
 const ROBOT_COLORS = [BLUE, GREY, GREY, GREY];
 const ROBOT_LABELS = ['Robot 1', 'Robot 2', 'Robot 3', 'Robot 4'];
 const ROBOT_MAX_SLOTS = [4, 7, 7, 7];
@@ -51,6 +53,12 @@ const TICK_COUNT = 4;
 const DOT_SIZE = 34;
 const DOT_FLIGHT_DUR = 0.24;
 const ARROW_LABEL_H = 54;
+const SECTION_LABEL_Y = -630;
+const SECTION_LABEL_FONT_SIZE = 104;
+const CAPTION_Y = -760;
+const CAPTION_W = 3150;
+const CAPTION_FONT_SIZE = 74;
+const CAPTION_SLOT_DUR = 3;
 
 // Pixels per simulated second on the timeline.
 const PPS = 260;
@@ -61,7 +69,7 @@ const PPS = 260;
 const T_OBS = 1.0;
 const PHASES = [0.0, 0.40, 0.16, 0.62];
 const SCHEDULE_GAP = 0.03;
-const UNIT_BATCH_DUR = 0.84;
+const UNIT_BATCH_DUR = 1;
 const BATCH_SIZE_RATIOS = [1, 1.5, 2, 2.25];
 
 type ObsEvent = {t: number; robotIdx: number; batchIdx: number};
@@ -70,15 +78,36 @@ type QueueEvent = {t: number; kind: 'consume' | 'replenish'};
 
 const BATCH_MEMBERS: number[][] = [
   [0],
-  [2, 0],
-  [1, 3, 0],
-  [2],
+  [0, 2],
+  [0, 1, 3],
+  [0],
   [0, 1, 2, 3],
-  [3, 1],
+  [0, 3],
+  [0, 2],
+  [0, 1],
+  [0, 1, 2],
+  [0, 3],
+  [0],
   [0, 2, 3],
+  [0, 1],
+  [0, 2],
+  [0, 1, 3],
   [1],
   [0, 1, 2],
-  [3, 2, 0],
+  [0, 3],
+  [0, 2],
+  [0, 1],
+  [0, 1, 2, 3],
+  [0],
+  [0, 2],
+  [0, 1, 3],
+  [0, 3],
+  [0, 1],
+  [2],
+  [0, 1, 2],
+  [0, 3],
+  [0, 2],
+  [0, 1],
 ];
 
 function makeSchedule(membersByBatch: number[][]): Batch[] {
@@ -95,6 +124,12 @@ function makeSchedule(membersByBatch: number[][]): Batch[] {
 
 const BATCHES = makeSchedule(BATCH_MEMBERS);
 const T_TOTAL = Math.max(...BATCHES.map((b) => b.end)) + 0.8;
+const CAPTIONS = [
+  'Robots continuously consume actions and send observations to the server.',
+  'Some robots have shorter execution horizons, requiring more frequent inferences.',
+  'Larger batches have higher throughput, but also higher latency.',
+  'Effective serving requires scheduling which robots to serve at which time.',
+] as const;
 
 function observations(): ObsEvent[] {
   const obsEvents: ObsEvent[] = [];
@@ -119,6 +154,8 @@ export default makeScene2D(function* (view) {
   const robotRefs = ROBOT_YS.map(() => createRef<Robot>());
   const server = createRef<Server>();
   const scrollGroup = createRef<Layout>();
+  const overlay = createRef<Layout>();
+  const caption = createRef<Txt>();
 
   view.add(
     <>
@@ -142,8 +179,8 @@ export default makeScene2D(function* (view) {
         return (
           <Line
             points={[
-              [x, -SERVER_H / 2 + 42],
-              [x, SERVER_H / 2 - 42],
+              [x, DIAGRAM_Y - SERVER_H / 2 + 42],
+              [x, DIAGRAM_Y + SERVER_H / 2 - 42],
             ]}
             stroke={withAlpha(DARK, i === 0 ? 0.55 : 0.22)}
             lineWidth={2}
@@ -153,7 +190,7 @@ export default makeScene2D(function* (view) {
 
       {/* Timeline clip + scrolling content. */}
       <Rect
-        position={[CLIP_CX, 0]}
+        position={[CLIP_CX, DIAGRAM_Y]}
         size={[CLIP_W, CLIP_H]}
         fill={null}
         clip
@@ -169,8 +206,8 @@ export default makeScene2D(function* (view) {
       {/* "Now" cursor at the left edge of the timeline. */}
       <Line
         points={[
-          [NOW_X, -SERVER_H / 2 + 34],
-          [NOW_X, SERVER_H / 2 - 34],
+          [NOW_X, DIAGRAM_Y - SERVER_H / 2 + 34],
+          [NOW_X, DIAGRAM_Y + SERVER_H / 2 - 34],
         ]}
         stroke={DARK}
         lineWidth={4}
@@ -192,7 +229,7 @@ export default makeScene2D(function* (view) {
       group.add(
         new Rect({
           x: 0,
-          y: ROBOT_YS[robotIdx],
+          y: SERVER_ROW_YS[robotIdx],
           offset: [-1, 0],
           width,
           height: BLOCK_H,
@@ -246,6 +283,39 @@ export default makeScene2D(function* (view) {
     );
   }
 
+  view.add(
+    <Layout ref={overlay} layout={false}>
+      <Txt
+        position={[ROBOT_X, SECTION_LABEL_Y]}
+        text={'Robot'}
+        fontFamily={'Helvetica Neue'}
+        fontWeight={400}
+        fontSize={SECTION_LABEL_FONT_SIZE}
+        fill="#000000"
+      />
+      <Txt
+        position={[(NOW_X + TIMELINE_RIGHT_X) / 2, SECTION_LABEL_Y]}
+        text={'Server'}
+        fontFamily={'Helvetica Neue'}
+        fontWeight={400}
+        fontSize={SECTION_LABEL_FONT_SIZE}
+        fill="#000000"
+      />
+      <Txt
+        ref={caption}
+        position={[0, CAPTION_Y]}
+        width={CAPTION_W}
+        text={CAPTIONS[0]}
+        fontFamily={'Helvetica Neue'}
+        fontWeight={400}
+        fontSize={CAPTION_FONT_SIZE}
+        fill="#000000"
+        textAlign={'center'}
+        opacity={0}
+      />
+    </Layout>,
+  );
+
   // -------------------------------------------------------------------
   // Animation primitives.
   //
@@ -270,6 +340,7 @@ export default makeScene2D(function* (view) {
       opacity: 0,
     });
     view.add(dot);
+    overlay().moveToTop();
 
     const fromX = direction === 'toServer' ? ARROW_X_START : ARROW_X_END;
     const toX = direction === 'toServer' ? ARROW_X_END : ARROW_X_START;
@@ -278,6 +349,16 @@ export default makeScene2D(function* (view) {
     yield* dot.position([toX, y], DOT_FLIGHT_DUR, easeInOutCubic);
     yield* dot.opacity(0, 0.04);
     dot.remove();
+  }
+
+  function* showCaptions(): ThreadGenerator {
+    for (let i = 0; i < CAPTIONS.length; i++) {
+      caption().text(CAPTIONS[i]);
+      yield* caption().opacity(1, 0.28, easeInOutCubic);
+      yield* waitFor(CAPTION_SLOT_DUR - 0.72);
+      yield* caption().opacity(0, 0.28, easeInOutCubic);
+      yield* waitFor(0.16);
+    }
   }
 
   // -------------------------------------------------------------------
@@ -297,6 +378,7 @@ export default makeScene2D(function* (view) {
       linear,
     ),
   );
+  animations.push(showCaptions());
 
   // Observation events send a lightweight colored dot along the static o_t arrow.
   for (const event of obsEvents) {
