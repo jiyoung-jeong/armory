@@ -1,0 +1,17 @@
+{
+  "env": "libero",
+  "model": "gr00t-n1.7",
+  "port": 8080,
+  "policy": {
+    "type": "default"
+  },
+  "max_batch_size": 5,
+  "num_steps": 10,
+  "scheduling_algorithm": "lookahead-actions",
+  "alpha": 1.0,
+  "log_level": "INFO",
+  "action_horizon_multipliers": {
+    "6": 1.0,
+    "10": 1.0
+  }
+}

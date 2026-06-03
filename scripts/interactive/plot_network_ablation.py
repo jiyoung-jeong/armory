@@ -35,19 +35,21 @@ SCHEDULER_DISPLAY = {
     "max-batch": "EDF",
     "round-robin": "RR",
 }
+# Match the canonical palette/markers from plot_summary_lines.py so the
+# network-ablation figures read consistently with the other sim results.
 SCHEDULER_COLORS = {
-    "max-batch": "#F94144",
-    "round-robin": "#F9C74F",
-    "lookahead-actions@ahm=1": "#37A3D2",
-    "lookahead-actions@ahm=3": "#277DA1",
-    "lookahead-actions@ahm=5": "#154A60",
+    "max-batch":   "#8E6CA8",  # muted purple (no red/yellow)
+    "round-robin": "#5FA86F",  # muted green
+    "lookahead-actions@ahm=1": "#6FB0D6",  # blue family, tighter spread
+    "lookahead-actions@ahm=3": "#3C86B8",
+    "lookahead-actions@ahm=5": "#1E5C84",
 }
 SCHEDULER_MARKERS = {
-    "max-batch": "s",
-    "round-robin": "D",
+    "max-batch":              "s",
+    "round-robin":            "D",
     "lookahead-actions@ahm=1": "o",
-    "lookahead-actions@ahm=3": "^",
-    "lookahead-actions@ahm=5": "v",
+    "lookahead-actions@ahm=3": "o",
+    "lookahead-actions@ahm=5": "o",
 }
 
 
@@ -55,7 +57,8 @@ def _scheduler_display(label: str) -> str:
     if label in SCHEDULER_DISPLAY:
         return SCHEDULER_DISPLAY[label]
     if label.startswith(f"{LOOKAHEAD}@ahm="):
-        return f"LA@{label.split('=')[-1]}"
+        w = label.split("=")[-1]
+        return "LA" if w == "1" else f"LA@{w}"
     return label
 
 
@@ -227,6 +230,10 @@ def parse_args() -> argparse.Namespace:
                    help="Sweep run dir (the timestamp dir with case subdirs).")
     p.add_argument("--out-dir", type=pathlib.Path, default=None,
                    help="Output dir (default: <run_dir>/plots).")
+    p.add_argument("--prefix", type=str, default=None,
+                   help="Filename prefix override (default: <mode>). Use e.g. "
+                        "'hom_median' to land several runs in one shared folder "
+                        "without clobbering.")
     return p.parse_args()
 
 
@@ -252,11 +259,13 @@ def main() -> None:
         prefix = "variance"
         log_x = False
         error_bars = False
+    if args.prefix:
+        prefix = args.prefix
 
     _plot_metric(
         out_dir / f"net_ablation_{prefix}_throughput.png", data, "thr",
         y_scale=1.0, xlabel=xlabel,
-        ylabel="Cluster throughput (successes / min)", log_x=log_x,
+        ylabel="System throughput (successes / min)", log_x=log_x,
         error_bars=error_bars,
     )
     _plot_metric(

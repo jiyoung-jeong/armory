@@ -34,10 +34,11 @@ import pandas as pd  # noqa: E402
 LOOKAHEAD = "lookahead-actions"
 
 SCHEDULER_DISPLAY = {"max-batch": "EDF", "round-robin": "RR"}
+# Canonical palette/markers from plot_summary_lines.py (LA uses the ahm=1 blue).
 SCHEDULER_COLORS = {
-    "max-batch": "#F94144",
-    "round-robin": "#F9C74F",
-    "lookahead-actions": "#37A3D2",
+    "max-batch": "#8E6CA8",       # muted purple
+    "round-robin": "#5FA86F",     # muted green
+    "lookahead-actions": "#6FB0D6",  # blue family (ahm=1)
 }
 SCHEDULER_MARKERS = {
     "max-batch": "s",
@@ -51,7 +52,7 @@ def _display(sched: str) -> str:
     if sched in SCHEDULER_DISPLAY:
         return SCHEDULER_DISPLAY[sched]
     if sched == LOOKAHEAD:
-        return "LA@1"
+        return "LA"
     return sched
 
 

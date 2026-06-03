@@ -112,6 +112,35 @@ def _pick_free_port(lo: int = 8000, hi: int = 9000) -> int:
         return s.getsockname()[1]
 
 
+def _port_is_free(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
+def _pick_free_port_range(
+    count: int, lo: int = 15000, hi: int = 25000, *, stride: int = 100
+) -> int:
+    """Pick a base port B such that [B, B+count) are all free on 127.0.0.1.
+    Walks aligned ``stride``-multiples in [lo, hi-count] in random order so
+    concurrent sweeps land in different blocks."""
+    import random
+
+    if count <= 0:
+        return lo
+    bases = list(range(lo, hi - count + 1, stride))
+    random.shuffle(bases)
+    for base in bases:
+        if all(_port_is_free(base + i) for i in range(count)):
+            return base
+    raise RuntimeError(
+        f"Could not find a free port range of size {count} in [{lo}, {hi}]"
+    )
+
+
 # ---------------------------------------------------------------- case I/O
 
 
@@ -219,11 +248,53 @@ def _apply_host_port(run_root: pathlib.Path, cases: list[Any], host: str, port: 
         _patch_json(case_dir / "client_args.json", {"host": host, "port": port})
 
 
-def _write_port_json(run_root: pathlib.Path, host: str, port: int) -> None:
-    _write_json(
-        run_root / "port.json",
-        {"host": host, "port": port, "started_at": _utc_now_iso(), "server_pid_marker": os.getpid()},
-    )
+def _apply_toxiproxy_ports(
+    run_root: pathlib.Path,
+    cases: list[Any],
+    *,
+    api_port: int,
+    listen_port_base: int,
+) -> None:
+    """Patch each case's ``experiment_config.json`` toxiproxy block so concurrent
+    sweeps on the same node don't collide on the toxiproxy API port (default
+    8474) or the per-robot proxy listen ports."""
+    api_url = f"http://127.0.0.1:{api_port}"
+    server_args = ["-host", "127.0.0.1", "-port", str(api_port)]
+    for c in cases:
+        path = run_root / c.run_id / "experiment_config.json"
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text())
+        toxi = data.get("toxiproxy")
+        if not isinstance(toxi, dict):
+            continue
+        toxi["api_url"] = api_url
+        toxi["listen_host"] = "127.0.0.1"
+        toxi["listen_port_base"] = listen_port_base
+        toxi["server_args"] = server_args
+        data["toxiproxy"] = toxi
+        path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def _write_port_json(
+    run_root: pathlib.Path,
+    host: str,
+    port: int,
+    *,
+    toxiproxy_api_port: int | None = None,
+    toxiproxy_listen_port_base: int | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "host": host,
+        "port": port,
+        "started_at": _utc_now_iso(),
+        "server_pid_marker": os.getpid(),
+    }
+    if toxiproxy_api_port is not None:
+        payload["toxiproxy_api_port"] = toxiproxy_api_port
+    if toxiproxy_listen_port_base is not None:
+        payload["toxiproxy_listen_port_base"] = toxiproxy_listen_port_base
+    _write_json(run_root / "port.json", payload)
 
 
 def _write_stopped_sentinel(run_root: pathlib.Path, reason: str) -> None:
@@ -543,6 +614,23 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Server port. Default: pick a free port in 8000-9000.",
     )
+    parser.add_argument(
+        "--toxiproxy-api-port",
+        type=int,
+        default=0,
+        help="Toxiproxy REST API port (host 127.0.0.1). 0 = pick a free port in "
+             "8000-9000. Patched into each case's experiment_config.json so "
+             "concurrent sweeps on the same node don't collide on the default "
+             "8474.",
+    )
+    parser.add_argument(
+        "--toxiproxy-listen-port-base",
+        type=int,
+        default=0,
+        help="Base port for per-robot toxiproxy listeners. 0 = pick a free "
+             "contiguous range of size max(num_robots) in 15000-25000 (aligned "
+             "to a stride of 100). Patched into each case's experiment_config.json.",
+    )
     parser.add_argument("--metadata-timeout", type=float, default=900.0)
     parser.add_argument("--shutdown-grace", type=float, default=10.0)
     parser.add_argument("--log-tail-lines", type=int, default=10)
@@ -582,9 +670,38 @@ def main() -> None:
         (run_root / c.run_id / "server_ready.json").unlink(missing_ok=True)
 
     _apply_host_port(run_root, cases, args.host, args.port)
-    _write_port_json(run_root, args.host, args.port)
+
+    # Pick toxiproxy ports (API + per-robot listen range) so concurrent sweeps
+    # on the same node don't collide on the toxiproxy defaults. Patched into
+    # every case's experiment_config.json before the client picks it up.
+    if not args.toxiproxy_api_port:
+        args.toxiproxy_api_port = _pick_free_port(lo=8000, hi=9000)
+    max_num_robots = max((int(getattr(c, "num_robots", 0) or 0) for c in cases), default=0)
+    listen_range_size = max(max_num_robots, 1)
+    if not args.toxiproxy_listen_port_base:
+        args.toxiproxy_listen_port_base = _pick_free_port_range(
+            listen_range_size, lo=15000, hi=25000, stride=100
+        )
+    _apply_toxiproxy_ports(
+        run_root,
+        cases,
+        api_port=args.toxiproxy_api_port,
+        listen_port_base=args.toxiproxy_listen_port_base,
+    )
+    _write_port_json(
+        run_root,
+        args.host,
+        args.port,
+        toxiproxy_api_port=args.toxiproxy_api_port,
+        toxiproxy_listen_port_base=args.toxiproxy_listen_port_base,
+    )
 
     print(f"Server host: {args.host}    port: {args.port}")
+    print(
+        f"Toxiproxy:   api 127.0.0.1:{args.toxiproxy_api_port}  "
+        f"listen base 127.0.0.1:{args.toxiproxy_listen_port_base} "
+        f"(+0..{listen_range_size - 1})"
+    )
     print(f"Manifest:    {run_root / 'manifest.json'}")
     print()
     print("Run this in your second terminal:")
