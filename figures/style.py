@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 
 # Color palette — accessible, distinct, works in grayscale
 COLORS = [
-    "#247BA0",  # blue
-    "#F95738",  # red-orange
+    "#37A3D2",  # blue
+    "#F94144",  # red-orange
     "#F7B801",  # yellow
     "#8073AC",  # purple
     "#F4A582",  # light salmon
