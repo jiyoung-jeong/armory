@@ -128,12 +128,36 @@ const BATCHES = makeSchedule(BATCH_MEMBERS);
 // Index of the full (4-robot) batch spotlighted during the "larger batches"
 // caption. Its cursor passage (~14.5-16.8s) lands inside that caption window.
 const HIGHLIGHT_BATCH_IDX = 9;
-const CAPTIONS = [
-  'Robots continuously consume actions and send observations to the server.',
-  'Some robots have shorter execution horizons, requiring more frequent inferences.',
-  'Larger batches have higher throughput, but also higher latency, costing robot responsiveness.',
-  'Effective serving requires scheduling which robots to serve at the right times.',
-] as const;
+// Captions as [text, bold] segments so key terms can be emphasized.
+const CAPTIONS: [string, boolean][][] = [
+  [['Robots continuously consume actions and send observations to the server.', false]],
+  [
+    ['Fast robots', true],
+    [' have shorter execution horizons, requiring more frequent inferences than ', false],
+    ['slow robots', true],
+    ['.', false],
+  ],
+  [['Larger batches have higher throughput, but also higher latency, costing robot reactivity.', false]],
+  [
+    ['Effective serving requires scheduling ', false],
+    ['which robots to serve at the right times', true],
+    ['.', false],
+  ],
+];
+
+// Build the inline Txt spans for a caption, normal weight except bold segments.
+function captionSpans(segments: [string, boolean][]): Txt[] {
+  return segments.map(
+    ([t, b]) =>
+      new Txt({
+        text: t,
+        fontFamily: 'Helvetica Neue',
+        fontWeight: b ? 700 : 400,
+        fontSize: CAPTION_FONT_SIZE,
+        fill: '#000000',
+      }),
+  );
+}
 const T_RENDER =
   CAPTION_LEAD_IN_DUR + CAPTIONS.length * CAPTION_SLOT_DUR + CAPTION_TAIL_DUR;
 
@@ -354,14 +378,15 @@ export default makeScene2D(function* (view) {
         ref={caption}
         position={[0, CAPTION_Y]}
         width={CAPTION_W}
-        text={CAPTIONS[0]}
         fontFamily={'Helvetica Neue'}
         fontWeight={400}
         fontSize={CAPTION_FONT_SIZE}
         fill="#000000"
         textAlign={'center'}
         opacity={0}
-      />
+      >
+        {captionSpans(CAPTIONS[0])}
+      </Txt>
     </Layout>,
   );
 
@@ -416,7 +441,8 @@ export default makeScene2D(function* (view) {
   function* showCaptions(): ThreadGenerator {
     yield* waitFor(CAPTION_LEAD_IN_DUR);
     for (let i = 0; i < CAPTIONS.length; i++) {
-      caption().text(CAPTIONS[i]);
+      caption().removeChildren();
+      caption().add(captionSpans(CAPTIONS[i]));
       yield* caption().opacity(1, 0.28, easeInOutCubic);
       const hold = CAPTION_SLOT_DUR - 0.72;
       if (i === 1) {
