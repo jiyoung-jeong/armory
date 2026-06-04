@@ -12,7 +12,7 @@ import {
 
 import {Robot} from '../components/Robot';
 import {Server, SERVER_H, SERVER_W} from '../components/Server';
-import {BLUE, GREY, DARK, BG, withAlpha} from '../colors';
+import {BLUE, GREY, DARK, BG, YELLOW, withAlpha} from '../colors';
 import ALabel from '../A_t.svg';
 import OLabel from '../o_t.svg';
 
@@ -88,7 +88,7 @@ const BATCH_MEMBERS: number[][] = [
   [0, 2],
   [0, 1],
   [0, 1, 2],
-  [0, 3],
+  [0, 1, 2, 3],
   [0],
   [0, 2, 3],
   [0, 1],
@@ -125,11 +125,14 @@ function makeSchedule(membersByBatch: number[][]): Batch[] {
 }
 
 const BATCHES = makeSchedule(BATCH_MEMBERS);
+// Index of the full (4-robot) batch spotlighted during the "larger batches"
+// caption. Its cursor passage (~14.5-16.8s) lands inside that caption window.
+const HIGHLIGHT_BATCH_IDX = 9;
 const CAPTIONS = [
   'Robots continuously consume actions and send observations to the server.',
   'Some robots have shorter execution horizons, requiring more frequent inferences.',
-  'Larger batches have higher throughput, but also higher latency.',
-  'Effective serving requires scheduling which robots to serve at which time.',
+  'Larger batches have higher throughput, but also higher latency, costing robot responsiveness.',
+  'Effective serving requires scheduling which robots to serve at the right times.',
 ] as const;
 const T_RENDER =
   CAPTION_LEAD_IN_DUR + CAPTIONS.length * CAPTION_SLOT_DUR + CAPTION_TAIL_DUR;
@@ -219,7 +222,11 @@ export default makeScene2D(function* (view) {
     </>,
   );
 
-  for (const batch of BATCHES) {
+  // Spotlight outline for the highlighted batch (filled in below, pulsed later).
+  let highlightBatchOutline: Rect | null = null;
+
+  for (let batchIdx = 0; batchIdx < BATCHES.length; batchIdx++) {
+    const batch = BATCHES[batchIdx];
     const width = Math.max(PPS * (batch.end - batch.start) - BATCH_GAP, 10);
     const group = new Layout({
       x: PPS * batch.start,
@@ -241,7 +248,46 @@ export default makeScene2D(function* (view) {
         }),
       );
     }
+
+    if (batchIdx === HIGHLIGHT_BATCH_IDX) {
+      const ys = batch.members.map((r) => SERVER_ROW_YS[r]);
+      const yTop = Math.min(...ys) - BLOCK_H / 2;
+      const yBot = Math.max(...ys) + BLOCK_H / 2;
+      highlightBatchOutline = new Rect({
+        x: width / 2,
+        y: (yTop + yBot) / 2,
+        size: [width + 22, yBot - yTop + 22],
+        fill: null,
+        stroke: YELLOW,
+        lineWidth: 12,
+        radius: 12,
+        shadowColor: YELLOW,
+        shadowBlur: 0,
+        opacity: 0,
+      });
+      group.add(highlightBatchOutline);
+    }
   }
+
+  // Highlight box behind the obs/action arrows (the streaming "middle section"),
+  // pulsed during the first caption. Sits in the gap between robots and server.
+  const CHANNEL_CX = (ARROW_X_START + ARROW_X_END) / 2;
+  const channelTop = ROBOT_YS[0] + OBS_ANCHOR_DY - ARROW_LABEL_H - 40;
+  const channelBot =
+    ROBOT_YS[ROBOT_YS.length - 1] + ACT_ANCHOR_DY + ARROW_LABEL_H + 40;
+  const channelHighlight = new Rect({
+    x: CHANNEL_CX,
+    y: (channelTop + channelBot) / 2,
+    size: [ARROW_X_END - ARROW_X_START + 52, channelBot - channelTop],
+    fill: withAlpha(YELLOW, 0.12),
+    stroke: withAlpha(YELLOW, 0.55),
+    lineWidth: 6,
+    radius: 30,
+    shadowColor: YELLOW,
+    shadowBlur: 0,
+    opacity: 0,
+  });
+  view.add(channelHighlight);
 
   // Draw communication arrows after all base layers so they remain visible
   // above the server timeline.
@@ -354,12 +400,32 @@ export default makeScene2D(function* (view) {
     dot.remove();
   }
 
+  // Fade a glowing highlight node in, hold, then out.
+  function* spotlight(node: Rect, hold: number, glow = 44): ThreadGenerator {
+    yield* all(
+      node.opacity(1, 0.3, easeInOutCubic),
+      node.shadowBlur(glow, 0.3, easeInOutCubic),
+    );
+    yield* waitFor(hold);
+    yield* all(
+      node.opacity(0, 0.3, easeInOutCubic),
+      node.shadowBlur(0, 0.3, easeInOutCubic),
+    );
+  }
+
   function* showCaptions(): ThreadGenerator {
     yield* waitFor(CAPTION_LEAD_IN_DUR);
     for (let i = 0; i < CAPTIONS.length; i++) {
       caption().text(CAPTIONS[i]);
       yield* caption().opacity(1, 0.28, easeInOutCubic);
-      yield* waitFor(CAPTION_SLOT_DUR - 0.72);
+      const hold = CAPTION_SLOT_DUR - 0.72;
+      if (i === 1) {
+        // "Some robots have shorter execution horizons..." — spotlight Robot 1
+        // (the short-horizon robot) for the duration of this caption.
+        yield* all(waitFor(hold), robotRefs[0]().highlight(hold));
+      } else {
+        yield* waitFor(hold);
+      }
       yield* caption().opacity(0, 0.28, easeInOutCubic);
       yield* waitFor(0.16);
     }
@@ -384,6 +450,17 @@ export default makeScene2D(function* (view) {
     ),
   );
   animations.push(showCaptions());
+
+  // Spotlight the obs/action streaming channel during the first caption
+  // ("Robots continuously consume actions and send observations...", ~3.0-7.84s).
+  animations.push(delay(3.0, spotlight(channelHighlight, 4.0, 26)));
+
+  // Spotlight the full batch (idx 9) as it scrolls toward the cursor, lining up
+  // with the start of the "larger batches have higher throughput, but also
+  // higher latency" caption (text appears at ~13.0s, batch exits cursor ~16.8s).
+  if (highlightBatchOutline) {
+    animations.push(delay(13.1, spotlight(highlightBatchOutline, 2.4)));
+  }
 
   // Observation events send a lightweight colored dot along the static o_t arrow.
   for (const event of obsEvents) {

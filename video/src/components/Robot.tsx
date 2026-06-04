@@ -1,4 +1,5 @@
 import {Layout, LayoutProps, Rect, Txt} from '@motion-canvas/2d';
+import {all, easeInOutCubic, waitFor} from '@motion-canvas/core';
 import {DARK} from '../colors';
 import {ActionQueue} from './ActionQueue';
 
@@ -49,6 +50,8 @@ function robotLocal(panelLocal: [number, number]): [number, number] {
 
 export class Robot extends Layout {
   public readonly queue: ActionQueue;
+  // Glowing ring around the panel, used to call attention to this robot.
+  public readonly highlightRing: Rect;
   // public readonly screenshot: Rect;
 
   // Anchors (Robot-local coords) for arrows in/out of this robot.
@@ -148,6 +151,22 @@ export class Robot extends Layout {
     });
     this.add(this.queue);
 
+    // Highlight ring just outside the panel border. Hidden until highlight().
+    this.highlightRing = (
+      <Rect
+        x={PANEL_OFFSET_X}
+        size={[ROBOT_PANEL_W + 30, ROBOT_PANEL_H + 30]}
+        fill={null}
+        stroke={props.color}
+        lineWidth={14}
+        radius={42}
+        opacity={0}
+        shadowColor={props.color}
+        shadowBlur={0}
+      />
+    ) as Rect;
+    this.add(this.highlightRing);
+
     // Screenshot placeholder to the right. Temporarily disabled to remove the
     // gray box and its layout space between the robot panel and server.
     // this.screenshot = (
@@ -176,5 +195,24 @@ export class Robot extends Layout {
 
   public *receiveActionToFull(duration = 0.6) {
     yield* this.queue.replenishToFull(duration);
+  }
+
+  // Pulse a glowing ring (and gently scale up) to call attention to this
+  // robot, hold for `holdDur`, then settle back. Total ≈ holdDur seconds.
+  public *highlight(holdDur = 4) {
+    // Draw above sibling robots so the ring/glow isn't covered by the panel
+    // of the robot below.
+    this.moveToTop();
+    yield* all(
+      this.highlightRing.opacity(1, 0.35, easeInOutCubic),
+      this.highlightRing.shadowBlur(46, 0.35, easeInOutCubic),
+      this.scale(1.035, 0.35, easeInOutCubic),
+    );
+    yield* waitFor(Math.max(0, holdDur - 0.7));
+    yield* all(
+      this.highlightRing.opacity(0, 0.35, easeInOutCubic),
+      this.highlightRing.shadowBlur(0, 0.35, easeInOutCubic),
+      this.scale(1, 0.35, easeInOutCubic),
+    );
   }
 }
