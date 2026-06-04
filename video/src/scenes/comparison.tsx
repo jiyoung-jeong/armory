@@ -271,7 +271,7 @@ export default makeScene2D(function* (view) {
       <Txt fontFamily={'Helvetica Neue'} fontWeight={700} fontSize={48} fill={DARK}>
         quasi-static tasks
       </Txt>
-      {' that don’t necesitate reactivity.'}
+      {' that don’t necessitate reactivity.'}
     </Txt>,
   );
   view.add(

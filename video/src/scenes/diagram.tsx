@@ -132,9 +132,8 @@ const HIGHLIGHT_BATCH_IDX = 9;
 const CAPTIONS: [string, boolean][][] = [
   [['Robots continuously consume actions and send observations to the server.', false]],
   [
-    ['Fast robots', true],
-    [' have shorter execution horizons, requiring more frequent inferences than ', false],
-    ['slow robots', true],
+    ['Robots with shorter execution horizons require more frequent inferences. We refer to them as ', false],
+    ['fast robots', true],
     ['.', false],
   ],
   [['Larger batches have higher throughput, but also higher latency, costing robot reactivity.', false]],
