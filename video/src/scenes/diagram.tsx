@@ -382,6 +382,7 @@ export default makeScene2D(function* (view) {
         fontSize={CAPTION_FONT_SIZE}
         fill="#000000"
         textAlign={'center'}
+        textWrap
         opacity={0}
       >
         {captionSpans(CAPTIONS[0])}
