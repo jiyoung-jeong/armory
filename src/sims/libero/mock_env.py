@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -22,6 +23,7 @@ class MockEnvironment:
         control_hz: float = 20.0,
         task_id: int = 0,
         episode_idx: int = 0,
+        deadline_monotonic: float | None = None,
     ) -> None:
         self._max_episode_steps = max_episode_steps
         self._state_dim = state_dim
@@ -29,6 +31,7 @@ class MockEnvironment:
         self._control_hz = control_hz
         self._task_id = task_id
         self._episode_idx = episode_idx
+        self._deadline_monotonic = deadline_monotonic
 
         self._step = 0
         self._done = True
@@ -40,6 +43,12 @@ class MockEnvironment:
         self._current_success = False
 
     def is_episode_complete(self) -> bool:
+        if (
+            not self._done
+            and self._deadline_monotonic is not None
+            and time.monotonic() >= self._deadline_monotonic
+        ):
+            self._done = True
         return self._done
 
     def get_observation(self) -> MockObservation:

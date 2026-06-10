@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 RobotID: TypeAlias = str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SlotRequest:
     """Flows end-to-end: built by WS → sent to Scheduler → put in batch_queue → received by GPU."""
 
@@ -47,7 +47,7 @@ class SlotRequest:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AckNotification:
     """Sent from WS to scheduler when a client acks receipt of an InferResponse."""
 
@@ -65,21 +65,21 @@ class AckNotification:
     server_send_time: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BatchProfile:
     """Latency profile per batch size (seconds). Sent once from GPU to scheduler after warmup."""
 
     latencies: dict[int, float]
 
 
-@dataclass
-class WarmupSeed:
+@dataclass(slots=True)
+class WarmupSeed:   
     robot_id: RobotID
     obs_samples: list[tuple[float, float]]  # (arrival_ts, request_ts) per ping
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResetAll:
     """Server-internal: drop all per-robot AND mirror-wide state.
 
@@ -90,8 +90,24 @@ class ResetAll:
     """
 
 
+@dataclass(frozen=True, slots=True)
+class Reconfigure:
+    """Server-internal: rebuild the scheduler in-place with a new algorithm/kwargs.
+
+    Published from the WS main process on POST /reconfigure. The scheduler
+    subprocess constructs a fresh ``RequestScheduler`` from
+    ``SCHEDULER_REGISTRY[algorithm]`` with ``scheduler_kwargs`` and swaps it
+    in. The previously-seeded batch latency profile is re-applied to the new
+    instance; per-robot latency state is left to be re-seeded by the next
+    warmup phase.
+    """
+
+    algorithm: str
+    scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
+
+
 # TODO: rename as ActionChunkMetadata
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ActionChunk:
     chunk_id: int
     observation_step: int  # step when observation was captured
@@ -107,6 +123,7 @@ class ActionChunk:
     #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
     #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
     origin: str = "queued"
+    debug_info: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_ack(cls, ack: AckNotification) -> ActionChunk:
@@ -121,11 +138,31 @@ class ActionChunk:
             origin="confirmed",
         )
 
+    @property
+    def last_action_index(self) -> int:
+        """inclusive"""
+        return self.action_index_start + self.max_execution_horizon - 1
+
+
+@dataclass(frozen=True, slots=True)
+class Idle:
+    """Synthetic scheduler action: leave the GPU idle for ``duration`` seconds.
+
+    Flows through the same dispatch path as a real batch — the scheduler queues
+    it on the mirror (occupying server time without producing chunks) and the
+    GPU worker sleeps for ``duration`` before returning an empty ResponseBatch.
+    """
+
+    duration: float
+
 
 class RequestBatch(NamedTuple):
     requests: list[SlotRequest]
     chunk_ids: list[int]
     batch_id: int
+    # > 0 marks a synthetic idle batch (empty ``requests``): the GPU sleeps this
+    # long instead of inferring. See ``Idle``.
+    idle_duration: float = 0.0
 
 
 class ResponseBatch(NamedTuple):
@@ -185,7 +222,7 @@ class SchedulerDecision:
 
 
 # TODO: copied over InferRequest, fix later
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class InternalRequest:
     robot_id: str
     observation: dict

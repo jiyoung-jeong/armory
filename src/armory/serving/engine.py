@@ -103,6 +103,26 @@ class GpuWorker:
             self._process_server_messages(req_sock)
 
             batch: RequestBatch = self.batch_queue.get()  # blocking
+
+            # Synthetic idle batch: occupy the GPU for the requested duration
+            # (no inference), then report an empty completion so the scheduler's
+            # timing model stays in sync with the real GPU clock.
+            if batch.idle_duration > 0:
+                t0 = time.time()
+                end_time = time.perf_counter() + batch.idle_duration
+                while time.perf_counter() < end_time:
+                    pass
+                result_sock.send_pyobj(
+                    ResponseBatch(
+                        responses=[],
+                        batch_id=batch.batch_id,
+                        batch_size=0,
+                        inference_start_time=t0,
+                        inference_duration=time.time() - t0,
+                    )
+                )
+                continue
+
             slot_reqs: list[SlotRequest] = batch.requests
 
             # FIXME: can be much more concise

@@ -3,11 +3,7 @@
   "model": "pi05",
   "port": 8080,
   "policy": {
-    "type": "mock",
-    "action_horizon": 20,
-    "action_dim": 7,
-    "model": "pi05",
-    "gpu": "l40s"
+    "type": "default"
   },
   "max_batch_size": 5,
   "num_steps": 10,
@@ -15,7 +11,7 @@
   "alpha": 1.0,
   "log_level": "INFO",
   "action_horizon_multipliers": {
-    "10": 1.0,
-    "20": 1.0
+    "6": 20.0,
+    "10": 1.0
   }
 }
