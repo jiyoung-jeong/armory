@@ -308,10 +308,14 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     # Shared across all Savers this worker builds: video encoding for episode N
     # otherwise blocks the worker from starting episode N+1 (Saver.close() does
     # executor.shutdown(wait=True)). With a shared pool, per-episode close() is
-    # a no-op and we drain once in the outer finally below.
+    # a no-op and we drain once in the outer finally below. pending_slots caps
+    # the backlog at 2 episodes' worth of buffers; a third on_episode_end
+    # blocks the worker rather than growing memory unboundedly.
+    import threading  # noqa: PLC0415
     from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
-    saver_executor = ThreadPoolExecutor(max_workers=5)
+    saver_executor = ThreadPoolExecutor(max_workers=2)
+    saver_pending_slots = threading.BoundedSemaphore(2)
 
     def _build_subscribers(episode: Episode, env: Any) -> list[_subscriber.Subscriber]:
         subs: list[_subscriber.Subscriber] = [
@@ -326,6 +330,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 robot_idx=robot_idx,
                 save_video=settings.env != "mock",
                 executor=saver_executor,
+                pending_slots=saver_pending_slots,
             ),
             TaskMetricsPublisher(
                 ws_client=ws_client,
@@ -432,9 +437,7 @@ def _trial_loop(
     """Trial-mode loop: pinned task, env reuse, wall-clock budget."""
     task_id = worker_args.assigned_task_id
     if task_id is None:
-        raise RuntimeError(
-            f"robot {robot_idx}: missing assigned_task_id in trial mode"
-        )
+        raise RuntimeError(f"robot {robot_idx}: missing assigned_task_id in trial mode")
 
     raw_env = None
     initial_states: np.ndarray
@@ -543,9 +546,7 @@ def run_robots(
                 settings=settings,
                 server_metadata=server_metadata,
                 robot_idx=0,
-                assigned_task_id=(
-                    robot_task_assignment[0] if trial_mode else None
-                ),
+                assigned_task_id=(robot_task_assignment[0] if trial_mode else None),
             )
         )
     else:
@@ -646,9 +647,7 @@ def reconfigure_server(args: Args, server_metadata: ServerMetadata) -> None:
         }
     resp = requests.post(f"{args.http_base}/reconfigure", json=body, timeout=10.0)
     if not resp.ok:
-        raise RuntimeError(
-            f"POST /reconfigure {resp.status_code}: {resp.text}"
-        )
+        raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
     result = resp.json()
     server_metadata.scheduling_algorithm = result.get(
         "scheduling_algorithm", server_metadata.scheduling_algorithm
@@ -847,9 +846,7 @@ def main(args: Args) -> None:
             n = max(1, settings.subset_size or 1)
             subset_task_ids = list(range(n))
 
-        robot_task_assignment = assign_robots_to_tasks(
-            settings.num_robots, subset_task_ids
-        )
+        robot_task_assignment = assign_robots_to_tasks(settings.num_robots, subset_task_ids)
         # Trial-mode workers generate episodes inline based on their assigned
         # task. The list below is only used downstream for runtime_metadata.
         episodes = [
@@ -957,5 +954,18 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn")  # allows multiple processes with envs
+    if sys.platform == "linux":
+        # forkserver: workers fork from a server process that has already
+        # imported the heavy libraries below, so their read-only pages are
+        # shared copy-on-write across all robots instead of duplicated per
+        # process. Safe with sim envs because GL contexts are created
+        # per-worker after the fork.
+        multiprocessing.set_start_method("forkserver")
+        multiprocessing.set_forkserver_preload(
+            ["numpy", "matplotlib", "robosuite", "sims.libero.env"]
+        )
+    else:
+        # macOS: forked processes can crash inside Apple frameworks; keep
+        # spawn (also allows multiple processes with envs).
+        multiprocessing.set_start_method("spawn")
     main(tyro.cli(Args))
