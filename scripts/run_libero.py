@@ -14,6 +14,7 @@ from typing import (
 )  # Any used for shared globals
 
 import numpy as np
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -45,17 +46,16 @@ logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
 
 
-# TODO: should just be a namedtuple, should actually figure out validation first
-@dataclass(frozen=True)
-class ExecutionHorizon:
+class ExecutionHorizon(BaseModel):
+    model_config = ConfigDict(frozen=True)
     min: int
     max: int
 
 
-# TODO: maybe use pydantic validation too
 # TODO: robots should own action horizon multipliers
-@dataclass(frozen=True)
-class ExperimentConfig:
+class ExperimentConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     env: Literal["libero", "mock"]
     task_suite_name: str
     num_trials_per_task: int
@@ -71,7 +71,7 @@ class ExperimentConfig:
     # caps each individual episode.
     subset_size: int = 0
     wall_clock_time_limit_s: float = 0.0
-    seed: int = 7  # Random Seed (for reproducibility)
+    seed: int = 7
 
     @property
     def use_trial_mode(self) -> bool:
@@ -83,7 +83,8 @@ class ExperimentConfig:
     def max_execution_horizons(self) -> list[int]:
         return [h.max for h in self.execution_horizons]
 
-    def __post_init__(self):
+    @model_validator(mode="after")
+    def _validate(self) -> "ExperimentConfig":
         assert self.num_robots > 0, "num_robots must be positive"
         if not self.use_trial_mode:
             assert self.num_trials_per_task > 0, "num_trials_per_task must be positive"
@@ -101,44 +102,19 @@ class ExperimentConfig:
                 f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
             )
         assert self.seed >= 0, "seed must be non-negative"
-
-        if self.use_trial_mode:
-            logging.info(
-                "Loaded experiment config: env=%s mode=%s num_robots=%d "
-                "subset_size=%d wall_clock_time_limit_s=%.1f",
-                self.env,
-                self.action_chunk_broker_type.value,
-                self.num_robots,
-                self.subset_size,
-                self.wall_clock_time_limit_s,
-            )
-        else:
-            logging.info(
-                "Loaded experiment config: env=%s mode=%s num_robots=%d trials_per_robot=%d",
-                self.env,
-                self.action_chunk_broker_type.value,
-                self.num_robots,
-                self.num_trials_per_task,
-            )
+        return self
 
 
-@dataclass
 class Args(JsonArgs):
-    scheduler_config: SchedulerConfig
     experiment_config: ExperimentConfig
+    scheduler_config: SchedulerConfig = SchedulerConfig()
 
     host: str = "0.0.0.0"
     port: int = 8080
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
     overwrite: bool = False
     progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
-    debug: bool = False  # Run in single process with immediate progress output
-
-    def __post_init__(self):
-        assert self.overwrite or not self.output_dir.exists(), (
-            f"Output path {self.output_dir} already exists"
-        )
-        assert self.experiment_config, "experiment_config is required"
+    debug: bool = False
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
@@ -210,7 +186,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     - **Legacy mode**: pull episodes from the shared queue until empty.
     """
     args = worker_args.args
-    settings = worker_args.args.settings
+    settings = worker_args.args.experiment_config
     robot_idx = worker_args.robot_idx
     robot_id = f"robot_{robot_idx}"
 
@@ -345,7 +321,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 if settings.env == "libero":
                     raw_env, _ = libero_utils._get_libero_env(
                         task_suite.get_task(episode.task_id),
-                        seed=args.seed + robot_idx,
+                        seed=settings.seed + robot_idx,
                     )
                     env = LiberoSimEnvironment(
                         env=raw_env,
@@ -401,7 +377,7 @@ def _trial_loop(
     if settings.env == "libero":
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
-        raw_env, _ = libero_utils._get_libero_env(task, seed=args.seed + robot_idx)
+        raw_env, _ = libero_utils._get_libero_env(task, seed=settings.seed + robot_idx)
 
         # No-op close so the shared raw_env survives across iterations.
         class _ReusableLiberoEnv(LiberoSimEnvironment):  # type: ignore[misc, valid-type]
@@ -560,19 +536,21 @@ def run_robots(
 
 
 def main(args: Args) -> None:
+    assert args.overwrite or not args.output_dir.exists(), (
+        f"Output path {args.output_dir} already exists"
+    )
     if args.overwrite:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    log_dir = args.output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
     log_file_path = (
-        args.log_dir
-        / f"libero_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
+        log_dir / f"libero_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
     )
-    args.log_dir.mkdir(parents=True, exist_ok=True)
-    # TODO: would be nice to see debug logs but not all debug logs
     logging_config.setup_logging(log_path=log_file_path, level=logging.INFO)
 
-    seed_everything(args.seed)
+    seed_everything(args.experiment_config.seed)
 
     robot_task_assignment: list[int] | None = None
     subset_task_ids: list[int] = []
@@ -586,7 +564,7 @@ def main(args: Args) -> None:
 
         if settings.env == "libero":
             subset_task_ids = pick_subset_task_ids(
-                settings.task_suite_name, settings.subset_size, args.seed
+                settings.task_suite_name, settings.subset_size, settings.seed
             )
         else:
             # For mock env, "task ids" are synthetic. Pick the first
@@ -609,7 +587,7 @@ def main(args: Args) -> None:
         ]
         logging.info(
             "Trial mode: seed=%d subset_task_ids=%s assignment=%s budget=%.1fs",
-            args.seed,
+            settings.seed,
             subset_task_ids,
             robot_task_assignment,
             settings.wall_clock_time_limit_s,
@@ -626,8 +604,7 @@ def main(args: Args) -> None:
         host=args.host,
         port=args.port,
     )
-    if args.scheduler is not None:
-        control_client.reconfigure_server(args.scheduler)
+    control_client.reconfigure_server(args.scheduler_config)
     control_client.reset_server()
     server_metadata = control_client.fetch_server_metadata()
     if settings.use_trial_mode:
@@ -671,7 +648,7 @@ def main(args: Args) -> None:
         num_robots=settings.num_robots,
         control_hz=settings.control_hz,
         broker_type=settings.action_chunk_broker_type.value,
-        seed=args.seed,
+        seed=settings.seed,
         resize_size=RESIZE_SIZE,
         episodes=[str(ep) for ep in episodes],
         max_execution_horizon=settings.max_execution_horizons(),

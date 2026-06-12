@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import enum
 import json
 import pathlib
 import subprocess
 import time
-import types
-import typing
 from collections.abc import Callable
-from dataclasses import dataclass, fields, is_dataclass
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import numpy as np
 import tyro
@@ -22,6 +18,7 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
     get_gr00t_model_dims,
     is_groot_model,
 )
+from pydantic import BaseModel
 
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory_client.messages import InferRequest, InferType
@@ -35,46 +32,7 @@ with open("configs/inference_profiles.json") as f:
 T = TypeVar("T", bound="JsonArgs")
 
 
-def _coerce(annotation: Any, value: Any) -> Any:
-    """Best-effort coercion of a JSON value to a type annotation.
-
-    Handles nested dataclasses, unions (first member that coerces wins),
-    Path, Enum, typed dict keys/values, and scalars. Anything unrecognized
-    is returned unchanged and left for the dataclass/tyro to validate.
-    """
-    origin = typing.get_origin(annotation)
-    if origin in (typing.Union, types.UnionType):
-        for member in typing.get_args(annotation):
-            if member is type(None):
-                if value is None:
-                    return None
-                continue
-            try:
-                return _coerce(member, value)
-            except (TypeError, ValueError):
-                continue
-        return value
-    if is_dataclass(annotation) and isinstance(value, dict):
-        hints = typing.get_type_hints(annotation)
-        return annotation(**{k: _coerce(hints[k], v) for k, v in value.items()})
-    if origin is dict and isinstance(value, dict):
-        key_t, val_t = typing.get_args(annotation)
-        return {_coerce(key_t, k): _coerce(val_t, v) for k, v in value.items()}
-    if origin is list and isinstance(value, list):
-        (item_t,) = typing.get_args(annotation)
-        return [_coerce(item_t, v) for v in value]
-    if isinstance(annotation, type):
-        if issubclass(annotation, pathlib.Path) and isinstance(value, str):
-            return pathlib.Path(value)
-        if issubclass(annotation, enum.Enum):
-            return annotation(value)
-        if annotation in (int, float, str, bool) and not isinstance(value, annotation):
-            return annotation(value)
-    return value
-
-
-@dataclass
-class JsonArgs:
+class JsonArgs(BaseModel):
     json_path: pathlib.Path | None = None
 
     @classmethod
@@ -83,10 +41,10 @@ class JsonArgs:
         pre.add_argument("--json-path", type=pathlib.Path, default=None)
         known, remaining = pre.parse_known_args()
 
-        defaults = cls()
         if known.json_path is not None:
-            defaults = _coerce(cls, json.loads(known.json_path.read_text()))
-        return tyro.cli(cls, args=remaining, default=defaults)
+            defaults = cls.model_validate(json.loads(known.json_path.read_text()))
+            return tyro.cli(cls, args=remaining, default=defaults)
+        return tyro.cli(cls, args=remaining)
 
 
 def get_gpu_info() -> dict[str, Any]:
@@ -114,8 +72,7 @@ def get_gpu_info() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ResolvedPolicy:
+class ResolvedPolicy(NamedTuple):
     metadata: ServerMetadata
     factory: Callable
 
