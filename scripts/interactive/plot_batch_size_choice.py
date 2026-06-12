@@ -79,16 +79,17 @@ def _batch_sizes(case_dir: pathlib.Path) -> list[int]:
 
 
 def _throughput(case_dir: pathlib.Path) -> float | None:
-    rc = case_dir / "outputs" / "results.csv"
-    rt = case_dir / "outputs" / "runtime_metadata.json"
+    outputs = case_dir / "outputs"
+    rc = outputs / "results.csv"
+    rt = outputs / "experiment_args.json"
     if not (rc.is_file() and rt.is_file()):
         return None
     try:
-        rtm = json.loads(rt.read_text())
-    except json.JSONDecodeError:
+        ec = json.loads(rt.read_text())["experiment_config"]
+    except (json.JSONDecodeError, KeyError):
         return None
-    hz = float(rtm.get("control_hz", 20))
-    nr = int(rtm.get("num_robots", 0))
+    hz = float(ec.get("control_hz", 20))
+    nr = int(ec.get("num_robots", 0))
     try:
         df = pd.read_csv(rc)
     except Exception:

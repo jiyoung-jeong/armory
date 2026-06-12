@@ -82,11 +82,11 @@ def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
             tail = max(1, int(len(rates) * 0.1))
             out["robot_starvation_rate_cvar90"] = sum(rates[-tail:]) / tail
 
-    runtime_path = output_dir / "runtime_metadata.json"
+    runtime_path = output_dir / "experiment_args.json"
     if runtime_path.exists():
-        runtime = json.loads(runtime_path.read_text())
-        out["max_steps"] = runtime.get("max_steps", "")
-        out["num_trials_per_task"] = runtime.get("num_trials_per_task", "")
+        ec = json.loads(runtime_path.read_text())["experiment_config"]
+        out["max_steps"] = ec.get("max_steps", "")
+        out["num_trials_per_task"] = ec.get("num_trials_per_task", "")
     server_path = output_dir / "server_metadata.json"
     if server_path.exists():
         server = json.loads(server_path.read_text())

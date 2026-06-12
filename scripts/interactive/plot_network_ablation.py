@@ -108,20 +108,21 @@ def _x_value(experiment: str) -> tuple[float, str] | None:
 def _case_metrics(case_dir: pathlib.Path) -> tuple[float, float] | None:
     """Return (throughput_per_min, starvation_fraction) for one ok case."""
     result_json = case_dir / "result.json"
-    runtime_json = case_dir / "outputs" / "runtime_metadata.json"
-    results_csv = case_dir / "outputs" / "results.csv"
+    outputs = case_dir / "outputs"
+    runtime_json = outputs / "experiment_args.json"
+    results_csv = outputs / "results.csv"
     if not (result_json.is_file() and runtime_json.is_file() and results_csv.is_file()):
         return None
     try:
         result = json.loads(result_json.read_text())
-        runtime = json.loads(runtime_json.read_text())
-    except json.JSONDecodeError:
+        ec = json.loads(runtime_json.read_text())["experiment_config"]
+    except (json.JSONDecodeError, KeyError):
         return None
     if result.get("status") != "ok":
         return None
 
-    control_hz = float(runtime.get("control_hz", 20))
-    num_robots = int(result.get("num_robots") or runtime.get("num_robots") or 0)
+    control_hz = float(ec.get("control_hz", 20))
+    num_robots = int(result.get("num_robots") or ec.get("num_robots") or 0)
     try:
         df = pd.read_csv(results_csv)
     except Exception:

@@ -119,16 +119,17 @@ def _load_case(
     if result.get("status") != "ok":
         return None
 
-    runtime_json = case_dir / "outputs" / "runtime_metadata.json"
-    results_csv = case_dir / "outputs" / "results.csv"
+    outputs = case_dir / "outputs"
+    runtime_json = outputs / "experiment_args.json"
+    results_csv = outputs / "results.csv"
     if not (runtime_json.is_file() and results_csv.is_file()):
         return None
     try:
-        runtime = json.loads(runtime_json.read_text())
-    except json.JSONDecodeError:
+        ec = json.loads(runtime_json.read_text())["experiment_config"]
+    except (json.JSONDecodeError, KeyError):
         return None
 
-    horizons = runtime.get("max_execution_horizon") or []
+    horizons = [h["max"] for h in ec.get("execution_horizons", [])]
     fast_robot_ids = {i for i, h in enumerate(horizons) if int(h) == fast_horizon}
     slow_robot_ids = {i for i, h in enumerate(horizons) if int(h) == slow_horizon}
 

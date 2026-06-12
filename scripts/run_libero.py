@@ -27,7 +27,7 @@ from armory_client.network_emulation import (
 from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.schemas import RuntimeMetadata, SchedulerConfig, ServerMetadata
+from armory_client.schemas import SchedulerConfig, ServerMetadata
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from utils import JsonArgs  # noqa: E402
@@ -638,20 +638,7 @@ def main(args: Args) -> None:
             "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
         )
 
-    runtime_metadata = RuntimeMetadata(
-        task_suite_name=settings.task_suite_name,
-        num_trials_per_task=settings.num_trials_per_task,
-        max_steps=settings.max_steps,
-        num_robots=settings.num_robots,
-        control_hz=settings.control_hz,
-        broker_type=settings.action_chunk_broker_type.value,
-        seed=settings.seed,
-        resize_size=RESIZE_SIZE,
-        episodes=[str(ep) for ep in episodes],
-        max_execution_horizon=settings.max_execution_horizons(),
-    )
-
-    runtime_metadata.to_json(args.output_dir / "runtime_metadata.json")
+    (args.output_dir / "experiment_args.json").write_text(args.model_dump_json(indent=2))
     server_metadata.to_json(args.output_dir / "server_metadata.json")
 
     try:

@@ -14,7 +14,7 @@ from matplotlib.patches import Patch
 from rich.console import Console
 from rich.table import Table
 
-from armory_client.schemas import ActionChunk, RuntimeMetadata, pathlib
+from armory_client.schemas import ActionChunk, pathlib
 from sims.libero.subscribers.saver import Result
 
 logger = logging.getLogger(__name__)
@@ -95,13 +95,21 @@ def load_actions_left(
     }
 
 
+def _load_experiment_config(output_path: pathlib.Path) -> dict:
+    p = output_path / "experiment_args.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())["experiment_config"]
+        except Exception:
+            pass
+    return {}
+
+
 def _load_control_hz(output_path: pathlib.Path, fallback: float = 20.0) -> float:
-    """Load control frequency from runtime metadata, falling back when absent."""
-    runtime_metadata_path = output_path / "runtime_metadata.json"
-    if runtime_metadata_path.exists():
-        control_hz = RuntimeMetadata.from_json(runtime_metadata_path).control_hz
-        if control_hz is not None and float(control_hz) > 0:
-            return float(control_hz)
+    ec = _load_experiment_config(output_path)
+    val = ec.get("control_hz")
+    if val is not None and float(val) > 0:
+        return float(val)
     return float(fallback)
 
 
@@ -412,9 +420,9 @@ def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
     Uses obs cost: A NaN in cost_history means the runtime executed a null action for that
     control step.
     """
-    runtime_metadata_path = output_path / "runtime_metadata.json"
-    assert runtime_metadata_path.exists()
-    control_hz = RuntimeMetadata.from_json(runtime_metadata_path).control_hz
+    ec = _load_experiment_config(output_path)
+    assert ec, f"experiment_args.json not found or empty in {output_path}"
+    control_hz = float(ec["control_hz"])
 
     rows = []
     for cost_history_file in sorted(output_path.glob("**/cost_history.npy")):

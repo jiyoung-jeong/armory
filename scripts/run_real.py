@@ -34,7 +34,6 @@ import tyro
 import yaml
 
 from armory.real import FleetConfig, FleetController, FleetDispatcher, RobotStatus
-from armory_client.schemas import RuntimeMetadata
 
 logger = logging.getLogger("run_real")
 
@@ -256,21 +255,25 @@ def _filter_to_booted(fleet: FleetController, targets: list, timeout_sec: float 
     return eligible
 
 
-def _write_runtime_metadata(out: pathlib.Path, robots: list, args: Args) -> None:
+def _write_experiment_args(out: pathlib.Path, robots: list, args: Args) -> None:
     estimated_max_steps = int(round(args.duration_sec * args.control_hz))
-    metadata = RuntimeMetadata(
-        task_suite_name="real",
-        num_trials_per_task=1,
-        max_steps=estimated_max_steps,
-        seed=0,
-        resize_size=args.resize_size,
-        num_robots=len(robots),
-        control_hz=args.control_hz,
-        broker_type=args.broker_type,
-        episodes=[f"real_session_{r.name}" for r in robots],
-        max_execution_horizon=[args.max_execution_horizon] * len(robots),
-    )
-    metadata.to_json(out / "runtime_metadata.json")
+    data = {
+        "experiment_config": {
+            "task_suite_name": "real",
+            "num_trials_per_task": 1,
+            "max_steps": estimated_max_steps,
+            "seed": 0,
+            "resize_size": args.resize_size,
+            "num_robots": len(robots),
+            "control_hz": args.control_hz,
+            "broker_type": args.broker_type,
+            "execution_horizons": [{"min": 0, "max": args.max_execution_horizon}] * len(robots),
+        },
+        "duration_sec": args.duration_sec,
+        "output_dir": str(out),
+        "robots": [r.name for r in robots],
+    }
+    (out / "experiment_args.json").write_text(json.dumps(data, indent=2))
 
 
 def _fetch_server_metrics(args: Args, out: pathlib.Path) -> None:
@@ -482,7 +485,7 @@ def main(args: Args) -> None:
             [f"WS-{r.id}/{r.name}" for r in targets],
         )
 
-        _write_runtime_metadata(out, targets, args)
+        _write_experiment_args(out, targets, args)
 
         # Reset server metrics so the snapshot we fetch matches this trial.
         if args.fetch_server_metrics and args.server_host:

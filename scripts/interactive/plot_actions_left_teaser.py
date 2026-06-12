@@ -35,11 +35,14 @@ def _identify_fast_rows(run_dir: pathlib.Path, mat_robots: list[str]) -> list[in
     """Return matrix-row indices that correspond to 'fast' robots — those whose
     max_execution_horizon equals the per-run minimum. Returns empty if all
     horizons are equal (homogeneous run, no fast/slow split)."""
-    meta_path = run_dir / "runtime_metadata.json"
+    meta_path = run_dir / "experiment_args.json"
     if not meta_path.exists():
         return []
-    meta = json.loads(meta_path.read_text())
-    horizons = meta.get("max_execution_horizon")
+    try:
+        ec = json.loads(meta_path.read_text())["experiment_config"]
+    except (json.JSONDecodeError, KeyError):
+        return []
+    horizons = [h["max"] for h in ec.get("execution_horizons", [])]
     if not horizons or len(set(horizons)) <= 1:
         return []
     min_h = min(horizons)
