@@ -14,7 +14,7 @@ from typing import (
 )  # Any used for shared globals
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -48,8 +48,8 @@ RESIZE_SIZE = 224
 
 class ExecutionHorizon(BaseModel):
     model_config = ConfigDict(frozen=True)
-    min: int
-    max: int
+    min: int = Field(ge=0)
+    max: int = Field(gt=0)
 
 
 # TODO: robots should own action horizon multipliers
@@ -58,10 +58,10 @@ class ExperimentConfig(BaseModel):
 
     env: Literal["libero", "mock"]
     task_suite_name: str
-    num_trials_per_task: int
-    max_steps: int
-    num_robots: int
-    control_hz: int
+    num_trials_per_task: int = Field(ge=1)
+    max_steps: int = Field(gt=0)
+    num_robots: int = Field(gt=0)
+    control_hz: int = Field(gt=0)
     action_chunk_broker_type: ActionChunkBrokerType
     execution_horizons: list[ExecutionHorizon]
     # New "trial" mode: when wall_clock_time_limit_s > 0, the seed picks
@@ -70,8 +70,8 @@ class ExperimentConfig(BaseModel):
     # its per-robot wall-clock budget is exhausted. ``max_steps`` still
     # caps each individual episode.
     subset_size: int = 0
-    wall_clock_time_limit_s: float = 0.0
-    seed: int = 7
+    wall_clock_time_limit_s: float = Field(default=0.0, ge=0.0)
+    seed: int = Field(default=7, ge=0)
 
     @property
     def use_trial_mode(self) -> bool:
@@ -85,29 +85,17 @@ class ExperimentConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "ExperimentConfig":
-        if self.num_robots <= 0:
-            raise ValueError("num_robots must be positive")
-        if not self.use_trial_mode and self.num_trials_per_task <= 0:
-            raise ValueError("num_trials_per_task must be positive")
-        if self.max_steps <= 0:
-            raise ValueError("max_steps must be positive")
-        if self.control_hz <= 0:
-            raise ValueError("control_hz must be positive")
-        if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
-            raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
         if len(self.execution_horizons) != self.num_robots:
             raise ValueError(
                 f"execution_horizons length {len(self.execution_horizons)} != num_robots {self.num_robots}"
             )
         for idx, horizon in enumerate(self.execution_horizons):
-            if horizon.min < 0:
-                raise ValueError(f"robot_{idx}.min_execution_horizon must be non-negative")
-            if horizon.max <= 0:
-                raise ValueError(f"robot_{idx}.max_execution_horizon must be positive")
             if horizon.min > horizon.max:
                 raise ValueError(f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon")
-        if self.seed < 0:
-            raise ValueError("seed must be non-negative")
+        if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
+            raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
+        if not self.use_trial_mode and self.num_trials_per_task <= 0:
+            raise ValueError("num_trials_per_task must be positive")
         return self
 
 
