@@ -782,10 +782,10 @@ def main(args: Args) -> None:
         host=args.host,
         port=args.port,
     )
-    server_metadata = control_client.fetch_server_metadata()
     if args.scheduler is not None:
-        control_client.reconfigure_server(args.scheduler, server_metadata)
+        control_client.reconfigure_server(args.scheduler)
     control_client.reset_server()
+    server_metadata = control_client.fetch_server_metadata()
     if settings.use_trial_mode:
         active_workers = 1 if args.debug else settings.num_robots
     else:

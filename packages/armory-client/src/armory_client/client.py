@@ -265,28 +265,10 @@ class BidirectionalWebsocket:
         except Exception as e:
             logger.warning(f"Could not reset server metrics: {e}")
 
-    def reconfigure_server(
-        self, config: SchedulerConfig, server_metadata: ServerMetadata
-    ) -> None:
-        """Push per-run scheduler config to the server via POST /reconfigure.
-
-        On success, mutates ``server_metadata`` in place so the on-disk
-        ``server_metadata.json`` reflects what the scheduler is actually using
-        for this run.
-        """
+    def reconfigure_server(self, config: SchedulerConfig) -> None:
+        """Push per-run scheduler config to the server via POST /reconfigure."""
         resp = requests.post(
             f"{self._http_base}/reconfigure", json=config.to_reconfigure_body(), timeout=10.0
         )
         if not resp.ok:
             raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
-        result = resp.json()
-        server_metadata.scheduling_algorithm = result.get(
-            "scheduling_algorithm", server_metadata.scheduling_algorithm
-        )
-        if "scheduler_kwargs" in result:
-            server_metadata.scheduler_kwargs = result["scheduler_kwargs"]
-        logger.info(
-            "Reconfigured server: scheduling_algorithm=%s scheduler_kwargs=%s",
-            server_metadata.scheduling_algorithm,
-            server_metadata.scheduler_kwargs,
-        )
