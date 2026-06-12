@@ -14,7 +14,6 @@ from typing import (
 )  # Any used for shared globals
 
 import numpy as np
-import requests
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -137,11 +136,6 @@ class Args(JsonArgs):
     progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
     log_dir: pathlib.Path | None = None
     debug: bool = False  # Run in single process with immediate progress output
-
-    # NOTE: can be deleted after server stuff is folded into client
-    @property
-    def http_base(self) -> str:
-        return f"http://{self.host}:{self.port}"
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
@@ -563,106 +557,6 @@ def run_robots(
                     pool.join()
 
 
-# TODO: delete this whole thing
-def _normalize_metrics_times(history: dict) -> dict:
-    """Subtract start_time from all absolute timestamps for readability."""
-    t0 = history.get("start_time", 0.0)
-    if t0 == 0.0 or t0 == float("inf"):
-        return history
-
-    def shift(v: float) -> float:
-        return round(v - t0, 6) if v and v > 0 else v
-
-    history = dict(history)
-    history["start_time"] = 0.0
-    history["end_time"] = shift(history.get("end_time", 0.0))
-
-    normalized_batches = []
-    for b in history.get("batches", []):
-        if isinstance(b, dict):
-            b = dict(b)
-            b["inference_start_time"] = shift(b.get("inference_start_time", 0.0))
-            b["inference_end_time"] = shift(b.get("inference_end_time", 0.0))
-        else:
-            # NamedTuple serialized as list: [batch_id, robot_ids, request_ids, inference_start_time, inference_end_time, ...]
-            b = list(b)
-            b[3] = shift(b[3])
-            b[4] = shift(b[4])
-        normalized_batches.append(b)
-    history["batches"] = normalized_batches
-
-    normalized_robots = {}
-    for robot_id, robot in history.get("robots", {}).items():
-        robot = dict(robot)
-        normalized_episodes = []
-        for ep in robot.get("episodes", []):
-            ep = dict(ep)
-            ep["requests"] = [
-                {
-                    **r,
-                    "request_timestamp": shift(r["request_timestamp"]),
-                    "server_arrival_time": shift(r["server_arrival_time"]),
-                }
-                for r in ep.get("requests", [])
-            ]
-            normalized_responses = []
-            for resp in ep.get("responses", []):
-                resp = dict(resp)
-                req = dict(resp.get("request", {}))
-                req["request_timestamp"] = shift(req.get("request_timestamp", 0.0))
-                req["server_arrival_time"] = shift(req.get("server_arrival_time", 0.0))
-                resp["request"] = req
-                resp["inference_start_time"] = shift(resp.get("inference_start_time", 0.0))
-                resp["inference_end_time"] = shift(resp.get("inference_end_time", 0.0))
-                if resp.get("server_send_time", 0.0) > 0:
-                    resp["server_send_time"] = shift(resp["server_send_time"])
-                if resp.get("receive_time", 0.0) > 0:
-                    resp["receive_time"] = shift(resp["receive_time"])
-                normalized_responses.append(resp)
-            ep["responses"] = normalized_responses
-            ep["step_timestamps"] = [shift(ts) for ts in ep.get("step_timestamps", [])]
-            normalized_episodes.append(ep)
-        robot["episodes"] = normalized_episodes
-        normalized_robots[robot_id] = robot
-    history["robots"] = normalized_robots
-
-    normalized_decisions = []
-    for d in history.get("scheduler_decisions", []):
-        d = dict(d)
-        d["started_at"] = shift(d.get("started_at", 0.0))
-        d["next_server_available"] = shift(d.get("next_server_available", 0.0))
-        d["deadlines"] = {k: shift(v) for k, v in d.get("deadlines", {}).items()}
-        notes = d.get("notes")
-        if isinstance(notes, dict):
-            notes = dict(notes)
-            if "next_server_available" in notes:
-                notes["next_server_available"] = shift(notes["next_server_available"])
-            phases = notes.get("phases")
-            if isinstance(phases, list):
-                notes["phases"] = [
-                    {**ph, "start": shift(ph.get("start", 0.0)), "end": shift(ph.get("end", 0.0))}
-                    for ph in phases
-                    if isinstance(ph, dict)
-                ]
-            d["notes"] = notes
-        normalized_decisions.append(d)
-    history["scheduler_decisions"] = normalized_decisions
-
-    return history
-
-
-# TODO: metric saving should be cleaner
-def save_server_metrics_history(args: Args) -> None:
-    try:
-        history = requests.get(f"{args.http_base}/save-metrics", timeout=10.0).json()
-        history = _normalize_metrics_times(history)
-        hist_path = args.output_dir / "server_metrics_history.json"
-        hist_path.write_text(json.dumps(history, indent=2))
-        logging.info(f"Saved server metrics history to {hist_path}")
-    except Exception as e:
-        logging.warning(f"Could not fetch server metrics history: {e}", exc_info=True)
-
-
 def validate_args(args: Args, settings: ExperimentSettings) -> None:
     assert args.overwrite or not args.output_dir.exists(), (
         f"Output path {args.output_dir} already exists"
@@ -832,12 +726,8 @@ def main(args: Args) -> None:
         max_execution_horizon=settings.max_execution_horizons(),
     )
 
-    # TODO: probably don't need these logs
     runtime_metadata.to_json(args.output_dir / "runtime_metadata.json")
-    logging.info(f"Saved runtime metadata to {args.output_dir / 'runtime_metadata.json'}")
-
     server_metadata.to_json(args.output_dir / "server_metadata.json")
-    logging.info(f"Saved server metadata to {args.output_dir / 'server_metadata.json'}")
 
     try:
         run_robots(
@@ -852,7 +742,9 @@ def main(args: Args) -> None:
         if network_manager is not None:
             network_manager.close()
 
-    save_server_metrics_history(args)
+    # TODO: does not match pattern above
+    history = control_client.fetch_server_metrics()
+    (args.output_dir / "server_metrics_history.json").write_text(json.dumps(history, indent=2))
 
     calculate_metrics(args.output_dir)
     generate_all_plots(args.output_dir)

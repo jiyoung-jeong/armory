@@ -272,3 +272,11 @@ class BidirectionalWebsocket:
         )
         if not resp.ok:
             raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
+
+    # TODO: metric saving should be cleaner
+    def fetch_server_metrics(self) -> dict:
+        try:
+            history = requests.get(f"{self._http_base}/save-metrics", timeout=10.0).json()
+            return history
+        except Exception as e:
+            logging.warning(f"Could not fetch server metrics history: {e}", exc_info=True)

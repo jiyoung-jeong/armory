@@ -568,8 +568,7 @@ def create_app(
             except (TypeError, ValueError, AttributeError) as e:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"action_horizon_multipliers must be a dict of "
-                    f"int->float pairs ({e})",
+                    detail=f"action_horizon_multipliers must be a dict of int->float pairs ({e})",
                 ) from e
         else:
             multipliers = dict(
@@ -608,6 +607,7 @@ def create_app(
 
     @app.get("/save-metrics")
     async def save_metrics(request: Request) -> dict:
+        # TODO: removed client-side normalization, should be done server-side and added back? might be different if we follow vllm pattern of prometheus logging
         return asdict(request.app.state.server.metrics_store)
 
     @app.post("/reset")
