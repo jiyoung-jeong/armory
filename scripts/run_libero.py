@@ -130,8 +130,6 @@ class Args(JsonArgs):
     scheduler: SchedulerConfig | None = None
 
     experiment_config: str = ""
-    # TODO: delete this arg
-    toxiproxy_server_bin: str | None = "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
 
     seed: int = 7  # Random Seed (for reproducibility)
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
@@ -795,14 +793,9 @@ def main(args: Args) -> None:
     network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
     if experiment_config is not None:
         if experiment_requires_network_emulation(experiment_config, worker_count=active_workers):
-            if not args.toxiproxy_server_bin:
-                raise ValueError(
-                    "--toxiproxy-server-bin is required when experiment config enables network emulation"
-                )
             network_output_dir = args.output_dir / "network_emulation"
             network_manager = NetworkEmulationManager(
                 experiment_config,
-                toxiproxy_server_bin=str(args.toxiproxy_server_bin),
                 upstream_host=args.host,
                 upstream_port=args.port,
                 worker_count=active_workers,

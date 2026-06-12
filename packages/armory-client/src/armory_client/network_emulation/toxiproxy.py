@@ -122,13 +122,11 @@ class ToxiproxyController:
         self,
         api_url: str,
         *,
-        server_bin: str | None = None,
         server_args: list[str] | None = None,
         session: requests.Session | None = None,
         timeout_s: float = 2.0,
     ) -> None:
         self._api_url = api_url.rstrip("/")
-        self._server_bin = server_bin
         self._server_args = list(server_args or [])
         self._session = session or requests.Session()
         self._timeout_s = timeout_s
@@ -169,12 +167,6 @@ class ToxiproxyController:
     def start_server(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
             return
-        if not self._server_bin:
-            raise ValueError("ToxiproxyController.start_server requires server_bin")
-
-        bin_path = pathlib.Path(self._server_bin)
-        if not bin_path.exists():
-            raise FileNotFoundError(f"toxiproxy server binary not found: {bin_path}")
 
         # We own lifecycle for this run and should not reuse an already-running local API
         try:
@@ -186,8 +178,9 @@ class ToxiproxyController:
                 "toxiproxy API is already reachable; refusing to reuse an existing server instance"
             )
 
+        # NOTE: toxiproxy command is hardcoded for simplicity
         self._proc = subprocess.Popen(
-            [str(bin_path), *self._server_args],
+            ["toxiproxy-server", *self._server_args],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -342,7 +335,6 @@ class NetworkEmulationManager:
         self,
         config: NetworkEmulationConfig,
         *,
-        toxiproxy_server_bin: str,
         upstream_host: str,
         upstream_port: int,
         worker_count: int,
@@ -357,7 +349,6 @@ class NetworkEmulationManager:
         toxi = self._config["toxiproxy"]
         self._controller = ToxiproxyController(
             str(toxi["api_url"]),
-            server_bin=toxiproxy_server_bin,
             server_args=list(toxi.get("server_args", [])),
         )
 
