@@ -85,23 +85,29 @@ class ExperimentConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "ExperimentConfig":
-        assert self.num_robots > 0, "num_robots must be positive"
-        if not self.use_trial_mode:
-            assert self.num_trials_per_task > 0, "num_trials_per_task must be positive"
-        assert self.max_steps > 0, "max_steps must be positive"
-        assert self.control_hz > 0, "control_hz must be positive"
-        if self.use_trial_mode:
-            assert self.wall_clock_time_limit_s > 0.0, (
-                "wall_clock_time_limit_s must be positive in trial mode"
+        if self.num_robots <= 0:
+            raise ValueError("num_robots must be positive")
+        if not self.use_trial_mode and self.num_trials_per_task <= 0:
+            raise ValueError("num_trials_per_task must be positive")
+        if self.max_steps <= 0:
+            raise ValueError("max_steps must be positive")
+        if self.control_hz <= 0:
+            raise ValueError("control_hz must be positive")
+        if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
+            raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
+        if len(self.execution_horizons) != self.num_robots:
+            raise ValueError(
+                f"execution_horizons length {len(self.execution_horizons)} != num_robots {self.num_robots}"
             )
-        assert len(self.execution_horizons) == self.num_robots
         for idx, horizon in enumerate(self.execution_horizons):
-            assert horizon.min >= 0, f"robot_{idx}.min_execution_horizon must be non-negative"
-            assert horizon.max > 0, f"robot_{idx}.max_execution_horizon must be positive"
-            assert horizon.min <= horizon.max, (
-                f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
-            )
-        assert self.seed >= 0, "seed must be non-negative"
+            if horizon.min < 0:
+                raise ValueError(f"robot_{idx}.min_execution_horizon must be non-negative")
+            if horizon.max <= 0:
+                raise ValueError(f"robot_{idx}.max_execution_horizon must be positive")
+            if horizon.min > horizon.max:
+                raise ValueError(f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon")
+        if self.seed < 0:
+            raise ValueError("seed must be non-negative")
         return self
 
 
@@ -115,6 +121,12 @@ class Args(JsonArgs):
     overwrite: bool = False
     progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
     debug: bool = False
+
+    @model_validator(mode="after")
+    def _validate(self) -> "Args":
+        if not self.overwrite and self.output_dir.exists():
+            raise ValueError(f"Output path {self.output_dir} already exists")
+        return self
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
@@ -536,9 +548,6 @@ def run_robots(
 
 
 def main(args: Args) -> None:
-    assert args.overwrite or not args.output_dir.exists(), (
-        f"Output path {args.output_dir} already exists"
-    )
     if args.overwrite:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
