@@ -87,13 +87,11 @@ class _OpenPiFactory:
         self,
         config_name: str,
         checkpoint_dir: str,
-        default_prompt: str | None,
         num_steps: int,
         env_mode: EnvMode,
     ):
         self.config_name = config_name
         self.checkpoint_dir = checkpoint_dir
-        self.default_prompt = default_prompt
         self.num_steps = num_steps
         self.env_mode = env_mode
 
@@ -101,7 +99,6 @@ class _OpenPiFactory:
         return create_policy(
             self.config_name,
             self.checkpoint_dir,
-            default_prompt=self.default_prompt,
             sample_kwargs={"num_steps": self.num_steps},
             env_mode=self.env_mode,
         )
@@ -127,7 +124,6 @@ def resolve_policy(
     policy_dir: str | None,
     max_batch_size: int,
     num_steps: int,
-    default_prompt: str | None,
     scheduling_algorithm: str,
     mock: Any = None,
 ) -> ResolvedPolicy:
@@ -190,7 +186,7 @@ def resolve_policy(
             env=env.value,
             scheduling_algorithm=scheduling_algorithm,
         )
-        factory = _OpenPiFactory(config_name, checkpoint_dir, default_prompt, num_steps, env)
+        factory = _OpenPiFactory(config_name, checkpoint_dir, num_steps, env)
 
     return ResolvedPolicy(metadata=metadata, factory=factory)
 
@@ -199,14 +195,12 @@ def create_default_policy(
     env: EnvMode,
     *,
     batch_size: int = 1,
-    default_prompt: str | None = None,
     sample_kwargs: dict | None = None,
 ):
     if checkpoint := OPENPI_CHECKPOINT.get(env):
         return create_policy(
             checkpoint["config"],
             checkpoint["dir"],
-            default_prompt=default_prompt,
             sample_kwargs=sample_kwargs,
             use_triton_optimized=(env == EnvMode.LIBERO_REALTIME),
             batch_size=batch_size,

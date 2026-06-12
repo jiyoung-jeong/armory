@@ -47,7 +47,13 @@ def _make_real_example():
 
 def _make_example_fn(env_mode: EnvMode | None):
     """Return the env-specific make_*_example() function for profiling/warmup."""
-    if env_mode in (EnvMode.REAL_ACT_20, EnvMode.REAL_ACT_40, EnvMode.REAL_ACT_60, EnvMode.REAL_ACT_80, EnvMode.REAL_ACT_100):
+    if env_mode in (
+        EnvMode.REAL_ACT_20,
+        EnvMode.REAL_ACT_40,
+        EnvMode.REAL_ACT_60,
+        EnvMode.REAL_ACT_80,
+        EnvMode.REAL_ACT_100,
+    ):
         return _make_real_example
     if env_mode in (EnvMode.REAL_SORT_LEGOS, EnvMode.REAL_STACK_CUBES, EnvMode.REAL_MULTITASK):
         return _make_real_example
@@ -74,7 +80,6 @@ def create_policy(
     config_name: str,
     checkpoint_dir: str | pathlib.Path,
     *,
-    default_prompt: str | None = None,
     sample_kwargs: dict[str, Any] | None = None,
     env_mode: EnvMode | None = None,
 ) -> OpenPiPolicyAdapter:
@@ -92,7 +97,7 @@ def create_policy(
     policy = _policy_config.create_trained_policy(
         train_config,
         checkpoint_dir,
-        default_prompt=default_prompt,
+        default_prompt=None,
         sample_kwargs=sample_kwargs,
     )
     if env_mode is not None and "env" not in policy.metadata:

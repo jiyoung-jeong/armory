@@ -54,8 +54,6 @@ class Args(JsonArgs):
 
     model: ModelFamily = ModelFamily.PI05
 
-    default_prompt: str | None = None
-
     port: int = 8080
 
     policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
@@ -115,7 +113,6 @@ def main(args: Args) -> None:
         policy_dir=policy_dir,
         max_batch_size=args.max_batch_size,
         num_steps=args.num_steps,
-        default_prompt=args.default_prompt,
         scheduling_algorithm=args.scheduling_algorithm,
         mock=mock,
     )
