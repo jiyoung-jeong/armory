@@ -228,6 +228,38 @@ class LiberoObservation(Observation):
 
 
 @dataclass
+class SchedulerConfig(JSONDataclass):
+    """Scheduler configuration shared between server boot and client reconfigure.
+
+    Owned by the client package as part of the client-server protocol: the
+    server consumes it at startup (scripts/serve.py) and accepts it via
+    POST /reconfigure; clients send it to override scheduling per run.
+    """
+
+    scheduling_algorithm: str = "greedy-deadline"
+    # Server-startup-only: POST /reconfigure preserves the boot-time alpha.
+    alpha: float = 1.0
+    action_horizon_multipliers: dict[int, float] = field(default_factory=dict)
+
+    def to_scheduler_kwargs(self) -> dict | None:
+        """Per-algorithm kwargs passed to the scheduler constructor."""
+        if self.scheduling_algorithm == "dynamic-action":
+            return {"alpha": self.alpha}
+        if self.scheduling_algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
+            return {"action_horizon_multipliers": self.action_horizon_multipliers}
+        return None
+
+    def to_reconfigure_body(self) -> dict:
+        """JSON body for POST /reconfigure (alpha is boot-only, not sent)."""
+        return {
+            "scheduling_algorithm": self.scheduling_algorithm,
+            "action_horizon_multipliers": {
+                str(k): float(v) for k, v in self.action_horizon_multipliers.items()
+            },
+        }
+
+
+@dataclass
 class ServerMetadata(JSONDataclass):
     """Metadata about the policy server and model configuration.
 

@@ -28,7 +28,7 @@ from armory_client.network_emulation import (
 from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.schemas import RuntimeMetadata, ServerMetadata
+from armory_client.schemas import RuntimeMetadata, SchedulerConfig, ServerMetadata
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from utils import JsonArgs  # noqa: E402
@@ -125,9 +125,9 @@ class Args(JsonArgs):
     host: str = "0.0.0.0"
     port: int = 8080
 
-    # TODO: this should be server config
-    scheduling_algorithm: str | None = None
-    action_horizon_multipliers: dict[int, float] | None = None
+    # Per-run scheduler override pushed via POST /reconfigure.
+    # ``None`` leaves the server's current scheduler config untouched.
+    scheduler: SchedulerConfig | None = None
 
     experiment_config: str = ""
     # TODO: delete this arg
@@ -776,16 +776,16 @@ def main(args: Args) -> None:
         else:
             episodes = create_mock_episodes(settings.num_trials_per_task * settings.num_robots)
 
-    ws_client = BidirectionalWebsocket(
-        robot_id=robot_id,
-        host=ws_host,
-        port=ws_port,
-        control_hz=float(settings.control_hz),
-        pre_send_hook=pre_send_hook,
+    # Control-plane client: HTTP only, never connect()ed to the websocket.
+    control_client = BidirectionalWebsocket(
+        robot_id="__control__",
+        host=args.host,
+        port=args.port,
     )
-    ws_client.reset_server(args)
-    server_metadata = ws_client.fetch_server_metadata(args)
-    ws_client.reconfigure_server(args, server_metadata)
+    server_metadata = control_client.fetch_server_metadata()
+    if args.scheduler is not None:
+        control_client.reconfigure_server(args.scheduler, server_metadata)
+    control_client.reset_server()
     if settings.use_trial_mode:
         active_workers = 1 if args.debug else settings.num_robots
     else:

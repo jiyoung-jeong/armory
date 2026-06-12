@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import enum
 import json
 import pathlib
 import subprocess
 import time
+import types
+import typing
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, TypeVar
 
 import numpy as np
@@ -29,8 +32,45 @@ with open("configs/inference_profiles.json") as f:
     INFERENCE_PROFILES = json.load(f)
 
 
-# TODO: ask claude how to properly type this
 T = TypeVar("T", bound="JsonArgs")
+
+
+def _coerce(annotation: Any, value: Any) -> Any:
+    """Best-effort coercion of a JSON value to a type annotation.
+
+    Handles nested dataclasses, unions (first member that coerces wins),
+    Path, Enum, typed dict keys/values, and scalars. Anything unrecognized
+    is returned unchanged and left for the dataclass/tyro to validate.
+    """
+    origin = typing.get_origin(annotation)
+    if origin in (typing.Union, types.UnionType):
+        for member in typing.get_args(annotation):
+            if member is type(None):
+                if value is None:
+                    return None
+                continue
+            try:
+                return _coerce(member, value)
+            except (TypeError, ValueError):
+                continue
+        return value
+    if is_dataclass(annotation) and isinstance(value, dict):
+        hints = typing.get_type_hints(annotation)
+        return annotation(**{k: _coerce(hints[k], v) for k, v in value.items()})
+    if origin is dict and isinstance(value, dict):
+        key_t, val_t = typing.get_args(annotation)
+        return {_coerce(key_t, k): _coerce(val_t, v) for k, v in value.items()}
+    if origin is list and isinstance(value, list):
+        (item_t,) = typing.get_args(annotation)
+        return [_coerce(item_t, v) for v in value]
+    if isinstance(annotation, type):
+        if issubclass(annotation, pathlib.Path) and isinstance(value, str):
+            return pathlib.Path(value)
+        if issubclass(annotation, enum.Enum):
+            return annotation(value)
+        if annotation in (int, float, str, bool) and not isinstance(value, annotation):
+            return annotation(value)
+    return value
 
 
 @dataclass
@@ -45,7 +85,7 @@ class JsonArgs:
 
         defaults = cls()
         if known.json_path is not None:
-            defaults = cls(json.load(open(known.json_path())))
+            defaults = _coerce(cls, json.loads(known.json_path.read_text()))
         return tyro.cli(cls, args=remaining, default=defaults)
 
 

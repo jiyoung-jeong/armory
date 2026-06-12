@@ -11,6 +11,7 @@ from typing import Literal
 
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
+from armory_client.schemas import SchedulerConfig
 from openpi_adapter.serve_factory import EnvMode
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -47,48 +48,20 @@ class Mock:
     gpu: str = "l40s"
 
 
-# TODO: lots of nesting happening, how does vllm/sglang do this
+@dataclasses.dataclass
 class Args(JsonArgs):
-    # TODO: should be some kind of server config that client can pass
     env: EnvMode = EnvMode.LIBERO
-
     model: ModelFamily = ModelFamily.PI05
-
-    port: int = 8080
-
     policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
-
-    max_batch_size: int = 1
-
     num_steps: int = 10
 
-    log_dir: str = "logs/server"
+    max_batch_size: int = 1
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
-    scheduling_algorithm: str = "greedy-deadline"
-
-    alpha: float = 1.0
-
-    # TODO: this belongs to client
-    action_horizon_multipliers: dict[int, float] = field(default_factory=dict)
-
+    port: int = 8080
     seed: int = 7
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-
-
-def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
-    if args.scheduling_algorithm == "dynamic-action":
-        return {
-            "alpha": args.alpha,
-        }
-    if args.scheduling_algorithm == "lookahead-actions":
-        return {
-            "action_horizon_multipliers": args.action_horizon_multipliers,
-        }
-    if args.scheduling_algorithm == "lookahead-actions-cpp":
-        return {
-            "action_horizon_multipliers": args.action_horizon_multipliers,
-        }
-    return None
+    log_dir: str = "logs/server"
 
 
 def main(args: Args) -> None:
@@ -113,7 +86,7 @@ def main(args: Args) -> None:
         policy_dir=policy_dir,
         max_batch_size=args.max_batch_size,
         num_steps=args.num_steps,
-        scheduling_algorithm=args.scheduling_algorithm,
+        scheduling_algorithm=args.scheduler.scheduling_algorithm,
         mock=mock,
     )
 
@@ -121,9 +94,7 @@ def main(args: Args) -> None:
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    scheduler_kwargs = build_scheduler_kwargs(
-        args, action_horizon_steps=resolved.metadata.action_horizon
-    )
+    scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
 
     server = PolicyServer(
