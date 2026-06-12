@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
 
 
+# TODO: should just be a namedtuple
 @dataclass(frozen=True)
 class ExecutionHorizon:
     min: int
@@ -240,6 +241,8 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
         control_hz=float(settings.control_hz),
         pre_send_hook=pre_send_hook,
     )
+    ws_client.connect()
+
     execution_horizon = settings.execution_horizon_for_robot(robot_idx)
     config = BrokerConfig(
         ws_client=ws_client,
@@ -562,66 +565,6 @@ def run_robots(
                     pool.join()
 
 
-# TODO: fold these into client
-def fetch_server_metadata(args: Args, timeout_s: float = 300.0) -> ServerMetadata:
-    """Fetch server metadata, retrying until timeout_s seconds have elapsed."""
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            resp = requests.get(f"{args.http_base}/metadata", timeout=5.0)
-            resp.raise_for_status()
-            return ServerMetadata(**resp.json())
-        except Exception as e:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Server at {args.http_base} did not respond within {timeout_s:.0f}s"
-                ) from e
-            logging.info("Waiting for server to be ready (%s); retrying in 5s...", e)
-            time.sleep(5.0)
-
-
-def reset_server(args: Args) -> None:
-    try:
-        requests.post(f"{args.http_base}/reset", timeout=5.0)
-        logging.info("Reset server metrics")
-    except Exception as e:
-        logging.warning(f"Could not reset server metrics: {e}")
-
-
-def reconfigure_server(args: Args, server_metadata: ServerMetadata) -> None:
-    """Push per-run scheduler config to the server via POST /reconfigure.
-
-    Skipped if both ``scheduling_algorithm`` and ``action_horizon_multipliers``
-    are ``None`` on ``args`` (i.e. the client didn't request an override).
-    On success, mutates ``server_metadata`` in place so the on-disk
-    ``server_metadata.json`` reflects what the scheduler is actually using
-    for this run.
-    """
-    if args.scheduling_algorithm is None and args.action_horizon_multipliers is None:
-        return
-    body: dict[str, Any] = {}
-    if args.scheduling_algorithm is not None:
-        body["scheduling_algorithm"] = args.scheduling_algorithm
-    if args.action_horizon_multipliers is not None:
-        body["action_horizon_multipliers"] = {
-            str(k): float(v) for k, v in args.action_horizon_multipliers.items()
-        }
-    resp = requests.post(f"{args.http_base}/reconfigure", json=body, timeout=10.0)
-    if not resp.ok:
-        raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
-    result = resp.json()
-    server_metadata.scheduling_algorithm = result.get(
-        "scheduling_algorithm", server_metadata.scheduling_algorithm
-    )
-    if "scheduler_kwargs" in result:
-        server_metadata.scheduler_kwargs = result["scheduler_kwargs"]
-    logging.info(
-        "Reconfigured server: scheduling_algorithm=%s scheduler_kwargs=%s",
-        server_metadata.scheduling_algorithm,
-        server_metadata.scheduler_kwargs,
-    )
-
-
 # TODO: delete this whole thing
 def _normalize_metrics_times(history: dict) -> dict:
     """Subtract start_time from all absolute timestamps for readability."""
@@ -833,8 +776,16 @@ def main(args: Args) -> None:
         else:
             episodes = create_mock_episodes(settings.num_trials_per_task * settings.num_robots)
 
-    server_metadata = fetch_server_metadata(args)
-    reconfigure_server(args, server_metadata)
+    ws_client = BidirectionalWebsocket(
+        robot_id=robot_id,
+        host=ws_host,
+        port=ws_port,
+        control_hz=float(settings.control_hz),
+        pre_send_hook=pre_send_hook,
+    )
+    ws_client.reset_server(args)
+    server_metadata = ws_client.fetch_server_metadata(args)
+    ws_client.reconfigure_server(args, server_metadata)
     if settings.use_trial_mode:
         active_workers = 1 if args.debug else settings.num_robots
     else:
@@ -888,13 +839,13 @@ def main(args: Args) -> None:
         max_execution_horizon=settings.max_execution_horizons(),
     )
 
+    # TODO: probably don't need these logs
     runtime_metadata.to_json(args.output_dir / "runtime_metadata.json")
     logging.info(f"Saved runtime metadata to {args.output_dir / 'runtime_metadata.json'}")
 
     server_metadata.to_json(args.output_dir / "server_metadata.json")
     logging.info(f"Saved server metadata to {args.output_dir / 'server_metadata.json'}")
 
-    reset_server(args)
     try:
         run_robots(
             args,
