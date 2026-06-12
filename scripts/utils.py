@@ -1,14 +1,18 @@
 """Shared utilities for scripts."""
 
+from __future__ import annotations
+
+import argparse
 import json
 import pathlib
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 import numpy as np
+import tyro
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
@@ -25,25 +29,24 @@ with open("configs/inference_profiles.json") as f:
     INFERENCE_PROFILES = json.load(f)
 
 
+# TODO: ask claude how to properly type this
+T = TypeVar("T", bound="JsonArgs")
+
+
+@dataclass
 class JsonArgs:
-    """Mixin for dataclass Args providing JSON serialization/deserialization."""
-
-    def to_json(self, path: str | pathlib.Path) -> None:
-        path = pathlib.Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._serialize(), indent=2))
+    json_path: pathlib.Path | None = None
 
     @classmethod
-    def from_json(cls, path: str | pathlib.Path) -> "JsonArgs":
-        data = json.loads(pathlib.Path(path).read_text())
-        return cls._deserialize(data)
+    def from_cli(cls: type[T]) -> T:
+        pre = argparse.ArgumentParser(add_help=False)
+        pre.add_argument("--json-path", type=pathlib.Path, default=None)
+        known, remaining = pre.parse_known_args()
 
-    def _serialize(self) -> dict:
-        raise NotImplementedError
-
-    @classmethod
-    def _deserialize(cls, data: dict) -> "JsonArgs":
-        raise NotImplementedError
+        defaults = cls()
+        if known.json_path is not None:
+            defaults = cls(json.load(open(known.json_path())))
+        return tyro.cli(cls, args=remaining, default=defaults)
 
 
 def get_gpu_info() -> dict[str, Any]:

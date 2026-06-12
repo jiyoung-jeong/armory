@@ -15,7 +15,6 @@ from typing import (
 
 import numpy as np
 import requests
-import tyro
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -122,30 +121,17 @@ class ExperimentSettings:
 
 @dataclass
 class Args(JsonArgs):
-    json_path: pathlib.Path | None = None
-    #################################################################################################################
-    # Model server parameters
-    #################################################################################################################
     host: str = "0.0.0.0"
     port: int = 8080
 
-    #################################################################################################################
-    # Per-run scheduler overrides (sent to the server via POST /reconfigure)
-    # so the same server process can switch scheduler/multipliers between cases
-    # without a restart. ``None`` leaves the server's current value untouched.
-    #################################################################################################################
+    # TODO: this should be server config
     scheduling_algorithm: str | None = None
     action_horizon_multipliers: dict[int, float] | None = None
 
-    #################################################################################################################
-    # Network emulation parameters
-    #################################################################################################################
     experiment_config: str = ""
+    # TODO: delete this arg
     toxiproxy_server_bin: str | None = "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
 
-    #################################################################################################################
-    # Utils
-    #################################################################################################################
     seed: int = 7  # Random Seed (for reproducibility)
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
     overwrite: bool = False
@@ -153,36 +139,10 @@ class Args(JsonArgs):
     log_dir: pathlib.Path | None = None
     debug: bool = False  # Run in single process with immediate progress output
 
+    # NOTE: can be deleted after server stuff is folded into client
     @property
     def http_base(self) -> str:
         return f"http://{self.host}:{self.port}"
-
-    def _serialize(self) -> dict:
-        return {
-            "host": self.host,
-            "port": self.port,
-            "scheduling_algorithm": self.scheduling_algorithm,
-            "action_horizon_multipliers": self.action_horizon_multipliers,
-            "experiment_config": self.experiment_config,
-            "toxiproxy_server_bin": self.toxiproxy_server_bin,
-            "seed": self.seed,
-            "output_dir": str(self.output_dir),
-            "overwrite": self.overwrite,
-            "progress_type": self.progress_type,
-            "log_dir": str(self.log_dir) if self.log_dir is not None else None,
-            "debug": self.debug,
-        }
-
-    @classmethod
-    def _deserialize(cls, data: dict) -> "Args":
-        kwargs = dict(data)
-        if "output_dir" in kwargs:
-            kwargs["output_dir"] = pathlib.Path(kwargs["output_dir"])
-        if "log_dir" in kwargs and kwargs["log_dir"] is not None:
-            kwargs["log_dir"] = pathlib.Path(kwargs["log_dir"])
-        if (m := kwargs.get("action_horizon_multipliers")) is not None:
-            kwargs["action_horizon_multipliers"] = {int(k): float(v) for k, v in m.items()}
-        return cls(**kwargs)
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
@@ -602,6 +562,7 @@ def run_robots(
                     pool.join()
 
 
+# TODO: fold these into client
 def fetch_server_metadata(args: Args, timeout_s: float = 300.0) -> ServerMetadata:
     """Fetch server metadata, retrying until timeout_s seconds have elapsed."""
     deadline = time.monotonic() + timeout_s
@@ -661,6 +622,7 @@ def reconfigure_server(args: Args, server_metadata: ServerMetadata) -> None:
     )
 
 
+# TODO: delete this whole thing
 def _normalize_metrics_times(history: dict) -> dict:
     """Subtract start_time from all absolute timestamps for readability."""
     t0 = history.get("start_time", 0.0)
@@ -748,6 +710,7 @@ def _normalize_metrics_times(history: dict) -> dict:
     return history
 
 
+# TODO: metric saving should be cleaner
 def save_server_metrics_history(args: Args) -> None:
     try:
         history = requests.get(f"{args.http_base}/save-metrics", timeout=10.0).json()
@@ -784,8 +747,6 @@ def validate_args(args: Args, settings: ExperimentSettings) -> None:
 
 
 def main(args: Args) -> None:
-    if args.json_path is not None:
-        args = Args.from_json(args.json_path)
     experiment_config = load_experiment_config(args.experiment_config)
     settings = ExperimentSettings.from_config(experiment_config)
     if settings.use_trial_mode:
@@ -968,4 +929,5 @@ if __name__ == "__main__":
         # macOS: forked processes can crash inside Apple frameworks; keep
         # spawn (also allows multiple processes with envs).
         multiprocessing.set_start_method("spawn")
-    main(tyro.cli(Args))
+
+    main(Args.from_cli())
