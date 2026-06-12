@@ -22,7 +22,6 @@ from armory_client.network_emulation import (
     RobotNetworkHook,
     WorkerNetworkContext,
     experiment_requires_network_emulation,
-    load_experiment_config,
 )
 from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
@@ -46,15 +45,17 @@ logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
 
 
-# TODO: should just be a namedtuple
+# TODO: should just be a namedtuple, should actually figure out validation first
 @dataclass(frozen=True)
 class ExecutionHorizon:
     min: int
     max: int
 
 
+# TODO: maybe use pydantic validation too
+# TODO: robots should own action horizon multipliers
 @dataclass(frozen=True)
-class ExperimentSettings:
+class ExperimentConfig:
     env: Literal["libero", "mock"]
     task_suite_name: str
     num_trials_per_task: int
@@ -70,47 +71,11 @@ class ExperimentSettings:
     # caps each individual episode.
     subset_size: int = 0
     wall_clock_time_limit_s: float = 0.0
+    seed: int = 7  # Random Seed (for reproducibility)
 
     @property
     def use_trial_mode(self) -> bool:
         return self.wall_clock_time_limit_s > 0.0
-
-    @classmethod
-    def from_config(cls, experiment_config: dict[str, object]) -> "ExperimentSettings":
-        experiment = experiment_config["experiment"]
-        robots = experiment_config["robots"]
-        if not isinstance(experiment, dict) or not isinstance(robots, dict):
-            raise ValueError("Experiment config is malformed")
-
-        num_robots = int(experiment["num_robots"])
-        execution_horizons = []
-        for idx in range(num_robots):
-            robot_cfg = robots[f"robot_{idx}"]
-            execution_horizons.append(
-                ExecutionHorizon(
-                    min=int(robot_cfg["min_execution_horizon"]),
-                    max=int(robot_cfg["max_execution_horizon"]),
-                )
-            )
-
-        env = str(experiment["env"])
-        if env not in ("libero", "mock"):
-            raise ValueError(f"Invalid env in experiment config: {env}")
-
-        return cls(
-            env=env,
-            task_suite_name=str(experiment["task_suite_name"]),
-            num_trials_per_task=int(experiment.get("trials_per_robot", 1)),
-            max_steps=int(experiment["max_steps"]),
-            num_robots=num_robots,
-            control_hz=int(experiment["control_hz"]),
-            action_chunk_broker_type=ActionChunkBrokerType.from_string(
-                str(experiment["action_chunk_broker_type"])
-            ),
-            execution_horizons=execution_horizons,
-            subset_size=int(experiment.get("subset_size", 0)),
-            wall_clock_time_limit_s=float(experiment.get("wall_clock_time_limit_s", 0.0)),
-        )
 
     def execution_horizon_for_robot(self, robot_idx: int) -> ExecutionHorizon:
         return self.execution_horizons[robot_idx]
@@ -118,24 +83,62 @@ class ExperimentSettings:
     def max_execution_horizons(self) -> list[int]:
         return [h.max for h in self.execution_horizons]
 
+    def __post_init__(self):
+        assert self.num_robots > 0, "num_robots must be positive"
+        if not self.use_trial_mode:
+            assert self.num_trials_per_task > 0, "num_trials_per_task must be positive"
+        assert self.max_steps > 0, "max_steps must be positive"
+        assert self.control_hz > 0, "control_hz must be positive"
+        if self.use_trial_mode:
+            assert self.wall_clock_time_limit_s > 0.0, (
+                "wall_clock_time_limit_s must be positive in trial mode"
+            )
+        assert len(self.execution_horizons) == self.num_robots
+        for idx, horizon in enumerate(self.execution_horizons):
+            assert horizon.min >= 0, f"robot_{idx}.min_execution_horizon must be non-negative"
+            assert horizon.max > 0, f"robot_{idx}.max_execution_horizon must be positive"
+            assert horizon.min <= horizon.max, (
+                f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
+            )
+        assert self.seed >= 0, "seed must be non-negative"
+
+        if self.use_trial_mode:
+            logging.info(
+                "Loaded experiment config: env=%s mode=%s num_robots=%d "
+                "subset_size=%d wall_clock_time_limit_s=%.1f",
+                self.env,
+                self.action_chunk_broker_type.value,
+                self.num_robots,
+                self.subset_size,
+                self.wall_clock_time_limit_s,
+            )
+        else:
+            logging.info(
+                "Loaded experiment config: env=%s mode=%s num_robots=%d trials_per_robot=%d",
+                self.env,
+                self.action_chunk_broker_type.value,
+                self.num_robots,
+                self.num_trials_per_task,
+            )
+
 
 @dataclass
 class Args(JsonArgs):
+    scheduler_config: SchedulerConfig
+    experiment_config: ExperimentConfig
+
     host: str = "0.0.0.0"
     port: int = 8080
-
-    # Per-run scheduler override pushed via POST /reconfigure.
-    # ``None`` leaves the server's current scheduler config untouched.
-    scheduler: SchedulerConfig | None = None
-
-    experiment_config: str = ""
-
-    seed: int = 7  # Random Seed (for reproducibility)
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
     overwrite: bool = False
     progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
-    log_dir: pathlib.Path | None = None
     debug: bool = False  # Run in single process with immediate progress output
+
+    def __post_init__(self):
+        assert self.overwrite or not self.output_dir.exists(), (
+            f"Output path {self.output_dir} already exists"
+        )
+        assert self.experiment_config, "experiment_config is required"
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
@@ -163,7 +166,6 @@ def _init_worker_shared(
 @dataclass
 class _WorkerArgs:
     args: Args
-    settings: ExperimentSettings
     server_metadata: ServerMetadata
     robot_idx: int
     # In trial mode, the task this robot is pinned to. ``None`` outside trial mode.
@@ -208,7 +210,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     - **Legacy mode**: pull episodes from the shared queue until empty.
     """
     args = worker_args.args
-    settings = worker_args.settings
+    settings = worker_args.args.settings
     robot_idx = worker_args.robot_idx
     robot_id = f"robot_{robot_idx}"
 
@@ -379,7 +381,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
 def _trial_loop(
     *,
     args: "Args",
-    settings: ExperimentSettings,
+    settings: ExperimentConfig,
     robot_idx: int,
     worker_args: _WorkerArgs,
     task_suite: Any,
@@ -481,7 +483,7 @@ def _trial_loop(
 
 def run_robots(
     args: Args,
-    settings: ExperimentSettings,
+    settings: ExperimentConfig,
     episodes: list[Episode],
     server_metadata: ServerMetadata,
     network_worker_contexts: dict[str, WorkerNetworkContext] | None = None,
@@ -557,75 +559,24 @@ def run_robots(
                     pool.join()
 
 
-# TODO: this belongs as part of args
-def validate_args(args: Args, settings: ExperimentSettings) -> None:
-    assert args.overwrite or not args.output_dir.exists(), (
-        f"Output path {args.output_dir} already exists"
-    )
-    assert args.experiment_config, "experiment_config is required"
-    assert settings.num_robots > 0, "num_robots must be positive"
-    if not settings.use_trial_mode:
-        assert settings.num_trials_per_task > 0, "num_trials_per_task must be positive"
-    assert settings.max_steps > 0, "max_steps must be positive"
-    assert settings.control_hz > 0, "control_hz must be positive"
-    if settings.use_trial_mode:
-        assert settings.wall_clock_time_limit_s > 0.0, (
-            "wall_clock_time_limit_s must be positive in trial mode"
-        )
-    assert len(settings.execution_horizons) == settings.num_robots
-    for idx, horizon in enumerate(settings.execution_horizons):
-        assert horizon.min >= 0, f"robot_{idx}.min_execution_horizon must be non-negative"
-        assert horizon.max > 0, f"robot_{idx}.max_execution_horizon must be positive"
-        assert horizon.min <= horizon.max, (
-            f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
-        )
-    assert args.seed >= 0, "seed must be non-negative"
-
-
 def main(args: Args) -> None:
-    experiment_config = load_experiment_config(args.experiment_config)
-    settings = ExperimentSettings.from_config(experiment_config)
-    if settings.use_trial_mode:
-        logging.info(
-            "Loaded experiment config from %s: env=%s mode=%s num_robots=%d "
-            "subset_size=%d wall_clock_time_limit_s=%.1f",
-            args.experiment_config,
-            settings.env,
-            settings.action_chunk_broker_type.value,
-            settings.num_robots,
-            settings.subset_size,
-            settings.wall_clock_time_limit_s,
-        )
-    else:
-        logging.info(
-            "Loaded experiment config from %s: env=%s mode=%s num_robots=%d trials_per_robot=%d",
-            args.experiment_config,
-            settings.env,
-            settings.action_chunk_broker_type.value,
-            settings.num_robots,
-            settings.num_trials_per_task,
-        )
-
-    validate_args(args, settings)
-
     if args.overwrite:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.log_dir is not None:
-        log_file_name = f"libero_multi_robot_runtime_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
-        log_file_path = args.log_dir / log_file_name
-        args.log_dir.mkdir(parents=True, exist_ok=True)
-        logging_config.setup_logging(
-            log_path=log_file_path, level=logging.DEBUG if args.debug else logging.INFO
-        )
-    else:
-        logging_config.setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
+    log_file_path = (
+        args.log_dir
+        / f"libero_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
+    )
+    args.log_dir.mkdir(parents=True, exist_ok=True)
+    # TODO: would be nice to see debug logs but not all debug logs
+    logging_config.setup_logging(log_path=log_file_path, level=logging.INFO)
 
     seed_everything(args.seed)
 
     robot_task_assignment: list[int] | None = None
     subset_task_ids: list[int] = []
+    settings = args.experiment_config  # NOTE: hack for now, change everything below later
     if settings.use_trial_mode:
         from sims.libero.episodes import (
             _MockTask,
@@ -686,33 +637,32 @@ def main(args: Args) -> None:
 
     network_manager = None
     network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
-    if experiment_config is not None:
-        if experiment_requires_network_emulation(experiment_config, worker_count=active_workers):
-            network_output_dir = args.output_dir / "network_emulation"
-            network_manager = NetworkEmulationManager(
-                experiment_config,
-                upstream_host=args.host,
-                upstream_port=args.port,
-                worker_count=active_workers,
-                output_dir=network_output_dir,
-            )
-            try:
-                network_worker_contexts = network_manager.start()
-            except Exception:
-                network_manager.close()
-                raise
-            logging.info(
-                "Network emulation enabled for %d worker(s)",
-                sum(
-                    1
-                    for context in network_worker_contexts.values()
-                    if bool(context.get("emulate_network", True))
-                ),
-            )
-        else:
-            logging.info(
-                "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
-            )
+    if experiment_requires_network_emulation(settings, worker_count=active_workers):
+        network_output_dir = args.output_dir / "network_emulation"
+        network_manager = NetworkEmulationManager(
+            settings,
+            upstream_host=args.host,
+            upstream_port=args.port,
+            worker_count=active_workers,
+            output_dir=network_output_dir,
+        )
+        try:
+            network_worker_contexts = network_manager.start()
+        except Exception:
+            network_manager.close()
+            raise
+        logging.info(
+            "Network emulation enabled for %d worker(s)",
+            sum(
+                1
+                for context in network_worker_contexts.values()
+                if bool(context.get("emulate_network", True))
+            ),
+        )
+    else:
+        logging.info(
+            "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
+        )
 
     runtime_metadata = RuntimeMetadata(
         task_suite_name=settings.task_suite_name,

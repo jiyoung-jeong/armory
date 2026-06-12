@@ -41,8 +41,6 @@ import pathlib
 import sys
 from typing import Any
 
-from armory_client.network_emulation import load_experiment_config
-
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # _setups, _utils
 sys.path.insert(0, str(_HERE.parent))  # serve, run_libero
@@ -212,6 +210,7 @@ def main(
     ]
     client_paths = _client_config_paths(client_config)
     config_root = pathlib.Path(client_config) if pathlib.Path(client_config).is_dir() else None
+    # TODO: load using ExperimentConfig class, which should be part of armory-evaluation
     experiment_configs = [
         (_experiment_name(path, root=config_root), load_experiment_config(path))
         for path in client_paths

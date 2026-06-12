@@ -85,8 +85,8 @@ class Case:
         self.client_args.experiment_config = str(self.experiment_config_path)
 
     @property
-    def settings(self) -> run_libero.ExperimentSettings:
-        return run_libero.ExperimentSettings.from_config(self.experiment_config)
+    def settings(self) -> run_libero.ExperimentConfig:
+        return run_libero.ExperimentConfig.from_config(self.experiment_config)
 
     @property
     def num_robots(self) -> int:

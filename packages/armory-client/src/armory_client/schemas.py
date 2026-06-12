@@ -227,6 +227,7 @@ class LiberoObservation(Observation):
     prompt: str
 
 
+# TODO: maybe this shouldn't actually belong to the client
 @dataclass
 class SchedulerConfig(JSONDataclass):
     """Scheduler configuration shared between server boot and client reconfigure.

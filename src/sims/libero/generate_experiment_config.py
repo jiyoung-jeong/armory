@@ -15,8 +15,6 @@ import json
 import pathlib
 from typing import Any
 
-from armory_client.network_emulation import load_experiment_config
-
 NETWORK_FIELDS = (
     "uplink_median_ms",
     "uplink_sigma",
@@ -239,7 +237,8 @@ def main() -> None:
     output_path = pathlib.Path(args.output_config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, indent=2))
-    load_experiment_config(output_path)
+    # TODO: load using ExperimentConfig class, which should be part of armory-evaluation
+    # load_experiment_config(output_path)
     print(f"Wrote generated experiment config to {output_path}")
 
 
