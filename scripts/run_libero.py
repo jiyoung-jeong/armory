@@ -557,6 +557,7 @@ def run_robots(
                     pool.join()
 
 
+# TODO: this belongs as part of args
 def validate_args(args: Args, settings: ExperimentSettings) -> None:
     assert args.overwrite or not args.output_dir.exists(), (
         f"Output path {args.output_dir} already exists"

@@ -66,6 +66,7 @@ class Args(JsonArgs):
 
 def main(args: Args) -> None:
     seed_everything(args.seed)
+    # TODO: unify log setup
     log_path = (
         pathlib.Path(args.log_dir)
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
@@ -94,6 +95,7 @@ def main(args: Args) -> None:
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
+    # TODO: maybe don't need kwargs
     scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
 
