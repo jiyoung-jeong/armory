@@ -52,7 +52,7 @@ from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
 
 ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit", "lookahead-actions"}
-SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
+SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}
 
 
 def parse_list_args(value: str, *, cast=str) -> list[Any]:
@@ -212,7 +212,7 @@ def main(
     config_root = pathlib.Path(client_config) if pathlib.Path(client_config).is_dir() else None
     # TODO: load using ExperimentConfig class, which should be part of armory-evaluation
     experiment_configs = [
-        (_experiment_name(path, root=config_root), load_experiment_config(path))
+        (_experiment_name(path, root=config_root))  # load_experiment_config(path))
         for path in client_paths
     ]
     client_args = run_libero.Args(experiment_config="", progress_type="logging", overwrite=True)

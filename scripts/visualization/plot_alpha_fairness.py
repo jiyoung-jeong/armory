@@ -11,10 +11,9 @@ BASELINE_SCHEDULERS = (
     "greedy-deadline",
     "round-robin",
     "lookahead-actions",
-    "lookahead-actions-cpp",
 )
 DYNAMIC_SCHEDULERS = ("dynamic-action", "action-deficit", "starvation-fair", "lookahead-actions")
-LOOKAHEAD_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
+LOOKAHEAD_SCHEDULERS = {"lookahead-actions"}
 
 BASELINE_STYLE = {
     "max-batch": {"marker": "o", "color": "#1f77b4"},
@@ -22,10 +21,6 @@ BASELINE_STYLE = {
     "greedy-deadline": {"marker": "^", "color": "#2ca02c"},
     "round-robin": {"marker": "D", "color": "#d62728"},
     "lookahead-actions": {"marker": "o", "color": "#9467bd"},
-    # Distinct marker from "lookahead-actions" (color is overridden per-ratio
-    # via LOOKAHEAD_COLORS) so a cpp/python parity sweep is visually legible
-    # when both are present.
-    "lookahead-actions-cpp": {"marker": "*", "color": "#9467bd"},
 }
 LOOKAHEAD_COLORS = (
     "#9467bd",

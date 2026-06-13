@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import gc
 import logging
 import multiprocessing as mp
 import signal
 from multiprocessing.synchronize import Event
 
-import gc
 import zmq
 
 from armory.scheduling.action_deficit import ActionDeficitScheduler
@@ -21,7 +21,6 @@ from armory.scheduling.baselines import (
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead import LookaheadScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
-from armory.scheduling.lookahead_actions_cpp import LookaheadActionsCppScheduler
 from armory.scheduling.starvation_fair import StarvationFairScheduler
 from armory.serving.schemas import (
     AckNotification,
@@ -46,7 +45,6 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "starvation-fair": StarvationFairScheduler,
     "lookahead": LookaheadScheduler,
     "lookahead-actions": LookaheadActionsScheduler,
-    "lookahead-actions-cpp": LookaheadActionsCppScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,
     "starvation": StarvationScheduler,
@@ -142,12 +140,7 @@ class SchedulerWorker:
         while True:
             tick += 1
             # logger.debug("tick=%d stage=poll_wait", tick)
-            events = poller.poll(timeout=1)
-            ready = {
-                "req": any(s is req_sock for s, _ in events),
-                "result": any(s is result_sock for s, _ in events),
-            }
-            # logger.debug("tick=%d stage=poll_done ready=%s", tick, ready)
+            poller.poll(timeout=1)
 
             # logger.debug("tick=%d stage=process_engine", tick)
             self._process_engine_messages(self._current_scheduler, result_sock)
@@ -177,7 +170,7 @@ class SchedulerWorker:
                 msg = result_sock.recv_pyobj()
                 assert isinstance(msg, BatchProfile), f"Unexpected message: {type(msg).__name__}"
                 return msg.latencies
-                
+
     def _process_engine_messages(
         self, scheduler: RequestScheduler, result_sock: zmq.Socket
     ) -> None:

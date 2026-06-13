@@ -2,7 +2,7 @@ import csv
 import json
 import pathlib
 import time
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from typing import Any, TypeVar
 
 import numpy as np
@@ -243,7 +243,7 @@ class SchedulerConfig(JSONDataclass):
         """Per-algorithm kwargs passed to the scheduler constructor."""
         if self.scheduling_algorithm == "dynamic-action":
             return {"alpha": self.alpha}
-        if self.scheduling_algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
+        if self.scheduling_algorithm in ("lookahead-actions"):
             return {"action_horizon_multipliers": self.action_horizon_multipliers}
         return None
 
