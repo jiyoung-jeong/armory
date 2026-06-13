@@ -24,6 +24,7 @@ import pathlib
 from collections import defaultdict
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -38,15 +39,15 @@ SCHEDULER_DISPLAY = {
 # Match the canonical palette/markers from plot_summary_lines.py so the
 # network-ablation figures read consistently with the other sim results.
 SCHEDULER_COLORS = {
-    "max-batch":   "#8E6CA8",  # muted purple (no red/yellow)
+    "max-batch": "#8E6CA8",  # muted purple (no red/yellow)
     "round-robin": "#5FA86F",  # muted green
     "lookahead-actions@ahm=1": "#6FB0D6",  # blue family, tighter spread
     "lookahead-actions@ahm=3": "#3C86B8",
     "lookahead-actions@ahm=5": "#1E5C84",
 }
 SCHEDULER_MARKERS = {
-    "max-batch":              "s",
-    "round-robin":            "D",
+    "max-batch": "s",
+    "round-robin": "D",
     "lookahead-actions@ahm=1": "o",
     "lookahead-actions@ahm=3": "o",
     "lookahead-actions@ahm=5": "o",
@@ -99,7 +100,7 @@ def _x_value(experiment: str) -> tuple[float, str] | None:
             return None
     if experiment.startswith("sigma_"):
         try:
-            return float(experiment[len("sigma_"):]), "variance"
+            return float(experiment[len("sigma_") :]), "variance"
         except ValueError:
             return None
     return None
@@ -196,10 +197,15 @@ def _plot_metric(
         else:
             stds = None
         ax.errorbar(
-            xs, means, yerr=stds,
+            xs,
+            means,
+            yerr=stds,
             marker=SCHEDULER_MARKERS.get(sch, "o"),
             color=SCHEDULER_COLORS.get(sch, "#444444"),
-            linewidth=2.0, markersize=7, capsize=4, capthick=1.2,
+            linewidth=2.0,
+            markersize=7,
+            capsize=4,
+            capthick=1.2,
             label=_scheduler_display(sch),
         )
 
@@ -227,14 +233,20 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("run_dir", type=pathlib.Path,
-                   help="Sweep run dir (the timestamp dir with case subdirs).")
-    p.add_argument("--out-dir", type=pathlib.Path, default=None,
-                   help="Output dir (default: <run_dir>/plots).")
-    p.add_argument("--prefix", type=str, default=None,
-                   help="Filename prefix override (default: <mode>). Use e.g. "
-                        "'hom_median' to land several runs in one shared folder "
-                        "without clobbering.")
+    p.add_argument(
+        "run_dir", type=pathlib.Path, help="Sweep run dir (the timestamp dir with case subdirs)."
+    )
+    p.add_argument(
+        "--out-dir", type=pathlib.Path, default=None, help="Output dir (default: <run_dir>/plots)."
+    )
+    p.add_argument(
+        "--prefix",
+        type=str,
+        default=None,
+        help="Filename prefix override (default: <mode>). Use e.g. "
+        "'hom_median' to land several runs in one shared folder "
+        "without clobbering.",
+    )
     return p.parse_args()
 
 
@@ -264,23 +276,33 @@ def main() -> None:
         prefix = args.prefix
 
     _plot_metric(
-        out_dir / f"net_ablation_{prefix}_throughput.png", data, "thr",
-        y_scale=1.0, xlabel=xlabel,
-        ylabel="System throughput (successes / min)", log_x=log_x,
+        out_dir / f"net_ablation_{prefix}_throughput.png",
+        data,
+        "thr",
+        y_scale=1.0,
+        xlabel=xlabel,
+        ylabel="System throughput (successes / min)",
+        log_x=log_x,
         error_bars=error_bars,
     )
     _plot_metric(
-        out_dir / f"net_ablation_{prefix}_starvation.png", data, "starv",
-        y_scale=100.0, xlabel=xlabel,
-        ylabel="Average starvation rate (%)", log_x=log_x,
+        out_dir / f"net_ablation_{prefix}_starvation.png",
+        data,
+        "starv",
+        y_scale=100.0,
+        xlabel=xlabel,
+        ylabel="Average starvation rate (%)",
+        log_x=log_x,
         error_bars=error_bars,
     )
 
     n_pts = len({x for x, _ in data})
     n_sched = len({s for _, s in data})
     print(f"Mode: {mode}   x-points: {n_pts}   schedulers: {n_sched}")
-    print(f"Wrote net_ablation_{prefix}_throughput.{{png,pdf}} and "
-          f"net_ablation_{prefix}_starvation.{{png,pdf}} to {out_dir}")
+    print(
+        f"Wrote net_ablation_{prefix}_throughput.{{png,pdf}} and "
+        f"net_ablation_{prefix}_starvation.{{png,pdf}} to {out_dir}"
+    )
 
 
 if __name__ == "__main__":

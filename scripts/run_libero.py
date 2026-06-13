@@ -91,7 +91,9 @@ class ExperimentConfig(BaseModel):
             )
         for idx, horizon in enumerate(self.execution_horizons):
             if horizon.min > horizon.max:
-                raise ValueError(f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon")
+                raise ValueError(
+                    f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
+                )
         if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
             raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
         if not self.use_trial_mode and self.num_trials_per_task <= 0:

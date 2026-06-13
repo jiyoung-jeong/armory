@@ -19,7 +19,6 @@ import json
 import pathlib
 import sys
 
-import matplotlib
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,13 +49,14 @@ def _identify_fast_rows(run_dir: pathlib.Path, mat_robots: list[str]) -> list[in
     return [r for r, rid in enumerate(mat_robots) if rid in fast_robot_ids]
 
 
-def _build_listed_cmap(anchor_hex: str, light_hex: str, dark_hex: str, vmax: int) -> mcolors.ListedColormap:
+def _build_listed_cmap(
+    anchor_hex: str, light_hex: str, dark_hex: str, vmax: int
+) -> mcolors.ListedColormap:
     grad = mcolors.LinearSegmentedColormap.from_list(
-        f"grad_{anchor_hex}", [light_hex, anchor_hex, dark_hex],
+        f"grad_{anchor_hex}",
+        [light_hex, anchor_hex, dark_hex],
     ).resampled(vmax)
-    cmap = mcolors.ListedColormap(
-        [(1.0, 1.0, 1.0, 0.0)] + [grad(i) for i in range(vmax)]
-    )
+    cmap = mcolors.ListedColormap([(1.0, 1.0, 1.0, 0.0)] + [grad(i) for i in range(vmax)])
     cmap.set_bad(color=(1.0, 1.0, 1.0, 0.0))
     return cmap
 
@@ -74,29 +74,45 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--run-a", type=pathlib.Path, required=True,
-                   help="Run directory (left panel).")
-    p.add_argument("--run-b", type=pathlib.Path, required=True,
-                   help="Run directory (right panel).")
-    p.add_argument("--label-a", type=str, default="",
-                   help="Short title above the left panel (default: empty).")
-    p.add_argument("--label-b", type=str, default="",
-                   help="Short title above the right panel (default: empty).")
-    p.add_argument("--out", type=pathlib.Path,
-                   default=pathlib.Path("data/libero/actions_left_teaser.png"))
-    p.add_argument("--control-hz", type=float, default=None,
-                   help="Override canvas rate (default: derive from data).")
-    p.add_argument("--max-robots", type=int, default=None,
-                   help="Show only robots with index 0..max_robots-1. "
-                        "Default: show all.")
-    p.add_argument("--height", type=float, default=3.2,
-                   help="Figure height in inches (default 3.2).")
-    p.add_argument("--width-scale", type=float, default=0.07,
-                   help="Width in inches per second of run (default 0.07).")
-    p.add_argument("--min-width", type=float, default=10.0,
-                   help="Lower bound on figure width (default 10).")
-    p.add_argument("--transparent", action="store_true",
-                   help="Save with a transparent background.")
+    p.add_argument("--run-a", type=pathlib.Path, required=True, help="Run directory (left panel).")
+    p.add_argument("--run-b", type=pathlib.Path, required=True, help="Run directory (right panel).")
+    p.add_argument(
+        "--label-a", type=str, default="", help="Short title above the left panel (default: empty)."
+    )
+    p.add_argument(
+        "--label-b",
+        type=str,
+        default="",
+        help="Short title above the right panel (default: empty).",
+    )
+    p.add_argument(
+        "--out", type=pathlib.Path, default=pathlib.Path("data/libero/actions_left_teaser.png")
+    )
+    p.add_argument(
+        "--control-hz",
+        type=float,
+        default=None,
+        help="Override canvas rate (default: derive from data).",
+    )
+    p.add_argument(
+        "--max-robots",
+        type=int,
+        default=None,
+        help="Show only robots with index 0..max_robots-1. Default: show all.",
+    )
+    p.add_argument(
+        "--height", type=float, default=3.2, help="Figure height in inches (default 3.2)."
+    )
+    p.add_argument(
+        "--width-scale",
+        type=float,
+        default=0.07,
+        help="Width in inches per second of run (default 0.07).",
+    )
+    p.add_argument(
+        "--min-width", type=float, default=10.0, help="Lower bound on figure width (default 10)."
+    )
+    p.add_argument("--transparent", action="store_true", help="Save with a transparent background.")
     return p.parse_args()
 
 
@@ -156,7 +172,8 @@ def main() -> None:
     sec_b = mat_b.shape[1] / hz_b
     fig_width = max(args.min_width, args.width_scale * (sec_a + sec_b) + 1.0)
     fig, axes = plt.subplots(
-        1, 2,
+        1,
+        2,
         figsize=(fig_width, args.height),
         gridspec_kw={"width_ratios": [sec_a, sec_b]},
         sharey=True,
@@ -165,26 +182,37 @@ def main() -> None:
 
     im_slow = None
     im_fast = None
-    any_fast = bool(fast_rows_a) or bool(fast_rows_b)
-    for idx, (ax, mat, robots, fast_rows, label, hz_, secs) in enumerate([
-        (axes[0], mat_a, robots_a, fast_rows_a, args.label_a, hz_a, sec_a),
-        (axes[1], mat_b, robots_b, fast_rows_b, args.label_b, hz_b, sec_b),
-    ]):
+    for idx, (ax, mat, robots, fast_rows, label, hz_, secs) in enumerate(
+        [
+            (axes[0], mat_a, robots_a, fast_rows_a, args.label_a, hz_a, sec_a),
+            (axes[1], mat_b, robots_b, fast_rows_b, args.label_b, hz_b, sec_b),
+        ]
+    ):
         # Split into slow (default) and fast (anchored) views by masking.
         mat_slow = mat.copy()
         for r in fast_rows:
             mat_slow[r, :] = np.nan
         im_slow = ax.imshow(
-            mat_slow, aspect="auto", cmap=cmap_slow, interpolation="nearest",
-            origin="lower", vmin=0, vmax=vmax,
+            mat_slow,
+            aspect="auto",
+            cmap=cmap_slow,
+            interpolation="nearest",
+            origin="lower",
+            vmin=0,
+            vmax=vmax,
         )
         if fast_rows:
             mat_fast = np.full_like(mat, np.nan)
             for r in fast_rows:
                 mat_fast[r, :] = mat[r, :]
             im_fast = ax.imshow(
-                mat_fast, aspect="auto", cmap=cmap_fast, interpolation="nearest",
-                origin="lower", vmin=0, vmax=vmax,
+                mat_fast,
+                aspect="auto",
+                cmap=cmap_fast,
+                interpolation="nearest",
+                origin="lower",
+                vmin=0,
+                vmax=vmax,
             )
 
         _strip_chrome(ax)

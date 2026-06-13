@@ -26,6 +26,7 @@ import pathlib
 from collections import defaultdict
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -36,8 +37,8 @@ LOOKAHEAD = "lookahead-actions"
 SCHEDULER_DISPLAY = {"max-batch": "EDF", "round-robin": "RR"}
 # Canonical palette/markers from plot_summary_lines.py (LA uses the ahm=1 blue).
 SCHEDULER_COLORS = {
-    "max-batch": "#8E6CA8",       # muted purple
-    "round-robin": "#5FA86F",     # muted green
+    "max-batch": "#8E6CA8",  # muted purple
+    "round-robin": "#5FA86F",  # muted green
     "lookahead-actions": "#6FB0D6",  # blue family (ahm=1)
 }
 SCHEDULER_MARKERS = {
@@ -159,10 +160,18 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     p.add_argument("run_dir", type=pathlib.Path)
-    p.add_argument("--cap", type=int, default=None,
-                   help="Cap to show the distribution for (default: largest present).")
-    p.add_argument("--out", type=pathlib.Path, default=None,
-                   help="Output path (default: <run_dir>/plots/batch_size_choice.png).")
+    p.add_argument(
+        "--cap",
+        type=int,
+        default=None,
+        help="Cap to show the distribution for (default: largest present).",
+    )
+    p.add_argument(
+        "--out",
+        type=pathlib.Path,
+        default=None,
+        help="Output path (default: <run_dir>/plots/batch_size_choice.png).",
+    )
     args = p.parse_args()
 
     run_dir = args.run_dir.resolve()
@@ -193,12 +202,21 @@ def main() -> None:
         xs = bins[:-1]
         mean_bs = float(vals.mean())
         axA.plot(
-            xs, frac, marker=SCHEDULER_MARKERS.get(sched, "o"),
-            color=SCHEDULER_COLORS.get(sched, "#444"), linewidth=2.0, markersize=7,
+            xs,
+            frac,
+            marker=SCHEDULER_MARKERS.get(sched, "o"),
+            color=SCHEDULER_COLORS.get(sched, "#444"),
+            linewidth=2.0,
+            markersize=7,
             label=f"{_display(sched)} (mean {mean_bs:.1f})",
         )
-        axA.axvline(mean_bs, color=SCHEDULER_COLORS.get(sched, "#444"),
-                    linestyle="--", linewidth=1.0, alpha=0.6)
+        axA.axvline(
+            mean_bs,
+            color=SCHEDULER_COLORS.get(sched, "#444"),
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.6,
+        )
     axA.set_xlabel("Chosen batch size (robots per batch)", fontsize=13)
     axA.set_ylabel("Fraction of dispatched batches", fontsize=13)
     axA.set_title(f"Batch-size choice (cap = {dist_cap})", fontsize=14)
@@ -216,8 +234,12 @@ def main() -> None:
         xs = [c for c, _ in pts]
         ys = [v for _, v in pts]
         axB.plot(
-            xs, ys, marker=SCHEDULER_MARKERS.get(sched, "o"),
-            color=SCHEDULER_COLORS.get(sched, "#444"), linewidth=2.0, markersize=7,
+            xs,
+            ys,
+            marker=SCHEDULER_MARKERS.get(sched, "o"),
+            color=SCHEDULER_COLORS.get(sched, "#444"),
+            linewidth=2.0,
+            markersize=7,
             label=_display(sched),
         )
     axB.set_xlabel("Max batch size (cap)", fontsize=13)
@@ -237,8 +259,12 @@ def main() -> None:
         xs = [c for c, _ in pts]
         ys = [v for _, v in pts]
         axC.plot(
-            xs, ys, marker=SCHEDULER_MARKERS.get(sched, "o"),
-            color=SCHEDULER_COLORS.get(sched, "#444"), linewidth=2.0, markersize=7,
+            xs,
+            ys,
+            marker=SCHEDULER_MARKERS.get(sched, "o"),
+            color=SCHEDULER_COLORS.get(sched, "#444"),
+            linewidth=2.0,
+            markersize=7,
             label=_display(sched),
         )
     axC.set_xlabel("Max batch size (cap)", fontsize=13)

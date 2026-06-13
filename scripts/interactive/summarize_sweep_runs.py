@@ -59,10 +59,17 @@ CONTROL_HZ_DEFAULT = 20.0
 SCENARIO_TOKEN_RE = re.compile(r"(hom|\d+f\d+s)", re.IGNORECASE)
 LOOKAHEAD_SCHEDULER = "lookahead-actions"
 METRICS = (
-    "starv", "starv_fast", "starv_slow",
-    "thr_fast", "thr_slow", "thr_total",
-    "successes", "successes_fast", "successes_slow",
-    "worst", "n",
+    "starv",
+    "starv_fast",
+    "starv_slow",
+    "thr_fast",
+    "thr_slow",
+    "thr_total",
+    "successes",
+    "successes_fast",
+    "successes_slow",
+    "worst",
+    "n",
 )
 
 
@@ -206,15 +213,19 @@ def _aggregate_cell(group: pd.DataFrame, control_hz: float) -> dict[str, float |
         "starv_fast": per_seed_ratio("fast_starvation_steps_sum", "fast_observed_steps_sum"),
         "starv_slow": per_seed_ratio("slow_starvation_steps_sum", "slow_observed_steps_sum"),
         # Throughput = successes / observed_seconds = successes * control_hz / observed_steps.
-        "thr_fast": _tier_throughput(group, "fast_success_sum", "fast_observed_steps_sum", control_hz),
-        "thr_slow": _tier_throughput(group, "slow_success_sum", "slow_observed_steps_sum", control_hz),
+        "thr_fast": _tier_throughput(
+            group, "fast_success_sum", "fast_observed_steps_sum", control_hz
+        ),
+        "thr_slow": _tier_throughput(
+            group, "slow_success_sum", "slow_observed_steps_sum", control_hz
+        ),
         # Cluster total throughput: sum of per-robot throughputs across the
         # whole scenario, averaged across seeds. Naive fast+slow weights tiers
         # equally regardless of population, so we reconstruct the true total
         # from raw success/step sums + num_robots for this case.
         "thr_total": _cluster_total_throughput(group, control_hz),
         # Mean success counts per seed: total (fleet-wide), fast tier, slow tier.
-        "successes":      _mean_col_sum(group, ("fast_success_sum", "slow_success_sum")),
+        "successes": _mean_col_sum(group, ("fast_success_sum", "slow_success_sum")),
         "successes_fast": _mean_col_sum(group, ("fast_success_sum",)),
         "successes_slow": _mean_col_sum(group, ("slow_success_sum",)),
         "n": float(len(group)),
@@ -226,7 +237,9 @@ def _mean_col_sum(group: pd.DataFrame, cols: tuple[str, ...]) -> float | None:
     return sum(per_seed) / len(per_seed) if per_seed else None
 
 
-def _tier_throughput(group: pd.DataFrame, success_col: str, steps_col: str, control_hz: float) -> float | None:
+def _tier_throughput(
+    group: pd.DataFrame, success_col: str, steps_col: str, control_hz: float
+) -> float | None:
     per_seed: list[float] = []
     for _, r in group.iterrows():
         steps = r[steps_col]
@@ -296,7 +309,8 @@ def _render_results_table(
 ) -> None:
     # Only show schedulers that have at least one cell for this scenario+mbs.
     present_schedulers = [
-        sch for sch in schedulers
+        sch
+        for sch in schedulers
         if any((mbs, nr, scenario, sch) in cells for nr in num_robots_list)
     ]
     if not present_schedulers:
@@ -350,9 +364,7 @@ def _cells_to_wide_df(
     return out
 
 
-def _build_missing_table(
-    df: pd.DataFrame, expected_seeds: list[int]
-) -> pd.DataFrame:
+def _build_missing_table(df: pd.DataFrame, expected_seeds: list[int]) -> pd.DataFrame:
     """List (scenario, scheduler, num_robots, max_batch_size) combos that are
     missing one or more expected seeds. Expected combos = those observed for
     at least one seed; missing = expected_seeds \\ seeds_seen for that combo."""
@@ -367,14 +379,16 @@ def _build_missing_table(
         seeds_seen = observed[key]
         missing = [s for s in expected_seeds if s not in seeds_seen]
         if missing:
-            rows.append({
-                "scenario": scenario,
-                "scheduler": scheduler,
-                "num_robots": nr,
-                "max_batch_size": mbs,
-                "seeds_present": ",".join(str(s) for s in sorted(seeds_seen)) or "-",
-                "seeds_missing": ",".join(str(s) for s in missing),
-            })
+            rows.append(
+                {
+                    "scenario": scenario,
+                    "scheduler": scheduler,
+                    "num_robots": nr,
+                    "max_batch_size": mbs,
+                    "seeds_present": ",".join(str(s) for s in sorted(seeds_seen)) or "-",
+                    "seeds_missing": ",".join(str(s) for s in missing),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -445,9 +459,7 @@ def main() -> None:
     mbs_values = sorted({m for (m, _, _, _) in cells})
     for mbs in mbs_values:
         for scenario in scenarios:
-            _render_results_table(
-                console, mbs, scenario, cells, schedulers, num_robots_list
-            )
+            _render_results_table(console, mbs, scenario, cells, schedulers, num_robots_list)
 
     missing_df = _build_missing_table(df, expected_seeds)
     _render_missing_table(console, missing_df)

@@ -202,10 +202,7 @@ def _load_het_config(
             try:
                 out[int(k)] = int(v)
             except (TypeError, ValueError):
-                sys.exit(
-                    f"het config {path}: bad {section} entry "
-                    f"{k!r}: {v!r} (need int → int)"
-                )
+                sys.exit(f"het config {path}: bad {section} entry {k!r}: {v!r} (need int → int)")
         return out
 
     return (
@@ -319,11 +316,18 @@ def _start_webcam_recorders(
         mp4 = videos_dir / f"workstation{robot.id}.mp4"
         cmd = [
             ffmpeg,
-            "-nostdin", "-hide_banner", "-loglevel", "warning",
-            "-rtsp_transport", "udp",
-            "-i", url,
-            "-c", "copy",
-            "-y", str(mp4),
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-rtsp_transport",
+            "udp",
+            "-i",
+            url,
+            "-c",
+            "copy",
+            "-y",
+            str(mp4),
         ]
         proc = subprocess.Popen(
             cmd,
@@ -372,7 +376,8 @@ def _stop_webcam_recorders(
         except subprocess.TimeoutExpired:
             logger.warning(
                 "recorder WS-%d did not stop in %.1fs, sending SIGKILL",
-                robot.id, grace_sec,
+                robot.id,
+                grace_sec,
             )
             proc.kill()
             proc.wait()
@@ -382,7 +387,8 @@ def _stop_webcam_recorders(
         else:
             logger.warning(
                 "recorder WS-%d exited rc=%d (publisher likely wasn't streaming)",
-                robot.id, proc.returncode,
+                robot.id,
+                proc.returncode,
             )
 
 
@@ -503,13 +509,9 @@ def main(args: Args) -> None:
             unmatched = sorted(set(het_hz) - target_ids)
             logger.info("control_hz overrides applied: %s", applied)
             if unmatched:
-                logger.warning(
-                    "control_hz config has entries for non-target ids: %s", unmatched
-                )
+                logger.warning("control_hz config has entries for non-target ids: %s", unmatched)
         if het_exec:
-            applied_exec = {
-                rid: het_exec[rid] for rid in het_exec if rid in target_ids
-            }
+            applied_exec = {rid: het_exec[rid] for rid in het_exec if rid in target_ids}
             unmatched_exec = sorted(set(het_exec) - target_ids)
             logger.info("execution_horizon overrides applied: %s", applied_exec)
             if unmatched_exec:
@@ -520,12 +522,8 @@ def main(args: Args) -> None:
 
         prompt_overrides: dict[int, str] = {}
         if het_lang:
-            task_index = _load_task_index(
-                args.task_index_path or _default_task_index_path()
-            )
-            bad = sorted(
-                (rid, idx) for rid, idx in het_lang.items() if idx not in task_index
-            )
+            task_index = _load_task_index(args.task_index_path or _default_task_index_path())
+            bad = sorted((rid, idx) for rid, idx in het_lang.items() if idx not in task_index)
             if bad:
                 sys.exit(
                     f"language_index entries refer to unknown task ids "
@@ -584,7 +582,11 @@ def main(args: Args) -> None:
             # block after fleet teardown.
             _request_recorder_stop(recorders)
             _stop_clients_after_interrupt(
-                fleet, dispatcher, targets, args.grace_sec, trial_future,
+                fleet,
+                dispatcher,
+                targets,
+                args.grace_sec,
+                trial_future,
             )
             raise
 
