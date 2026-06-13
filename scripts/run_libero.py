@@ -8,10 +8,10 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Literal, NamedTuple, Self  # Any used for shared globals
+from typing import Any, Literal, Self  # Any used for shared globals
 
 import numpy as np
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -43,12 +43,29 @@ logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
 
 
-class ExecutionHorizon(NamedTuple):
-    min: int
-    max: int
+class ExecutionHorizon(BaseModel):
+    min: int = Field(ge=1)
+    max: int = 10
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        if self.min > self.max:
+            raise ValueError("min_execution_horizon must be <= max_execution_horizon")
 
 
-# TODO: robots should own action horizon multipliers
+class NetworkLatency(BaseModel):
+    median: float = Field(ge=0.0)
+    sigma: float = Field(ge=0.0)
+
+
+class Robot(BaseModel):
+    execution_horizon: ExecutionHorizon = ExecutionHorizon()
+    observation_latency: NetworkLatency = NetworkLatency()
+    action_latency: NetworkLatency = NetworkLatency()
+    control_hz: int = Field(gt=0, default=20)
+    weight: int = 1
+
+
 class ExperimentConfig(JSONBaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -56,16 +73,14 @@ class ExperimentConfig(JSONBaseModel):
     task_suite_name: str = "libero10"
     num_trials_per_task: int = Field(ge=1, default=1)
     max_steps: int = Field(gt=0, default=100)
-    num_robots: int = Field(gt=0, default=1)
-    control_hz: int = Field(gt=0, default=20)
     action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
-    execution_horizons: list[ExecutionHorizon] = [ExecutionHorizon(5, 10)]
+    robots: list[Robot] = [Robot()]
     # New "trial" mode: when wall_clock_time_limit_s > 0, the seed picks
     # ``subset_size`` tasks from the suite (0 = all tasks), each robot is
     # pinned to one of those tasks, and runs episodes back-to-back until
     # its per-robot wall-clock budget is exhausted. ``max_steps`` still
     # caps each individual episode.
-    subset_size: int = 0
+    subset_size: int = 0  # TODO: what is this, can we remove it?
     wall_clock_time_limit_s: float = Field(default=0.0, ge=0.0)
     seed: int = Field(default=7, ge=0)
 
@@ -81,17 +96,6 @@ class ExperimentConfig(JSONBaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
-        if len(self.execution_horizons) != self.num_robots:
-            raise ValueError(
-                f"execution_horizons length {len(self.execution_horizons)} != num_robots {self.num_robots}"
-            )
-        for idx, horizon in enumerate(self.execution_horizons):
-            if horizon.min < 1:
-                raise ValueError(f"robot_{idx}.min_execution_horizon must be >= 1")
-            if horizon.min > horizon.max:
-                raise ValueError(
-                    f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
-                )
         if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
             raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
         if not self.use_trial_mode and self.num_trials_per_task <= 0:
