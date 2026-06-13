@@ -48,7 +48,6 @@ class Mock:
     gpu: str = "l40s"
 
 
-@dataclasses.dataclass
 class Args(JsonArgs):
     env: EnvMode = EnvMode.LIBERO
     model: ModelFamily = ModelFamily.PI05

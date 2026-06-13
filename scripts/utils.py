@@ -21,14 +21,14 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
 
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory_client.messages import InferRequest, InferType
-from armory_client.schemas import JSONDataclass, ServerMetadata
+from armory_client.schemas import JSONBaseModel, ServerMetadata
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:
     INFERENCE_PROFILES = json.load(f)
 
 
-class JsonArgs(JSONDataclass):
+class JsonArgs(JSONBaseModel):
     json_path: pathlib.Path | None = None
 
     @classmethod

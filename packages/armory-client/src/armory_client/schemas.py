@@ -2,7 +2,7 @@ import csv
 import json
 import pathlib
 import time
-from dataclasses import dataclass, fields
+from dataclasses import asdict, dataclass, fields
 from typing import Any, TypeVar
 
 import numpy as np
@@ -62,7 +62,25 @@ class CSVDataclass:
         return instances
 
 
-class JSONDataclass(BaseModel):
+# FIXME: phase out dataclasses for pydantic
+class JSONDataclass:
+    """Mixin class that adds JSON serialization to dataclasses."""
+
+    def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
+        """Save a dataclass instance to a JSON file."""
+        with open(filepath, "w") as f:
+            json.dump(asdict(self), f, indent=indent)
+
+    @classmethod
+    def from_json(cls: type[J], filepath: pathlib.Path) -> J:
+        """Load a dataclass instance from a JSON file."""
+        with open(filepath) as f:
+            data = json.load(f)
+            return cls(**data)
+
+
+# FIXME: duplicated
+class JSONBaseModel(BaseModel):
     """Mixin class that adds JSON serialization to BaseModel subclasses."""
 
     def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
@@ -226,7 +244,7 @@ class LiberoObservation(Observation):
 
 
 # TODO: maybe this shouldn't actually belong to the client
-class SchedulerConfig(JSONDataclass):
+class SchedulerConfig(JSONBaseModel):
     """Scheduler configuration shared between server boot and client reconfigure.
 
     Owned by the client package as part of the client-server protocol: the
@@ -237,8 +255,10 @@ class SchedulerConfig(JSONDataclass):
     scheduling_algorithm: str = "greedy-deadline"
     # Server-startup-only: POST /reconfigure preserves the boot-time alpha.
     alpha: float = 1.0
+    # TODO: move this to clients
     action_horizon_multipliers: dict[int, float] = {}
 
+    # TODO: nuke these functions
     def to_scheduler_kwargs(self) -> dict | None:
         """Per-algorithm kwargs passed to the scheduler constructor."""
         if self.scheduling_algorithm == "dynamic-action":
@@ -257,6 +277,7 @@ class SchedulerConfig(JSONDataclass):
         }
 
 
+@dataclass
 class ServerMetadata(JSONDataclass):
     """Metadata about the policy server and model configuration.
 
@@ -266,8 +287,8 @@ class ServerMetadata(JSONDataclass):
     @classmethod
     def from_http_metadata(cls, payload: dict[str, Any]) -> "ServerMetadata":
         """Create metadata from server JSON, ignoring newer server-only fields."""
-        allowed = set(cls.model_fields)
-        return cls.model_validate({k: v for k, v in payload.items() if k in allowed})
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in payload.items() if k in allowed})
 
     # Training config info
     config_name: str  # e.g., "pi0_aloha_sim", "pi05_libero"
@@ -290,16 +311,14 @@ class ServerMetadata(JSONDataclass):
     tunnel_url: str | None = None
     location: str | None = None
 
-    def model_post_init(self, __context: Any) -> None:
+    def __post_init__(self) -> None:
         try:
             info = requests.get("https://ipinfo.io/json", timeout=3).json()
-            object.__setattr__(
-                self,
-                "location",
-                f"{info.get('city', '?')}, {info.get('region', '?')}, {info.get('country', '?')}",
+            self.location = (
+                f"{info.get('city', '?')}, {info.get('region', '?')}, {info.get('country', '?')}"
             )
         except Exception:
-            object.__setattr__(self, "location", "unknown")
+            self.location = "unknown"
 
 
 class RuntimeMetadata(JSONDataclass):

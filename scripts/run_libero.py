@@ -24,7 +24,7 @@ from armory_client.network_emulation import (
 from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.schemas import JSONDataclass, SchedulerConfig, ServerMetadata
+from armory_client.schemas import JSONBaseModel, SchedulerConfig, ServerMetadata
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from utils import JsonArgs  # noqa: E402
@@ -49,7 +49,7 @@ class ExecutionHorizon(NamedTuple):
 
 
 # TODO: robots should own action horizon multipliers
-class ExperimentConfig(JSONDataclass):
+class ExperimentConfig(JSONBaseModel):
     model_config = ConfigDict(frozen=True)
 
     env: Literal["libero", "mock"] = "mock"
