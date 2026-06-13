@@ -72,7 +72,7 @@ class JSONDataclass(BaseModel):
     @classmethod
     def from_json(cls: type[J], filepath: pathlib.Path) -> J:
         with open(filepath) as f:
-            return cls.model_validate(json.load(f))
+            return cls.model_validate_json(f.read())
 
 
 class ParquetDataclass:

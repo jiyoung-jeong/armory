@@ -8,13 +8,10 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass
-from typing import (
-    Any,
-    Literal,
-)  # Any used for shared globals
+from typing import Any, Literal, NamedTuple, Self  # Any used for shared globals
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -27,7 +24,7 @@ from armory_client.network_emulation import (
 from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.schemas import SchedulerConfig, ServerMetadata
+from armory_client.schemas import JSONDataclass, SchedulerConfig, ServerMetadata
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from utils import JsonArgs  # noqa: E402
@@ -46,24 +43,23 @@ logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
 
 
-class ExecutionHorizon(BaseModel):
-    model_config = ConfigDict(frozen=True)
-    min: int = Field(ge=0)
-    max: int = Field(gt=0)
+class ExecutionHorizon(NamedTuple):
+    min: int
+    max: int
 
 
 # TODO: robots should own action horizon multipliers
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(JSONDataclass):
     model_config = ConfigDict(frozen=True)
 
-    env: Literal["libero", "mock"]
-    task_suite_name: str
-    num_trials_per_task: int = Field(ge=1)
-    max_steps: int = Field(gt=0)
-    num_robots: int = Field(gt=0)
-    control_hz: int = Field(gt=0)
-    action_chunk_broker_type: ActionChunkBrokerType
-    execution_horizons: list[ExecutionHorizon]
+    env: Literal["libero", "mock"] = "mock"
+    task_suite_name: str = "libero10"
+    num_trials_per_task: int = Field(ge=1, default=1)
+    max_steps: int = Field(gt=0, default=100)
+    num_robots: int = Field(gt=0, default=1)
+    control_hz: int = Field(gt=0, default=20)
+    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
+    execution_horizons: list[ExecutionHorizon] = [ExecutionHorizon(5, 10)]
     # New "trial" mode: when wall_clock_time_limit_s > 0, the seed picks
     # ``subset_size`` tasks from the suite (0 = all tasks), each robot is
     # pinned to one of those tasks, and runs episodes back-to-back until
@@ -84,12 +80,14 @@ class ExperimentConfig(BaseModel):
         return [h.max for h in self.execution_horizons]
 
     @model_validator(mode="after")
-    def _validate(self) -> "ExperimentConfig":
+    def _validate(self) -> Self:
         if len(self.execution_horizons) != self.num_robots:
             raise ValueError(
                 f"execution_horizons length {len(self.execution_horizons)} != num_robots {self.num_robots}"
             )
         for idx, horizon in enumerate(self.execution_horizons):
+            if horizon.min < 1:
+                raise ValueError(f"robot_{idx}.min_execution_horizon must be >= 1")
             if horizon.min > horizon.max:
                 raise ValueError(
                     f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
@@ -102,7 +100,7 @@ class ExperimentConfig(BaseModel):
 
 
 class Args(JsonArgs):
-    experiment_config: ExperimentConfig
+    experiment_config: ExperimentConfig = ExperimentConfig()
     scheduler_config: SchedulerConfig = SchedulerConfig()
 
     host: str = "0.0.0.0"
@@ -640,7 +638,7 @@ def main(args: Args) -> None:
             "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
         )
 
-    (args.output_dir / "experiment_args.json").write_text(args.model_dump_json(indent=2))
+    args.to_json(args.output_dir / "experiment_args.json")
     server_metadata.to_json(args.output_dir / "server_metadata.json")
 
     try:

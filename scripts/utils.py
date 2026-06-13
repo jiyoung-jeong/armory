@@ -8,7 +8,7 @@ import pathlib
 import subprocess
 import time
 from collections.abc import Callable
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, NamedTuple, Self
 
 import numpy as np
 import tyro
@@ -18,31 +18,27 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
     get_gr00t_model_dims,
     is_groot_model,
 )
-from pydantic import BaseModel
 
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory_client.messages import InferRequest, InferType
-from armory_client.schemas import ServerMetadata
+from armory_client.schemas import JSONDataclass, ServerMetadata
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:
     INFERENCE_PROFILES = json.load(f)
 
 
-T = TypeVar("T", bound="JsonArgs")
-
-
-class JsonArgs(BaseModel):
+class JsonArgs(JSONDataclass):
     json_path: pathlib.Path | None = None
 
     @classmethod
-    def from_cli(cls: type[T]) -> T:
+    def from_cli(cls) -> Self:
         pre = argparse.ArgumentParser(add_help=False)
         pre.add_argument("--json-path", type=pathlib.Path, default=None)
         known, remaining = pre.parse_known_args()
 
         if known.json_path is not None:
-            defaults = cls.model_validate(json.loads(known.json_path.read_text()))
+            defaults = cls.from_json(known.json_path)
             return tyro.cli(cls, args=remaining, default=defaults)
         return tyro.cli(cls, args=remaining)
 
