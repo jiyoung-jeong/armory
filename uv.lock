@@ -891,7 +891,6 @@ name = "armory-client"
 version = "0.1.0"
 source = { editable = "packages/armory-client" }
 dependencies = [
-    { name = "armory" },
     { name = "msgpack" },
     { name = "numpy" },
     { name = "pillow" },
@@ -901,7 +900,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "armory", editable = "." },
     { name = "msgpack", specifier = ">=1.0" },
     { name = "numpy" },
     { name = "pillow" },

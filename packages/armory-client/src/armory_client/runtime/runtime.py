@@ -8,6 +8,9 @@ from armory_client.runtime import agent as _agent
 from armory_client.runtime import environment as _environment
 from armory_client.runtime import subscriber as _subscriber
 
+# How long before the step deadline to switch from time.sleep to spinning.
+_SPIN_WINDOW_S = 0.002
+
 
 class Runtime:
     """The core module orchestrating interactions between key components of the system."""
@@ -67,9 +70,14 @@ class Runtime:
             self._episode_steps += 1
 
             next_step_time = last_step_time + step_time
-            # sleep_duration = (next_step_time - time.perf_counter()) - 0.005
-            # if sleep_duration > 0:
-            #     time.sleep(sleep_duration)
+            # Hybrid pacing: OS sleep granularity can overshoot by ~1ms, so
+            # sleep only until _SPIN_WINDOW_S before the deadline and spin the
+            # remainder to hold control_hz without burning the whole period.
+            while True:
+                remaining = next_step_time - time.perf_counter()
+                if remaining <= _SPIN_WINDOW_S:
+                    break
+                time.sleep(remaining - _SPIN_WINDOW_S)
             while time.perf_counter() < next_step_time:
                 pass
             last_step_time = time.perf_counter()

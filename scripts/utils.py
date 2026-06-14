@@ -1,14 +1,17 @@
 """Shared utilities for scripts."""
 
+from __future__ import annotations
+
+import argparse
 import json
 import pathlib
 import subprocess
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple, Self
 
 import numpy as np
+import tyro
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
@@ -18,32 +21,26 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
 
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory_client.messages import InferRequest, InferType
-from armory_client.schemas import ServerMetadata
+from armory_client.schemas import JSONBaseModel, ServerMetadata
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:
     INFERENCE_PROFILES = json.load(f)
 
 
-class JsonArgs:
-    """Mixin for dataclass Args providing JSON serialization/deserialization."""
-
-    def to_json(self, path: str | pathlib.Path) -> None:
-        path = pathlib.Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self._serialize(), indent=2))
+class JsonArgs(JSONBaseModel):
+    json_path: pathlib.Path | None = None
 
     @classmethod
-    def from_json(cls, path: str | pathlib.Path) -> "JsonArgs":
-        data = json.loads(pathlib.Path(path).read_text())
-        return cls._deserialize(data)
+    def from_cli(cls) -> Self:
+        pre = argparse.ArgumentParser(add_help=False)
+        pre.add_argument("--json-path", type=pathlib.Path, default=None)
+        known, remaining = pre.parse_known_args()
 
-    def _serialize(self) -> dict:
-        raise NotImplementedError
-
-    @classmethod
-    def _deserialize(cls, data: dict) -> "JsonArgs":
-        raise NotImplementedError
+        if known.json_path is not None:
+            defaults = cls.from_json(known.json_path)
+            return tyro.cli(cls, args=remaining, default=defaults)
+        return tyro.cli(cls, args=remaining)
 
 
 def get_gpu_info() -> dict[str, Any]:
@@ -71,8 +68,7 @@ def get_gpu_info() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ResolvedPolicy:
+class ResolvedPolicy(NamedTuple):
     metadata: ServerMetadata
     factory: Callable
 
@@ -84,13 +80,11 @@ class _OpenPiFactory:
         self,
         config_name: str,
         checkpoint_dir: str,
-        default_prompt: str | None,
         num_steps: int,
         env_mode: EnvMode,
     ):
         self.config_name = config_name
         self.checkpoint_dir = checkpoint_dir
-        self.default_prompt = default_prompt
         self.num_steps = num_steps
         self.env_mode = env_mode
 
@@ -98,7 +92,6 @@ class _OpenPiFactory:
         return create_policy(
             self.config_name,
             self.checkpoint_dir,
-            default_prompt=self.default_prompt,
             sample_kwargs={"num_steps": self.num_steps},
             env_mode=self.env_mode,
         )
@@ -124,7 +117,6 @@ def resolve_policy(
     policy_dir: str | None,
     max_batch_size: int,
     num_steps: int,
-    default_prompt: str | None,
     scheduling_algorithm: str,
     mock: Any = None,
 ) -> ResolvedPolicy:
@@ -187,7 +179,7 @@ def resolve_policy(
             env=env.value,
             scheduling_algorithm=scheduling_algorithm,
         )
-        factory = _OpenPiFactory(config_name, checkpoint_dir, default_prompt, num_steps, env)
+        factory = _OpenPiFactory(config_name, checkpoint_dir, num_steps, env)
 
     return ResolvedPolicy(metadata=metadata, factory=factory)
 
@@ -196,14 +188,12 @@ def create_default_policy(
     env: EnvMode,
     *,
     batch_size: int = 1,
-    default_prompt: str | None = None,
     sample_kwargs: dict | None = None,
 ):
     if checkpoint := OPENPI_CHECKPOINT.get(env):
         return create_policy(
             checkpoint["config"],
             checkpoint["dir"],
-            default_prompt=default_prompt,
             sample_kwargs=sample_kwargs,
             use_triton_optimized=(env == EnvMode.LIBERO_REALTIME),
             batch_size=batch_size,

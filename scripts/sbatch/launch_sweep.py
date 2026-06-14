@@ -19,7 +19,7 @@ sys.path.insert(0, str(SCRIPTS_DIR / "modal"))
 
 from _utils import write_rows  # noqa: E402
 
-SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
+SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}
 
 EXAMPLES = """examples:
   # 1. Dry-run a tiny sweep. Writes case dirs + jobs CSV but submits nothing.
@@ -211,12 +211,9 @@ def _read_experiment_config(path: pathlib.Path) -> dict[str, Any]:
             raise ValueError(f"{path}: missing experiment.{key}")
     # Either legacy-mode (trials_per_robot) or trial-mode
     # (wall_clock_time_limit_s) must specify how a run terminates.
-    if "trials_per_robot" not in experiment and not experiment.get(
-        "wall_clock_time_limit_s"
-    ):
+    if "trials_per_robot" not in experiment and not experiment.get("wall_clock_time_limit_s"):
         raise ValueError(
-            f"{path}: experiment must set either 'trials_per_robot' "
-            "or 'wall_clock_time_limit_s'."
+            f"{path}: experiment must set either 'trials_per_robot' or 'wall_clock_time_limit_s'."
         )
     for idx in range(int(experiment["num_robots"])):
         robot = robots[f"robot_{idx}"]
@@ -277,8 +274,7 @@ def _make_cases(
             # duplicate baseline cases.
             scheduler_ahms: list[float | None] = (
                 action_horizon_multipliers
-                if action_horizon_multipliers
-                and scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
+                if action_horizon_multipliers and scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
                 else [None]
             )
             for server_variant, server_args in active_server_variants:
@@ -340,9 +336,7 @@ def _make_cases(
     return cases
 
 
-def _override_shortest_horizon(
-    base: dict[str, Any] | None, multiplier: float
-) -> dict[str, Any]:
+def _override_shortest_horizon(base: dict[str, Any] | None, multiplier: float) -> dict[str, Any]:
     """Override only the shortest-horizon key of ``base`` with ``multiplier``.
 
     Keys are horizon lengths (as strings); longer-horizon weights are left at

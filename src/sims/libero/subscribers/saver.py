@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import pathlib
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
@@ -50,6 +51,7 @@ class Saver(_subscriber.Subscriber):
         robot_idx: int,
         save_video: bool = True,
         executor: ThreadPoolExecutor | None = None,
+        pending_slots: threading.BoundedSemaphore | None = None,
     ) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         self._out_dir = out_dir
@@ -73,6 +75,12 @@ class Saver(_subscriber.Subscriber):
         else:
             self._executor = ThreadPoolExecutor(max_workers=5)
             self._owns_executor = True
+        # Bounds the number of in-flight save jobs. Each EpisodeSaveData pins
+        # the full episode's observation images (~60MB at 200 steps), so an
+        # unbounded backlog can OOM a long run if encoding falls behind.
+        # When the limit is hit, on_episode_end blocks (backpressure on the
+        # worker) instead of queueing another episode's buffers.
+        self._pending_slots = pending_slots
 
     @override
     def on_episode_start(self) -> None:
@@ -125,7 +133,15 @@ class Saver(_subscriber.Subscriber):
             initial_state=self._environment.current_initial_state,
         )
 
-        self._executor.submit(self._save_all, data)
+        if self._pending_slots is not None:
+            self._pending_slots.acquire()
+            try:
+                self._executor.submit(self._save_all_bounded, data)
+            except BaseException:
+                self._pending_slots.release()
+                raise
+        else:
+            self._executor.submit(self._save_all, data)
 
     def close(self) -> None:
         # Only drain the executor if this Saver owns it. When a shared
@@ -133,6 +149,12 @@ class Saver(_subscriber.Subscriber):
         # shutting it down once at the very end.
         if self._owns_executor:
             self._executor.shutdown(wait=True)
+
+    def _save_all_bounded(self, data: EpisodeSaveData) -> None:
+        try:
+            self._save_all(data)
+        finally:
+            self._pending_slots.release()
 
     def _save_all(self, data: EpisodeSaveData) -> None:
         out_folder, dir_episode_idx = self._get_out_folder(data)

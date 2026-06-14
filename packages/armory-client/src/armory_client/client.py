@@ -13,7 +13,7 @@ from armory_client.messages import (
     WarmupPing,
     WarmupPong,
 )
-from armory_client.schemas import Observation, ServerMetadata
+from armory_client.schemas import Observation, SchedulerConfig, ServerMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +58,15 @@ class BidirectionalWebsocket:
         self._ws_uri, self._http_base = _parse_urls(host, port)
         self._api_key = api_key
         self._pre_send_hook = pre_send_hook
+        self._control_hz = control_hz
+
+    def connect(self):
         self._server_metadata = self._wait_for_server()
         if self._server_metadata.tunnel_url:
             tunnel_host = self._server_metadata.tunnel_url.replace("https://", "", 1)
             self._ws_uri = f"wss://{tunnel_host}/ws"
         self._ws = self._connect_ws()
-        self._handshake(control_hz)
+        self._handshake(self._control_hz)
         self._warmup()
 
     @property
@@ -198,6 +201,7 @@ class BidirectionalWebsocket:
                 exc,
             )
 
+    # TODO: rip these out and don't have the server calculate metrics
     def send_episode_start(
         self,
         task_suite_name: str,
@@ -237,3 +241,42 @@ class BidirectionalWebsocket:
             steps_taken=steps_taken,
         )
         self._ws.send(msgpack_numpy.packb(payload))
+
+    def fetch_server_metadata(self, timeout_s: float = 300.0) -> ServerMetadata:
+        """Fetch server metadata, retrying until timeout_s seconds have elapsed."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            try:
+                resp = requests.get(f"{self._http_base}/metadata", timeout=5.0)
+                resp.raise_for_status()
+                return ServerMetadata.from_http_metadata(resp.json())
+            except Exception as e:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"Server at {self._http_base} did not respond within {timeout_s:.0f}s"
+                    ) from e
+                logger.info("Waiting for server to be ready (%s); retrying in 5s...", e)
+                time.sleep(5.0)
+
+    def reset_server(self) -> None:
+        try:
+            requests.post(f"{self._http_base}/reset", timeout=5.0)
+            logger.info("Reset server metrics")
+        except Exception as e:
+            logger.warning(f"Could not reset server metrics: {e}")
+
+    def reconfigure_server(self, config: SchedulerConfig) -> None:
+        """Push per-run scheduler config to the server via POST /reconfigure."""
+        resp = requests.post(
+            f"{self._http_base}/reconfigure", json=config.to_reconfigure_body(), timeout=10.0
+        )
+        if not resp.ok:
+            raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
+
+    # TODO: metric saving should be cleaner
+    def fetch_server_metrics(self) -> dict:
+        try:
+            history = requests.get(f"{self._http_base}/save-metrics", timeout=10.0).json()
+            return history
+        except Exception as e:
+            logging.warning(f"Could not fetch server metrics history: {e}", exc_info=True)

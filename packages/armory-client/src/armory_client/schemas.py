@@ -2,13 +2,14 @@ import csv
 import json
 import pathlib
 import time
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, fields
 from typing import Any, TypeVar
 
 import numpy as np
 import pandas as pd
 import requests
 from jaxtyping import Float
+from pydantic import BaseModel, ConfigDict
 
 from armory_client import messages
 
@@ -61,6 +62,7 @@ class CSVDataclass:
         return instances
 
 
+# FIXME: phase out dataclasses for pydantic
 class JSONDataclass:
     """Mixin class that adds JSON serialization to dataclasses."""
 
@@ -75,6 +77,20 @@ class JSONDataclass:
         with open(filepath) as f:
             data = json.load(f)
             return cls(**data)
+
+
+# FIXME: duplicated
+class JSONBaseModel(BaseModel):
+    """Mixin class that adds JSON serialization to BaseModel subclasses."""
+
+    def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
+        with open(filepath, "w") as f:
+            json.dump(self.model_dump(mode="json"), f, indent=indent)
+
+    @classmethod
+    def from_json(cls: type[J], filepath: pathlib.Path) -> J:
+        with open(filepath) as f:
+            return cls.model_validate_json(f.read())
 
 
 class ParquetDataclass:
@@ -227,6 +243,40 @@ class LiberoObservation(Observation):
     prompt: str
 
 
+# TODO: maybe this shouldn't actually belong to the client
+class SchedulerConfig(JSONBaseModel):
+    """Scheduler configuration shared between server boot and client reconfigure.
+
+    Owned by the client package as part of the client-server protocol: the
+    server consumes it at startup (scripts/serve.py) and accepts it via
+    POST /reconfigure; clients send it to override scheduling per run.
+    """
+
+    scheduling_algorithm: str = "greedy-deadline"
+    # Server-startup-only: POST /reconfigure preserves the boot-time alpha.
+    alpha: float = 1.0
+    # TODO: move this to clients
+    action_horizon_multipliers: dict[int, float] = {}
+
+    # TODO: nuke these functions
+    def to_scheduler_kwargs(self) -> dict | None:
+        """Per-algorithm kwargs passed to the scheduler constructor."""
+        if self.scheduling_algorithm == "dynamic-action":
+            return {"alpha": self.alpha}
+        if self.scheduling_algorithm in ("lookahead-actions"):
+            return {"action_horizon_multipliers": self.action_horizon_multipliers}
+        return None
+
+    def to_reconfigure_body(self) -> dict:
+        """JSON body for POST /reconfigure (alpha is boot-only, not sent)."""
+        return {
+            "scheduling_algorithm": self.scheduling_algorithm,
+            "action_horizon_multipliers": {
+                str(k): float(v) for k, v in self.action_horizon_multipliers.items()
+            },
+        }
+
+
 @dataclass
 class ServerMetadata(JSONDataclass):
     """Metadata about the policy server and model configuration.
@@ -271,9 +321,10 @@ class ServerMetadata(JSONDataclass):
             self.location = "unknown"
 
 
-@dataclass(frozen=True)
 class RuntimeMetadata(JSONDataclass):
     """Metadata about the runtime/experiment configuration."""
+
+    model_config = ConfigDict(frozen=True)
 
     # Environment config
     task_suite_name: str
@@ -290,5 +341,5 @@ class RuntimeMetadata(JSONDataclass):
     broker_type: str
 
     # Other
-    episodes: list[str] = field(default_factory=list)
-    max_execution_horizon: list[int] = field(default_factory=list)
+    episodes: list[str] = []
+    max_execution_horizon: list[int] = []

@@ -68,7 +68,7 @@ from armory_client.messages import (
     ResponseAck,
     WarmupPong,
 )
-from armory_client.schemas import ServerMetadata
+from armory_client.schemas import SchedulerConfig, ServerMetadata
 
 MAX_ROBOTS = 100
 NUM_WARMUP = 100
@@ -100,25 +100,6 @@ class ServerState:
     current_scheduler_kwargs: dict[str, Any]
     boot_alpha: float
     boot_action_horizon_multipliers: dict[int, float]
-
-
-def _build_scheduler_kwargs(
-    algorithm: str,
-    *,
-    alpha: float,
-    action_horizon_multipliers: dict[int, float],
-) -> dict[str, Any]:
-    """Dispatch table mirroring ``scripts/serve.py:build_scheduler_kwargs``.
-
-    Lives here too so ``POST /reconfigure`` can rebuild kwargs without
-    importing from ``scripts/``. Schedulers that don't consume either field
-    receive an empty dict.
-    """
-    if algorithm == "dynamic-action":
-        return {"alpha": alpha}
-    if algorithm in ("lookahead-actions", "lookahead-actions-cpp"):
-        return {"action_horizon_multipliers": dict(action_horizon_multipliers)}
-    return {}
 
 
 async def _router_task(
@@ -587,8 +568,7 @@ def create_app(
             except (TypeError, ValueError, AttributeError) as e:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"action_horizon_multipliers must be a dict of "
-                    f"int->float pairs ({e})",
+                    detail=f"action_horizon_multipliers must be a dict of int->float pairs ({e})",
                 ) from e
         else:
             multipliers = dict(
@@ -596,11 +576,12 @@ def create_app(
                 or state.boot_action_horizon_multipliers
             )
 
-        kwargs = _build_scheduler_kwargs(
-            algorithm,
+        config = SchedulerConfig(
+            scheduling_algorithm=algorithm,
             alpha=state.boot_alpha,
             action_horizon_multipliers=multipliers,
         )
+        kwargs = config.to_scheduler_kwargs() or {}
 
         await state.scheduler_sock.send_pyobj(
             Reconfigure(algorithm=algorithm, scheduler_kwargs=dict(kwargs))
@@ -626,6 +607,7 @@ def create_app(
 
     @app.get("/save-metrics")
     async def save_metrics(request: Request) -> dict:
+        # TODO: removed client-side normalization, should be done server-side and added back? might be different if we follow vllm pattern of prometheus logging
         return asdict(request.app.state.server.metrics_store)
 
     @app.post("/reset")

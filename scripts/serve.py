@@ -9,10 +9,9 @@ import sys
 from dataclasses import field
 from typing import Literal
 
-import tyro
-
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
+from armory_client.schemas import SchedulerConfig
 from openpi_adapter.serve_factory import EnvMode
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -49,113 +48,24 @@ class Mock:
     gpu: str = "l40s"
 
 
-@dataclasses.dataclass
 class Args(JsonArgs):
-    # hack to load from json path
-    json_path: pathlib.Path | None = None
-
     env: EnvMode = EnvMode.LIBERO
-
-    # options are PI05, GROOT_N17
     model: ModelFamily = ModelFamily.PI05
-
-    default_prompt: str | None = None
-
-    port: int = 8080
-
     policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
-
-    max_batch_size: int = 1
-
     num_steps: int = 10
 
-    log_dir: str = "logs/server"
+    max_batch_size: int = 1
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
-    scheduling_algorithm: str = "greedy-deadline"
-
-    alpha: float = 1.0
-
-    action_horizon_multipliers: dict[int, float] = field(default_factory=dict)
-
+    port: int = 8080
     seed: int = 7
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-
-    def _serialize(self) -> dict:
-        if isinstance(self.policy, Mock):
-            policy_data: dict = {"type": "mock", **dataclasses.asdict(self.policy)}
-        elif isinstance(self.policy, Checkpoint):
-            policy_data = {"type": "checkpoint", **dataclasses.asdict(self.policy)}
-        else:
-            policy_data = {"type": "default"}
-        return {
-            "env": self.env.value,
-            "model": self.model.value,
-            "default_prompt": self.default_prompt,
-            "port": self.port,
-            "policy": policy_data,
-            "max_batch_size": self.max_batch_size,
-            "num_steps": self.num_steps,
-            "log_dir": self.log_dir,
-            "scheduling_algorithm": self.scheduling_algorithm,
-            "alpha": self.alpha,
-            "action_horizon_multipliers": self.action_horizon_multipliers,
-            "seed": self.seed,
-            "log_level": self.log_level,
-        }
-
-    @classmethod
-    def _deserialize(cls, data: dict) -> "Args":
-        policy_data = dict(data.get("policy", {"type": "default"}))
-        policy_type = policy_data.pop("type", "default")
-        if policy_type == "mock":
-            policy: Checkpoint | Default | Mock = Mock(**policy_data)
-        elif policy_type == "checkpoint":
-            policy = Checkpoint(**policy_data)
-        else:
-            policy = Default()
-        return cls(
-            env=EnvMode(data.get("env", EnvMode.LIBERO.value)),
-            model=ModelFamily(data.get("model", ModelFamily.PI05.value)),
-            default_prompt=data.get("default_prompt"),
-            port=data.get("port", 8080),
-            policy=policy,
-            max_batch_size=data.get("max_batch_size", 1),
-            num_steps=data.get("num_steps", 10),
-            log_dir=data.get("log_dir", "logs/server"),
-            scheduling_algorithm=data.get("scheduling_algorithm", "greedy-deadline"),
-            alpha=data.get("alpha", 1.0),
-            action_horizon_multipliers={
-                int(horizon): float(multiplier)
-                for horizon, multiplier in data.get("action_horizon_multipliers", {}).items()
-            },
-            seed=data.get("seed", 7),
-            log_level=data.get("log_level", "INFO"),
-        )
-
-
-def build_scheduler_kwargs(args: Args, *, action_horizon_steps: int) -> dict | None:
-    if args.scheduling_algorithm == "dynamic-action":
-        return {
-            "alpha": args.alpha,
-        }
-    if args.scheduling_algorithm == "lookahead-actions":
-        return {
-            "action_horizon_multipliers": args.action_horizon_multipliers,
-        }
-    if args.scheduling_algorithm == "lookahead-actions-cpp":
-        return {
-            "action_horizon_multipliers": args.action_horizon_multipliers,
-        }
-    return None
+    log_dir: str = "logs/server"
 
 
 def main(args: Args) -> None:
-    cli_multipliers = args.action_horizon_multipliers
-    if args.json_path is not None:
-        args = Args.from_json(args.json_path)
-    if cli_multipliers:
-        args.action_horizon_multipliers = cli_multipliers
     seed_everything(args.seed)
+    # TODO: unify log setup
     log_path = (
         pathlib.Path(args.log_dir)
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
@@ -176,8 +86,7 @@ def main(args: Args) -> None:
         policy_dir=policy_dir,
         max_batch_size=args.max_batch_size,
         num_steps=args.num_steps,
-        default_prompt=args.default_prompt,
-        scheduling_algorithm=args.scheduling_algorithm,
+        scheduling_algorithm=args.scheduler.scheduling_algorithm,
         mock=mock,
     )
 
@@ -185,9 +94,8 @@ def main(args: Args) -> None:
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    scheduler_kwargs = build_scheduler_kwargs(
-        args, action_horizon_steps=resolved.metadata.action_horizon
-    )
+    # TODO: maybe don't need kwargs
+    scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
 
     server = PolicyServer(
@@ -203,5 +111,6 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
+    # TODO: check this thoroughly, decide, and document
     mp.set_start_method("fork", force=True)
-    main(tyro.cli(Args))
+    main(Args.from_cli())

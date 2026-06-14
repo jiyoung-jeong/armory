@@ -41,8 +41,6 @@ import pathlib
 import sys
 from typing import Any
 
-from armory_client.network_emulation import load_experiment_config
-
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # _setups, _utils
 sys.path.insert(0, str(_HERE.parent))  # serve, run_libero
@@ -54,7 +52,7 @@ from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
 
 ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit", "lookahead-actions"}
-SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions", "lookahead-actions-cpp"}
+SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}
 
 
 def parse_list_args(value: str, *, cast=str) -> list[Any]:
@@ -213,7 +211,7 @@ def main(
     client_paths = _client_config_paths(client_config)
     config_root = pathlib.Path(client_config) if pathlib.Path(client_config).is_dir() else None
     experiment_configs = [
-        (_experiment_name(path, root=config_root), load_experiment_config(path))
+        (_experiment_name(path, root=config_root), run_libero.ExperimentConfig.from_json(path))
         for path in client_paths
     ]
     client_args = run_libero.Args(experiment_config="", progress_type="logging", overwrite=True)

@@ -8,14 +8,10 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass
-from typing import (
-    Any,
-    Literal,
-)  # Any used for shared globals
+from typing import Any, Literal, Self  # Any used for shared globals
 
 import numpy as np
-import requests
-import tyro
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
@@ -24,12 +20,11 @@ from armory_client.network_emulation import (
     RobotNetworkHook,
     WorkerNetworkContext,
     experiment_requires_network_emulation,
-    load_experiment_config,
 )
 from armory_client.runtime import runtime as _runtime
 from armory_client.runtime import subscriber as _subscriber
 from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.schemas import RuntimeMetadata, ServerMetadata
+from armory_client.schemas import JSONBaseModel, SchedulerConfig, ServerMetadata
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from utils import JsonArgs  # noqa: E402
@@ -48,141 +43,83 @@ logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
 
 
-@dataclass(frozen=True)
-class ExecutionHorizon:
-    min: int
-    max: int
+class ExecutionHorizon(BaseModel):
+    min: int = Field(ge=1, default=1)
+    max: int = 10
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        if self.min > self.max:
+            raise ValueError("min_execution_horizon must be <= max_execution_horizon")
+        return self
 
 
-@dataclass(frozen=True)
-class ExperimentSettings:
-    env: Literal["libero", "mock"]
-    task_suite_name: str
-    num_trials_per_task: int
-    max_steps: int
-    num_robots: int
-    control_hz: int
-    action_chunk_broker_type: ActionChunkBrokerType
-    execution_horizons: list[ExecutionHorizon]
+class NetworkLatency(BaseModel):
+    median: float = Field(ge=0.0, default=0.0)
+    sigma: float = Field(ge=0.0, default=0.0)
+
+
+class Robot(BaseModel):
+    execution_horizon: ExecutionHorizon = ExecutionHorizon()
+    observation_latency: NetworkLatency = NetworkLatency()
+    action_latency: NetworkLatency = NetworkLatency()
+    control_hz: int = Field(gt=0, default=20)
+    weight: int = 1
+
+
+class ExperimentConfig(JSONBaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    env: Literal["libero", "mock"] = "mock"
+    task_suite_name: str = "libero10"
+    num_trials_per_task: int = Field(ge=1, default=1)
+    max_steps: int = Field(gt=0, default=100)
+    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
+    robots: list[Robot] = [Robot()]
     # New "trial" mode: when wall_clock_time_limit_s > 0, the seed picks
     # ``subset_size`` tasks from the suite (0 = all tasks), each robot is
     # pinned to one of those tasks, and runs episodes back-to-back until
     # its per-robot wall-clock budget is exhausted. ``max_steps`` still
     # caps each individual episode.
-    subset_size: int = 0
-    wall_clock_time_limit_s: float = 0.0
+    subset_size: int = 0  # TODO: what is this, can we remove it?
+    wall_clock_time_limit_s: float = Field(default=0.0, ge=0.0)
+    seed: int = Field(default=7, ge=0)
 
     @property
     def use_trial_mode(self) -> bool:
         return self.wall_clock_time_limit_s > 0.0
 
-    @classmethod
-    def from_config(cls, experiment_config: dict[str, object]) -> "ExperimentSettings":
-        experiment = experiment_config["experiment"]
-        robots = experiment_config["robots"]
-        if not isinstance(experiment, dict) or not isinstance(robots, dict):
-            raise ValueError("Experiment config is malformed")
-
-        num_robots = int(experiment["num_robots"])
-        execution_horizons = []
-        for idx in range(num_robots):
-            robot_cfg = robots[f"robot_{idx}"]
-            execution_horizons.append(
-                ExecutionHorizon(
-                    min=int(robot_cfg["min_execution_horizon"]),
-                    max=int(robot_cfg["max_execution_horizon"]),
-                )
-            )
-
-        env = str(experiment["env"])
-        if env not in ("libero", "mock"):
-            raise ValueError(f"Invalid env in experiment config: {env}")
-
-        return cls(
-            env=env,
-            task_suite_name=str(experiment["task_suite_name"]),
-            num_trials_per_task=int(experiment.get("trials_per_robot", 1)),
-            max_steps=int(experiment["max_steps"]),
-            num_robots=num_robots,
-            control_hz=int(experiment["control_hz"]),
-            action_chunk_broker_type=ActionChunkBrokerType.from_string(
-                str(experiment["action_chunk_broker_type"])
-            ),
-            execution_horizons=execution_horizons,
-            subset_size=int(experiment.get("subset_size", 0)),
-            wall_clock_time_limit_s=float(experiment.get("wall_clock_time_limit_s", 0.0)),
-        )
-
     def execution_horizon_for_robot(self, robot_idx: int) -> ExecutionHorizon:
-        return self.execution_horizons[robot_idx]
+        return self.robots[robot_idx].execution_horizon
 
     def max_execution_horizons(self) -> list[int]:
-        return [h.max for h in self.execution_horizons]
+        return [r.execution_horizon.max for r in self.robots]
+
+    @model_validator(mode="after")
+    def _validate(self) -> Self:
+        if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
+            raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
+        if not self.use_trial_mode and self.num_trials_per_task <= 0:
+            raise ValueError("num_trials_per_task must be positive")
+        return self
 
 
-@dataclass
 class Args(JsonArgs):
-    json_path: pathlib.Path | None = None
-    #################################################################################################################
-    # Model server parameters
-    #################################################################################################################
+    experiment_config: ExperimentConfig = ExperimentConfig()
+    scheduler_config: SchedulerConfig = SchedulerConfig()
+
     host: str = "0.0.0.0"
     port: int = 8080
-
-    #################################################################################################################
-    # Per-run scheduler overrides (sent to the server via POST /reconfigure)
-    # so the same server process can switch scheduler/multipliers between cases
-    # without a restart. ``None`` leaves the server's current value untouched.
-    #################################################################################################################
-    scheduling_algorithm: str | None = None
-    action_horizon_multipliers: dict[int, float] | None = None
-
-    #################################################################################################################
-    # Network emulation parameters
-    #################################################################################################################
-    experiment_config: str = ""
-    toxiproxy_server_bin: str | None = "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
-
-    #################################################################################################################
-    # Utils
-    #################################################################################################################
-    seed: int = 7  # Random Seed (for reproducibility)
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
     overwrite: bool = False
     progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
-    log_dir: pathlib.Path | None = None
-    debug: bool = False  # Run in single process with immediate progress output
+    debug: bool = False
 
-    @property
-    def http_base(self) -> str:
-        return f"http://{self.host}:{self.port}"
-
-    def _serialize(self) -> dict:
-        return {
-            "host": self.host,
-            "port": self.port,
-            "scheduling_algorithm": self.scheduling_algorithm,
-            "action_horizon_multipliers": self.action_horizon_multipliers,
-            "experiment_config": self.experiment_config,
-            "toxiproxy_server_bin": self.toxiproxy_server_bin,
-            "seed": self.seed,
-            "output_dir": str(self.output_dir),
-            "overwrite": self.overwrite,
-            "progress_type": self.progress_type,
-            "log_dir": str(self.log_dir) if self.log_dir is not None else None,
-            "debug": self.debug,
-        }
-
-    @classmethod
-    def _deserialize(cls, data: dict) -> "Args":
-        kwargs = dict(data)
-        if "output_dir" in kwargs:
-            kwargs["output_dir"] = pathlib.Path(kwargs["output_dir"])
-        if "log_dir" in kwargs and kwargs["log_dir"] is not None:
-            kwargs["log_dir"] = pathlib.Path(kwargs["log_dir"])
-        if (m := kwargs.get("action_horizon_multipliers")) is not None:
-            kwargs["action_horizon_multipliers"] = {int(k): float(v) for k, v in m.items()}
-        return cls(**kwargs)
+    @model_validator(mode="after")
+    def _validate(self) -> "Args":
+        if not self.overwrite and self.output_dir.exists():
+            raise ValueError(f"Output path {self.output_dir} already exists")
+        return self
 
 
 # Shared worker state: set via pool initializer so these are inherited by spawned
@@ -210,7 +147,6 @@ def _init_worker_shared(
 @dataclass
 class _WorkerArgs:
     args: Args
-    settings: ExperimentSettings
     server_metadata: ServerMetadata
     robot_idx: int
     # In trial mode, the task this robot is pinned to. ``None`` outside trial mode.
@@ -255,7 +191,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     - **Legacy mode**: pull episodes from the shared queue until empty.
     """
     args = worker_args.args
-    settings = worker_args.settings
+    settings = worker_args.args.experiment_config
     robot_idx = worker_args.robot_idx
     robot_id = f"robot_{robot_idx}"
 
@@ -277,13 +213,15 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
         robot_id=robot_id,
         host=ws_host,
         port=ws_port,
-        control_hz=float(settings.control_hz),
+        control_hz=float(settings.robots[robot_idx].control_hz),
         pre_send_hook=pre_send_hook,
     )
+    ws_client.connect()
+
     execution_horizon = settings.execution_horizon_for_robot(robot_idx)
     config = BrokerConfig(
         ws_client=ws_client,
-        control_hz=settings.control_hz,
+        control_hz=settings.robots[robot_idx].control_hz,
         min_execution_horizon=execution_horizon.min,
         max_execution_horizon=execution_horizon.max,
     )
@@ -308,10 +246,14 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     # Shared across all Savers this worker builds: video encoding for episode N
     # otherwise blocks the worker from starting episode N+1 (Saver.close() does
     # executor.shutdown(wait=True)). With a shared pool, per-episode close() is
-    # a no-op and we drain once in the outer finally below.
+    # a no-op and we drain once in the outer finally below. pending_slots caps
+    # the backlog at 2 episodes' worth of buffers; a third on_episode_end
+    # blocks the worker rather than growing memory unboundedly.
+    import threading  # noqa: PLC0415
     from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
-    saver_executor = ThreadPoolExecutor(max_workers=5)
+    saver_executor = ThreadPoolExecutor(max_workers=2)
+    saver_pending_slots = threading.BoundedSemaphore(2)
 
     def _build_subscribers(episode: Episode, env: Any) -> list[_subscriber.Subscriber]:
         subs: list[_subscriber.Subscriber] = [
@@ -326,6 +268,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 robot_idx=robot_idx,
                 save_video=settings.env != "mock",
                 executor=saver_executor,
+                pending_slots=saver_pending_slots,
             ),
             TaskMetricsPublisher(
                 ws_client=ws_client,
@@ -352,7 +295,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
             environment=env,
             agent=agent,
             subscribers=subscribers,
-            max_hz=settings.control_hz,
+            max_hz=settings.robots[robot_idx].control_hz,
             num_episodes=1,
             max_episode_steps=env._max_episode_steps,  # type: ignore[attr-defined]
         )
@@ -383,7 +326,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 if settings.env == "libero":
                     raw_env, _ = libero_utils._get_libero_env(
                         task_suite.get_task(episode.task_id),
-                        seed=args.seed + robot_idx,
+                        seed=settings.seed + robot_idx,
                     )
                     env = LiberoSimEnvironment(
                         env=raw_env,
@@ -391,12 +334,12 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                         initial_states=np.array([episode.initial_state]),
                         resize_size=RESIZE_SIZE,
                         max_episode_steps=settings.max_steps,
-                        control_hz=settings.control_hz,
+                        control_hz=settings.robots[robot_idx].control_hz,
                     )
                 elif settings.env == "mock":
                     env = MockEnvironment(
                         max_episode_steps=settings.max_steps,
-                        control_hz=settings.control_hz,
+                        control_hz=settings.robots[robot_idx].control_hz,
                         task_id=episode.task_id,
                         episode_idx=episode.idx,
                     )
@@ -419,7 +362,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
 def _trial_loop(
     *,
     args: "Args",
-    settings: ExperimentSettings,
+    settings: ExperimentConfig,
     robot_idx: int,
     worker_args: _WorkerArgs,
     task_suite: Any,
@@ -432,16 +375,14 @@ def _trial_loop(
     """Trial-mode loop: pinned task, env reuse, wall-clock budget."""
     task_id = worker_args.assigned_task_id
     if task_id is None:
-        raise RuntimeError(
-            f"robot {robot_idx}: missing assigned_task_id in trial mode"
-        )
+        raise RuntimeError(f"robot {robot_idx}: missing assigned_task_id in trial mode")
 
     raw_env = None
     initial_states: np.ndarray
     if settings.env == "libero":
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
-        raw_env, _ = libero_utils._get_libero_env(task, seed=args.seed + robot_idx)
+        raw_env, _ = libero_utils._get_libero_env(task, seed=settings.seed + robot_idx)
 
         # No-op close so the shared raw_env survives across iterations.
         class _ReusableLiberoEnv(LiberoSimEnvironment):  # type: ignore[misc, valid-type]
@@ -493,13 +434,13 @@ def _trial_loop(
                     initial_states=np.array([state]),
                     resize_size=RESIZE_SIZE,
                     max_episode_steps=settings.max_steps,
-                    control_hz=settings.control_hz,
+                    control_hz=settings.robots[robot_idx].control_hz,
                     deadline_monotonic=deadline,
                 )
             else:
                 env = MockEnvironment(
                     max_episode_steps=settings.max_steps,
-                    control_hz=settings.control_hz,
+                    control_hz=settings.robots[robot_idx].control_hz,
                     task_id=task_id,
                     episode_idx=episode.idx,
                     deadline_monotonic=deadline,
@@ -523,7 +464,7 @@ def _trial_loop(
 
 def run_robots(
     args: Args,
-    settings: ExperimentSettings,
+    settings: ExperimentConfig,
     episodes: list[Episode],
     server_metadata: ServerMetadata,
     network_worker_contexts: dict[str, WorkerNetworkContext] | None = None,
@@ -540,23 +481,20 @@ def run_robots(
         _robot_worker(
             _WorkerArgs(
                 args=args,
-                settings=settings,
                 server_metadata=server_metadata,
                 robot_idx=0,
-                assigned_task_id=(
-                    robot_task_assignment[0] if trial_mode else None
-                ),
+                assigned_task_id=(robot_task_assignment[0] if trial_mode else None),
             )
         )
     else:
         if trial_mode:
-            active_workers = settings.num_robots
+            active_workers = len(settings.robots)
             # In trial mode the unit of progress is "one robot finished its
             # wall-clock budget" rather than "one episode in the queue".
             total_episodes = active_workers
         else:
             total_episodes = len(episodes)
-            active_workers = min(settings.num_robots, total_episodes)
+            active_workers = min(len(settings.robots), total_episodes)
         start_barrier = multiprocessing.Barrier(active_workers, timeout=60)
         logging.info("Using one-time startup barrier across %d worker(s)", active_workers)
 
@@ -572,7 +510,6 @@ def run_robots(
             worker_args = [
                 _WorkerArgs(
                     args=args,
-                    settings=settings,
                     server_metadata=server_metadata,
                     robot_idx=i,
                     assigned_task_id=(robot_task_assignment[i] if trial_mode else None),
@@ -601,235 +538,23 @@ def run_robots(
                     pool.join()
 
 
-def fetch_server_metadata(args: Args, timeout_s: float = 300.0) -> ServerMetadata:
-    """Fetch server metadata, retrying until timeout_s seconds have elapsed."""
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            resp = requests.get(f"{args.http_base}/metadata", timeout=5.0)
-            resp.raise_for_status()
-            return ServerMetadata(**resp.json())
-        except Exception as e:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Server at {args.http_base} did not respond within {timeout_s:.0f}s"
-                ) from e
-            logging.info("Waiting for server to be ready (%s); retrying in 5s...", e)
-            time.sleep(5.0)
-
-
-def reset_server(args: Args) -> None:
-    try:
-        requests.post(f"{args.http_base}/reset", timeout=5.0)
-        logging.info("Reset server metrics")
-    except Exception as e:
-        logging.warning(f"Could not reset server metrics: {e}")
-
-
-def reconfigure_server(args: Args, server_metadata: ServerMetadata) -> None:
-    """Push per-run scheduler config to the server via POST /reconfigure.
-
-    Skipped if both ``scheduling_algorithm`` and ``action_horizon_multipliers``
-    are ``None`` on ``args`` (i.e. the client didn't request an override).
-    On success, mutates ``server_metadata`` in place so the on-disk
-    ``server_metadata.json`` reflects what the scheduler is actually using
-    for this run.
-    """
-    if args.scheduling_algorithm is None and args.action_horizon_multipliers is None:
-        return
-    body: dict[str, Any] = {}
-    if args.scheduling_algorithm is not None:
-        body["scheduling_algorithm"] = args.scheduling_algorithm
-    if args.action_horizon_multipliers is not None:
-        body["action_horizon_multipliers"] = {
-            str(k): float(v) for k, v in args.action_horizon_multipliers.items()
-        }
-    resp = requests.post(f"{args.http_base}/reconfigure", json=body, timeout=10.0)
-    if not resp.ok:
-        raise RuntimeError(
-            f"POST /reconfigure {resp.status_code}: {resp.text}"
-        )
-    result = resp.json()
-    server_metadata.scheduling_algorithm = result.get(
-        "scheduling_algorithm", server_metadata.scheduling_algorithm
-    )
-    if "scheduler_kwargs" in result:
-        server_metadata.scheduler_kwargs = result["scheduler_kwargs"]
-    logging.info(
-        "Reconfigured server: scheduling_algorithm=%s scheduler_kwargs=%s",
-        server_metadata.scheduling_algorithm,
-        server_metadata.scheduler_kwargs,
-    )
-
-
-def _normalize_metrics_times(history: dict) -> dict:
-    """Subtract start_time from all absolute timestamps for readability."""
-    t0 = history.get("start_time", 0.0)
-    if t0 == 0.0 or t0 == float("inf"):
-        return history
-
-    def shift(v: float) -> float:
-        return round(v - t0, 6) if v and v > 0 else v
-
-    history = dict(history)
-    history["start_time"] = 0.0
-    history["end_time"] = shift(history.get("end_time", 0.0))
-
-    normalized_batches = []
-    for b in history.get("batches", []):
-        if isinstance(b, dict):
-            b = dict(b)
-            b["inference_start_time"] = shift(b.get("inference_start_time", 0.0))
-            b["inference_end_time"] = shift(b.get("inference_end_time", 0.0))
-        else:
-            # NamedTuple serialized as list: [batch_id, robot_ids, request_ids, inference_start_time, inference_end_time, ...]
-            b = list(b)
-            b[3] = shift(b[3])
-            b[4] = shift(b[4])
-        normalized_batches.append(b)
-    history["batches"] = normalized_batches
-
-    normalized_robots = {}
-    for robot_id, robot in history.get("robots", {}).items():
-        robot = dict(robot)
-        normalized_episodes = []
-        for ep in robot.get("episodes", []):
-            ep = dict(ep)
-            ep["requests"] = [
-                {
-                    **r,
-                    "request_timestamp": shift(r["request_timestamp"]),
-                    "server_arrival_time": shift(r["server_arrival_time"]),
-                }
-                for r in ep.get("requests", [])
-            ]
-            normalized_responses = []
-            for resp in ep.get("responses", []):
-                resp = dict(resp)
-                req = dict(resp.get("request", {}))
-                req["request_timestamp"] = shift(req.get("request_timestamp", 0.0))
-                req["server_arrival_time"] = shift(req.get("server_arrival_time", 0.0))
-                resp["request"] = req
-                resp["inference_start_time"] = shift(resp.get("inference_start_time", 0.0))
-                resp["inference_end_time"] = shift(resp.get("inference_end_time", 0.0))
-                if resp.get("server_send_time", 0.0) > 0:
-                    resp["server_send_time"] = shift(resp["server_send_time"])
-                if resp.get("receive_time", 0.0) > 0:
-                    resp["receive_time"] = shift(resp["receive_time"])
-                normalized_responses.append(resp)
-            ep["responses"] = normalized_responses
-            ep["step_timestamps"] = [shift(ts) for ts in ep.get("step_timestamps", [])]
-            normalized_episodes.append(ep)
-        robot["episodes"] = normalized_episodes
-        normalized_robots[robot_id] = robot
-    history["robots"] = normalized_robots
-
-    normalized_decisions = []
-    for d in history.get("scheduler_decisions", []):
-        d = dict(d)
-        d["started_at"] = shift(d.get("started_at", 0.0))
-        d["next_server_available"] = shift(d.get("next_server_available", 0.0))
-        d["deadlines"] = {k: shift(v) for k, v in d.get("deadlines", {}).items()}
-        notes = d.get("notes")
-        if isinstance(notes, dict):
-            notes = dict(notes)
-            if "next_server_available" in notes:
-                notes["next_server_available"] = shift(notes["next_server_available"])
-            phases = notes.get("phases")
-            if isinstance(phases, list):
-                notes["phases"] = [
-                    {**ph, "start": shift(ph.get("start", 0.0)), "end": shift(ph.get("end", 0.0))}
-                    for ph in phases
-                    if isinstance(ph, dict)
-                ]
-            d["notes"] = notes
-        normalized_decisions.append(d)
-    history["scheduler_decisions"] = normalized_decisions
-
-    return history
-
-
-def save_server_metrics_history(args: Args) -> None:
-    try:
-        history = requests.get(f"{args.http_base}/save-metrics", timeout=10.0).json()
-        history = _normalize_metrics_times(history)
-        hist_path = args.output_dir / "server_metrics_history.json"
-        hist_path.write_text(json.dumps(history, indent=2))
-        logging.info(f"Saved server metrics history to {hist_path}")
-    except Exception as e:
-        logging.warning(f"Could not fetch server metrics history: {e}", exc_info=True)
-
-
-def validate_args(args: Args, settings: ExperimentSettings) -> None:
-    assert args.overwrite or not args.output_dir.exists(), (
-        f"Output path {args.output_dir} already exists"
-    )
-    assert args.experiment_config, "experiment_config is required"
-    assert settings.num_robots > 0, "num_robots must be positive"
-    if not settings.use_trial_mode:
-        assert settings.num_trials_per_task > 0, "num_trials_per_task must be positive"
-    assert settings.max_steps > 0, "max_steps must be positive"
-    assert settings.control_hz > 0, "control_hz must be positive"
-    if settings.use_trial_mode:
-        assert settings.wall_clock_time_limit_s > 0.0, (
-            "wall_clock_time_limit_s must be positive in trial mode"
-        )
-    assert len(settings.execution_horizons) == settings.num_robots
-    for idx, horizon in enumerate(settings.execution_horizons):
-        assert horizon.min >= 0, f"robot_{idx}.min_execution_horizon must be non-negative"
-        assert horizon.max > 0, f"robot_{idx}.max_execution_horizon must be positive"
-        assert horizon.min <= horizon.max, (
-            f"robot_{idx}.min_execution_horizon must be <= max_execution_horizon"
-        )
-    assert args.seed >= 0, "seed must be non-negative"
-
-
 def main(args: Args) -> None:
-    if args.json_path is not None:
-        args = Args.from_json(args.json_path)
-    experiment_config = load_experiment_config(args.experiment_config)
-    settings = ExperimentSettings.from_config(experiment_config)
-    if settings.use_trial_mode:
-        logging.info(
-            "Loaded experiment config from %s: env=%s mode=%s num_robots=%d "
-            "subset_size=%d wall_clock_time_limit_s=%.1f",
-            args.experiment_config,
-            settings.env,
-            settings.action_chunk_broker_type.value,
-            settings.num_robots,
-            settings.subset_size,
-            settings.wall_clock_time_limit_s,
-        )
-    else:
-        logging.info(
-            "Loaded experiment config from %s: env=%s mode=%s num_robots=%d trials_per_robot=%d",
-            args.experiment_config,
-            settings.env,
-            settings.action_chunk_broker_type.value,
-            settings.num_robots,
-            settings.num_trials_per_task,
-        )
-
-    validate_args(args, settings)
-
     if args.overwrite:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.log_dir is not None:
-        log_file_name = f"libero_multi_robot_runtime_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
-        log_file_path = args.log_dir / log_file_name
-        args.log_dir.mkdir(parents=True, exist_ok=True)
-        logging_config.setup_logging(
-            log_path=log_file_path, level=logging.DEBUG if args.debug else logging.INFO
-        )
-    else:
-        logging_config.setup_logging(level=logging.DEBUG if args.debug else logging.INFO)
+    log_dir = args.output_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file_path = (
+        log_dir / f"libero_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
+    )
+    logging_config.setup_logging(log_path=log_file_path, level=logging.INFO)
 
-    seed_everything(args.seed)
+    seed_everything(args.experiment_config.seed)
 
     robot_task_assignment: list[int] | None = None
     subset_task_ids: list[int] = []
+    settings = args.experiment_config  # NOTE: hack for now, change everything below later
     if settings.use_trial_mode:
         from sims.libero.episodes import (
             _MockTask,
@@ -839,7 +564,7 @@ def main(args: Args) -> None:
 
         if settings.env == "libero":
             subset_task_ids = pick_subset_task_ids(
-                settings.task_suite_name, settings.subset_size, args.seed
+                settings.task_suite_name, settings.subset_size, settings.seed
             )
         else:
             # For mock env, "task ids" are synthetic. Pick the first
@@ -847,9 +572,7 @@ def main(args: Args) -> None:
             n = max(1, settings.subset_size or 1)
             subset_task_ids = list(range(n))
 
-        robot_task_assignment = assign_robots_to_tasks(
-            settings.num_robots, subset_task_ids
-        )
+        robot_task_assignment = assign_robots_to_tasks(len(settings.robots), subset_task_ids)
         # Trial-mode workers generate episodes inline based on their assigned
         # task. The list below is only used downstream for runtime_metadata.
         episodes = [
@@ -864,7 +587,7 @@ def main(args: Args) -> None:
         ]
         logging.info(
             "Trial mode: seed=%d subset_task_ids=%s assignment=%s budget=%.1fs",
-            args.seed,
+            settings.seed,
             subset_task_ids,
             robot_task_assignment,
             settings.wall_clock_time_limit_s,
@@ -873,70 +596,54 @@ def main(args: Args) -> None:
         if settings.env == "libero":
             episodes = create_episodes(settings.task_suite_name, settings.num_trials_per_task)
         else:
-            episodes = create_mock_episodes(settings.num_trials_per_task * settings.num_robots)
+            episodes = create_mock_episodes(settings.num_trials_per_task * len(settings.robots))
 
-    server_metadata = fetch_server_metadata(args)
-    reconfigure_server(args, server_metadata)
+    # Control-plane client: HTTP only, never connect()ed to the websocket.
+    control_client = BidirectionalWebsocket(
+        robot_id="__control__",
+        host=args.host,
+        port=args.port,
+    )
+    control_client.reconfigure_server(args.scheduler_config)
+    control_client.reset_server()
+    server_metadata = control_client.fetch_server_metadata()
     if settings.use_trial_mode:
-        active_workers = 1 if args.debug else settings.num_robots
+        active_workers = 1 if args.debug else len(settings.robots)
     else:
-        active_workers = 1 if args.debug else min(settings.num_robots, len(episodes))
+        active_workers = 1 if args.debug else min(len(settings.robots), len(episodes))
 
     network_manager = None
     network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
-    if experiment_config is not None:
-        if experiment_requires_network_emulation(experiment_config, worker_count=active_workers):
-            if not args.toxiproxy_server_bin:
-                raise ValueError(
-                    "--toxiproxy-server-bin is required when experiment config enables network emulation"
-                )
-            network_output_dir = args.output_dir / "network_emulation"
-            network_manager = NetworkEmulationManager(
-                experiment_config,
-                toxiproxy_server_bin=str(args.toxiproxy_server_bin),
-                upstream_host=args.host,
-                upstream_port=args.port,
-                worker_count=active_workers,
-                output_dir=network_output_dir,
-            )
-            try:
-                network_worker_contexts = network_manager.start()
-            except Exception:
-                network_manager.close()
-                raise
-            logging.info(
-                "Network emulation enabled for %d worker(s)",
-                sum(
-                    1
-                    for context in network_worker_contexts.values()
-                    if bool(context.get("emulate_network", True))
-                ),
-            )
-        else:
-            logging.info(
-                "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
-            )
+    if experiment_requires_network_emulation(settings, worker_count=active_workers):
+        network_output_dir = args.output_dir / "network_emulation"
+        network_manager = NetworkEmulationManager(
+            settings,
+            upstream_host=args.host,
+            upstream_port=args.port,
+            worker_count=active_workers,
+            output_dir=network_output_dir,
+        )
+        try:
+            network_worker_contexts = network_manager.start()
+        except Exception:
+            network_manager.close()
+            raise
+        logging.info(
+            "Network emulation enabled for %d worker(s)",
+            sum(
+                1
+                for context in network_worker_contexts.values()
+                if bool(context.get("emulate_network", True))
+            ),
+        )
+    else:
+        logging.info(
+            "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
+        )
 
-    runtime_metadata = RuntimeMetadata(
-        task_suite_name=settings.task_suite_name,
-        num_trials_per_task=settings.num_trials_per_task,
-        max_steps=settings.max_steps,
-        num_robots=settings.num_robots,
-        control_hz=settings.control_hz,
-        broker_type=settings.action_chunk_broker_type.value,
-        seed=args.seed,
-        resize_size=RESIZE_SIZE,
-        episodes=[str(ep) for ep in episodes],
-        max_execution_horizon=settings.max_execution_horizons(),
-    )
-
-    runtime_metadata.to_json(args.output_dir / "runtime_metadata.json")
-    logging.info(f"Saved runtime metadata to {args.output_dir / 'runtime_metadata.json'}")
-
+    args.to_json(args.output_dir / "experiment_args.json")
     server_metadata.to_json(args.output_dir / "server_metadata.json")
-    logging.info(f"Saved server metadata to {args.output_dir / 'server_metadata.json'}")
 
-    reset_server(args)
     try:
         run_robots(
             args,
@@ -950,12 +657,28 @@ def main(args: Args) -> None:
         if network_manager is not None:
             network_manager.close()
 
-    save_server_metrics_history(args)
+    # TODO: does not match pattern above
+    history = control_client.fetch_server_metrics()
+    (args.output_dir / "server_metrics_history.json").write_text(json.dumps(history, indent=2))
 
     calculate_metrics(args.output_dir)
     generate_all_plots(args.output_dir)
 
 
 if __name__ == "__main__":
-    multiprocessing.set_start_method("spawn")  # allows multiple processes with envs
-    main(tyro.cli(Args))
+    if sys.platform == "linux":
+        # forkserver: workers fork from a server process that has already
+        # imported the heavy libraries below, so their read-only pages are
+        # shared copy-on-write across all robots instead of duplicated per
+        # process. Safe with sim envs because GL contexts are created
+        # per-worker after the fork.
+        multiprocessing.set_start_method("forkserver")
+        multiprocessing.set_forkserver_preload(
+            ["numpy", "matplotlib", "robosuite", "sims.libero.env"]
+        )
+    else:
+        # macOS: forked processes can crash inside Apple frameworks; keep
+        # spawn (also allows multiple processes with envs).
+        multiprocessing.set_start_method("spawn")
+
+    main(Args.from_cli())
