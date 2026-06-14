@@ -1,3 +1,4 @@
+# FIXME: this script is broken after WebsocketClientPolicy was deleted
 """
 Replay debug data from a saved episode.
 

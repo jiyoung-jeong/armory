@@ -1,3 +1,4 @@
+# FIXME: this script is broken after AsyncWebsocketClientPolicy was deleted
 """WebSocket variant of the toxiproxy downstream-latency repro.
 
 Raw TCP showed the downstream latency toxic works perfectly (single conn, per-
@@ -79,8 +80,9 @@ async def _ws_endpoint(websocket):
 
 def _start_server(port: int) -> uvicorn.Server:
     app = Starlette(routes=[WebSocketRoute("/", _ws_endpoint)])
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
-                            ws_max_size=16 * 1024 * 1024)
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", ws_max_size=16 * 1024 * 1024
+    )
     server = uvicorn.Server(config)
     th = threading.Thread(target=server.run, daemon=True)
     th.start()
@@ -93,7 +95,7 @@ def _start_server(port: int) -> uvicorn.Server:
 
 def _pct(x):
     a = np.asarray(x)
-    return f"p50={np.median(a):6.1f}  mean={a.mean():6.1f}  p95={np.percentile(a,95):6.1f}"
+    return f"p50={np.median(a):6.1f}  mean={a.mean():6.1f}  p95={np.percentile(a, 95):6.1f}"
 
 
 def _report(label, up, down, rtt):
@@ -136,10 +138,12 @@ def _run_ws_async(ctrl, proxy, host, port, n_pool=10):
     payload = b"\x00" * MSG_BYTES
 
     async def go():
-        pool = await asyncio.gather(*[
-            websockets.asyncio.client.connect(f"ws://{host}:{port}/", max_size=16 * 1024 * 1024)
-            for _ in range(n_pool)
-        ])
+        pool = await asyncio.gather(
+            *[
+                websockets.asyncio.client.connect(f"ws://{host}:{port}/", max_size=16 * 1024 * 1024)
+                for _ in range(n_pool)
+            ]
+        )
         up, down, rtt = [], [], []
 
         async def one(ws, n):
@@ -155,7 +159,9 @@ def _run_ws_async(ctrl, proxy, host, port, n_pool=10):
 
         # warmup (untimed) then timed, all pool conns concurrently
         await asyncio.gather(*[one(ws, N_WARMUP) for ws in pool])
-        up.clear(); down.clear(); rtt.clear()
+        up.clear()
+        down.clear()
+        rtt.clear()
         await asyncio.gather(*[one(ws, N_REQUESTS) for ws in pool])
         for ws in pool:
             await ws.close()
@@ -175,7 +181,8 @@ def _run_ws_pipelined(ctrl, proxy, host, port):
 
     async def go():
         ws = await websockets.asyncio.client.connect(
-            f"ws://{host}:{port}/", max_size=16 * 1024 * 1024)
+            f"ws://{host}:{port}/", max_size=16 * 1024 * 1024
+        )
         sends: dict[int, float] = {}
         up, down, rtt = [], [], []
         recv_count = 0
@@ -197,7 +204,7 @@ def _run_ws_pipelined(ctrl, proxy, host, port):
         for k in range(n):
             sends[k] = time.time()
             await ws.send(payload)
-            await asyncio.sleep(0.05)   # 20 Hz control rate, do NOT await response
+            await asyncio.sleep(0.05)  # 20 Hz control rate, do NOT await response
         await rt
         await ws.close()
         return up, down, rtt
@@ -218,9 +225,13 @@ def main() -> None:
         server_bin=TOXIPROXY_BIN,
         server_args=["-host", "127.0.0.1", "-port", str(api_port)],
     )
-    print(f"toxiproxy api=127.0.0.1:{api_port}  proxy={host}:{listen_port}  ws-server={host}:{srv_port}")
-    print(f"config: latency={LATENCY_MS}ms each way, inference sleep={INFER_S*1000:.0f}ms, "
-          f"{N_REQUESTS} reqs/condition (starlette/uvicorn + websockets {websockets_version()})")
+    print(
+        f"toxiproxy api=127.0.0.1:{api_port}  proxy={host}:{listen_port}  ws-server={host}:{srv_port}"
+    )
+    print(
+        f"config: latency={LATENCY_MS}ms each way, inference sleep={INFER_S * 1000:.0f}ms, "
+        f"{N_REQUESTS} reqs/condition (starlette/uvicorn + websockets {websockets_version()})"
+    )
     ctrl.start_server()
     proxy = "repro_ws_proxy"
     try:
@@ -243,6 +254,7 @@ def main() -> None:
 
 def websockets_version():
     import websockets
+
     return websockets.__version__
 
 
