@@ -13,17 +13,29 @@ import requests
 DEFAULT_TOXIC_UPSTREAM = "latency_upstream"
 DEFAULT_TOXIC_DOWNSTREAM = "latency_downstream"
 
-ExperimentConfig = dict[str, Any]
+ExperimentConfig = Any
 NetworkEmulationConfig = ExperimentConfig
 WorkerNetworkContext = dict[str, Any]
 
+_DEFAULT_TOXIPROXY_CONFIG: dict[str, Any] = {
+    "api_url": "http://localhost:8474",
+    "listen_host": "localhost",
+    "listen_port_base": 8888,
+    "server_args": [],
+}
 
-def robot_profile_disables_network_emulation(robot_cfg: dict[str, Any]) -> bool:
+_DEFAULT_SAMPLING_CONFIG: dict[str, Any] = {
+    "default_seed": 0,
+    "resample_every_requests": 10,
+}
+
+
+def robot_profile_disables_network_emulation(robot_cfg: Any) -> bool:
     return (
-        float(robot_cfg["uplink_median_ms"]) == 0.0
-        and float(robot_cfg["uplink_sigma"]) == 0.0
-        and float(robot_cfg["downlink_median_ms"]) == 0.0
-        and float(robot_cfg["downlink_sigma"]) == 0.0
+        float(robot_cfg.observation_latency.median) == 0.0
+        and float(robot_cfg.observation_latency.sigma) == 0.0
+        and float(robot_cfg.action_latency.median) == 0.0
+        and float(robot_cfg.action_latency.sigma) == 0.0
     )
 
 
@@ -31,16 +43,12 @@ def experiment_requires_network_emulation(
     config: ExperimentConfig,
     worker_count: int | None = None,
 ) -> bool:
-    robots_cfg = config["robots"]
-    max_workers = (
-        int(config["experiment"]["num_robots"]) if worker_count is None else int(worker_count)
-    )
+    robots = config.robots
+    max_workers = len(robots) if worker_count is None else int(worker_count)
     for idx in range(max(0, max_workers)):
-        robot_id = f"robot_{idx}"
-        robot_cfg = robots_cfg.get(robot_id)
-        if robot_cfg is None:
+        if idx >= len(robots):
             continue
-        if not robot_profile_disables_network_emulation(robot_cfg):
+        if not robot_profile_disables_network_emulation(robots[idx]):
             return True
     return False
 
@@ -269,6 +277,8 @@ class NetworkEmulationManager:
         upstream_port: int,
         worker_count: int,
         output_dir: str | pathlib.Path,
+        toxiproxy_config: dict[str, Any] | None = None,
+        sampling_config: dict[str, Any] | None = None,
     ) -> None:
         self._config = config
         self._upstream_host = upstream_host
@@ -276,10 +286,12 @@ class NetworkEmulationManager:
         self._worker_count = worker_count
         self._output_dir = pathlib.Path(output_dir)
 
-        toxi = self._config["toxiproxy"]
+        self._toxi_cfg = toxiproxy_config or _DEFAULT_TOXIPROXY_CONFIG
+        self._sampling_cfg = sampling_config or _DEFAULT_SAMPLING_CONFIG
+
         self._controller = ToxiproxyController(
-            str(toxi["api_url"]),
-            server_args=list(toxi.get("server_args", [])),
+            str(self._toxi_cfg["api_url"]),
+            server_args=list(self._toxi_cfg.get("server_args", [])),
         )
 
         self._worker_contexts: dict[str, WorkerNetworkContext] = {}
@@ -299,21 +311,19 @@ class NetworkEmulationManager:
 
         self._controller.start_server()
 
-        robots_cfg = self._config["robots"]
-        sampling_cfg = self._config["sampling"]
-        toxi_cfg = self._config["toxiproxy"]
+        robots = self._config.robots
+        toxi_cfg = self._toxi_cfg
+        sampling_cfg = self._sampling_cfg
 
         for idx in range(self._worker_count):
             robot_id = f"robot_{idx}"
-            robot_cfg = robots_cfg.get(robot_id)
-            if robot_cfg is None:
+            if idx >= len(robots):
                 raise ValueError(
-                    f"Missing robots.{robot_id} in experiment config for worker_count={self._worker_count}"
+                    f"Missing robots[{idx}] in experiment config for worker_count={self._worker_count}"
                 )
+            robot = robots[idx]
 
-            seed = robot_cfg.get("seed")
-            if seed is None:
-                seed = int(sampling_cfg["default_seed"]) + idx
+            seed = int(sampling_cfg["default_seed"]) + idx
 
             context: WorkerNetworkContext = {
                 "robot_id": robot_id,
@@ -321,14 +331,14 @@ class NetworkEmulationManager:
                 "proxy_host": str(toxi_cfg["listen_host"]),
                 "proxy_port": int(toxi_cfg["listen_port_base"]) + idx,
                 "api_url": str(toxi_cfg["api_url"]),
-                "uplink_median_ms": float(robot_cfg["uplink_median_ms"]),
-                "uplink_sigma": float(robot_cfg["uplink_sigma"]),
-                "downlink_median_ms": float(robot_cfg["downlink_median_ms"]),
-                "downlink_sigma": float(robot_cfg["downlink_sigma"]),
+                "uplink_median_ms": float(robot.observation_latency.median),
+                "uplink_sigma": float(robot.observation_latency.sigma),
+                "downlink_median_ms": float(robot.action_latency.median),
+                "downlink_sigma": float(robot.action_latency.sigma),
                 "seed": int(seed),
                 "resample_every_requests": int(sampling_cfg["resample_every_requests"]),
                 "trace_path": str(self._output_dir / f"{robot_id}_latency_trace.jsonl"),
-                "emulate_network": not robot_profile_disables_network_emulation(robot_cfg),
+                "emulate_network": not robot_profile_disables_network_emulation(robot),
             }
             self._worker_contexts[robot_id] = context
 
@@ -359,10 +369,14 @@ class NetworkEmulationManager:
 
     def _write_resolved_config(self) -> None:
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        if hasattr(self._config, "model_dump"):
+            experiment_data = self._config.model_dump()
+        else:
+            experiment_data = dict(self._config)
         payload = {
-            "experiment": self._config["experiment"],
-            "toxiproxy": self._config["toxiproxy"],
-            "sampling": self._config["sampling"],
+            "experiment": experiment_data,
+            "toxiproxy": self._toxi_cfg,
+            "sampling": self._sampling_cfg,
             "upstream": {
                 "host": self._upstream_host,
                 "port": self._upstream_port,

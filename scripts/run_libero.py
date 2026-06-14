@@ -44,7 +44,7 @@ RESIZE_SIZE = 224
 
 
 class ExecutionHorizon(BaseModel):
-    min: int = Field(ge=1)
+    min: int = Field(ge=1, default=1)
     max: int = 10
 
     @model_validator(mode="after")
@@ -54,8 +54,8 @@ class ExecutionHorizon(BaseModel):
 
 
 class NetworkLatency(BaseModel):
-    median: float = Field(ge=0.0)
-    sigma: float = Field(ge=0.0)
+    median: float = Field(ge=0.0, default=0.0)
+    sigma: float = Field(ge=0.0, default=0.0)
 
 
 class Robot(BaseModel):
@@ -89,10 +89,10 @@ class ExperimentConfig(JSONBaseModel):
         return self.wall_clock_time_limit_s > 0.0
 
     def execution_horizon_for_robot(self, robot_idx: int) -> ExecutionHorizon:
-        return self.execution_horizons[robot_idx]
+        return self.robots[robot_idx].execution_horizon
 
     def max_execution_horizons(self) -> list[int]:
-        return [h.max for h in self.execution_horizons]
+        return [r.execution_horizon.max for r in self.robots]
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
@@ -488,13 +488,13 @@ def run_robots(
         )
     else:
         if trial_mode:
-            active_workers = settings.num_robots
+            active_workers = len(settings.robots)
             # In trial mode the unit of progress is "one robot finished its
             # wall-clock budget" rather than "one episode in the queue".
             total_episodes = active_workers
         else:
             total_episodes = len(episodes)
-            active_workers = min(settings.num_robots, total_episodes)
+            active_workers = min(len(settings.robots), total_episodes)
         start_barrier = multiprocessing.Barrier(active_workers, timeout=60)
         logging.info("Using one-time startup barrier across %d worker(s)", active_workers)
 
@@ -573,7 +573,7 @@ def main(args: Args) -> None:
             n = max(1, settings.subset_size or 1)
             subset_task_ids = list(range(n))
 
-        robot_task_assignment = assign_robots_to_tasks(settings.num_robots, subset_task_ids)
+        robot_task_assignment = assign_robots_to_tasks(len(settings.robots), subset_task_ids)
         # Trial-mode workers generate episodes inline based on their assigned
         # task. The list below is only used downstream for runtime_metadata.
         episodes = [
@@ -597,7 +597,7 @@ def main(args: Args) -> None:
         if settings.env == "libero":
             episodes = create_episodes(settings.task_suite_name, settings.num_trials_per_task)
         else:
-            episodes = create_mock_episodes(settings.num_trials_per_task * settings.num_robots)
+            episodes = create_mock_episodes(settings.num_trials_per_task * len(settings.robots))
 
     # Control-plane client: HTTP only, never connect()ed to the websocket.
     control_client = BidirectionalWebsocket(
@@ -609,9 +609,9 @@ def main(args: Args) -> None:
     control_client.reset_server()
     server_metadata = control_client.fetch_server_metadata()
     if settings.use_trial_mode:
-        active_workers = 1 if args.debug else settings.num_robots
+        active_workers = 1 if args.debug else len(settings.robots)
     else:
-        active_workers = 1 if args.debug else min(settings.num_robots, len(episodes))
+        active_workers = 1 if args.debug else min(len(settings.robots), len(episodes))
 
     network_manager = None
     network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
