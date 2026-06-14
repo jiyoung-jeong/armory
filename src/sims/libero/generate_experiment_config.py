@@ -234,11 +234,10 @@ def main() -> None:
         sampling_resample_every_requests=int(args.sampling_resample_every_requests),
     )
 
+    # TODO: validate this with new ExperimentConfig
     output_path = pathlib.Path(args.output_config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, indent=2))
-    # TODO: load using ExperimentConfig class, which should be part of armory-evaluation
-    # load_experiment_config(output_path)
     print(f"Wrote generated experiment config to {output_path}")
 
 

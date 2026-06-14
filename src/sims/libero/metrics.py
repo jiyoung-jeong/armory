@@ -95,6 +95,7 @@ def load_actions_left(
     }
 
 
+# TODO: delete these and just use ExperimentConfig.from_json() after imports are restructured
 def _load_experiment_config(output_path: pathlib.Path) -> dict:
     p = output_path / "experiment_args.json"
     if p.exists():
@@ -108,6 +109,10 @@ def _load_experiment_config(output_path: pathlib.Path) -> dict:
 def _load_control_hz(output_path: pathlib.Path, fallback: float = 20.0) -> float:
     ec = _load_experiment_config(output_path)
     val = ec.get("control_hz")
+    if val is None:
+        robots = ec.get("robots")
+        if robots:
+            val = robots[0].get("control_hz")
     if val is not None and float(val) > 0:
         return float(val)
     return float(fallback)
@@ -422,7 +427,7 @@ def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
     """
     ec = _load_experiment_config(output_path)
     assert ec, f"experiment_args.json not found or empty in {output_path}"
-    control_hz = float(ec["control_hz"])
+    control_hz = _load_control_hz(output_path)
 
     rows = []
     for cost_history_file in sorted(output_path.glob("**/cost_history.npy")):

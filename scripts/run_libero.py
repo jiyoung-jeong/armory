@@ -51,6 +51,7 @@ class ExecutionHorizon(BaseModel):
     def _validate(self) -> Self:
         if self.min > self.max:
             raise ValueError("min_execution_horizon must be <= max_execution_horizon")
+        return self
 
 
 class NetworkLatency(BaseModel):
@@ -212,7 +213,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
         robot_id=robot_id,
         host=ws_host,
         port=ws_port,
-        control_hz=float(settings.control_hz),
+        control_hz=float(settings.robots[robot_idx].control_hz),
         pre_send_hook=pre_send_hook,
     )
     ws_client.connect()
@@ -220,7 +221,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     execution_horizon = settings.execution_horizon_for_robot(robot_idx)
     config = BrokerConfig(
         ws_client=ws_client,
-        control_hz=settings.control_hz,
+        control_hz=settings.robots[robot_idx].control_hz,
         min_execution_horizon=execution_horizon.min,
         max_execution_horizon=execution_horizon.max,
     )
@@ -294,7 +295,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
             environment=env,
             agent=agent,
             subscribers=subscribers,
-            max_hz=settings.control_hz,
+            max_hz=settings.robots[robot_idx].control_hz,
             num_episodes=1,
             max_episode_steps=env._max_episode_steps,  # type: ignore[attr-defined]
         )
@@ -333,12 +334,12 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                         initial_states=np.array([episode.initial_state]),
                         resize_size=RESIZE_SIZE,
                         max_episode_steps=settings.max_steps,
-                        control_hz=settings.control_hz,
+                        control_hz=settings.robots[robot_idx].control_hz,
                     )
                 elif settings.env == "mock":
                     env = MockEnvironment(
                         max_episode_steps=settings.max_steps,
-                        control_hz=settings.control_hz,
+                        control_hz=settings.robots[robot_idx].control_hz,
                         task_id=episode.task_id,
                         episode_idx=episode.idx,
                     )
@@ -433,13 +434,13 @@ def _trial_loop(
                     initial_states=np.array([state]),
                     resize_size=RESIZE_SIZE,
                     max_episode_steps=settings.max_steps,
-                    control_hz=settings.control_hz,
+                    control_hz=settings.robots[robot_idx].control_hz,
                     deadline_monotonic=deadline,
                 )
             else:
                 env = MockEnvironment(
                     max_episode_steps=settings.max_steps,
-                    control_hz=settings.control_hz,
+                    control_hz=settings.robots[robot_idx].control_hz,
                     task_id=task_id,
                     episode_idx=episode.idx,
                     deadline_monotonic=deadline,
@@ -480,7 +481,6 @@ def run_robots(
         _robot_worker(
             _WorkerArgs(
                 args=args,
-                settings=settings,
                 server_metadata=server_metadata,
                 robot_idx=0,
                 assigned_task_id=(robot_task_assignment[0] if trial_mode else None),
@@ -510,7 +510,6 @@ def run_robots(
             worker_args = [
                 _WorkerArgs(
                     args=args,
-                    settings=settings,
                     server_metadata=server_metadata,
                     robot_idx=i,
                     assigned_task_id=(robot_task_assignment[i] if trial_mode else None),

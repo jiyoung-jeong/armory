@@ -210,9 +210,8 @@ def main(
     ]
     client_paths = _client_config_paths(client_config)
     config_root = pathlib.Path(client_config) if pathlib.Path(client_config).is_dir() else None
-    # TODO: load using ExperimentConfig class, which should be part of armory-evaluation
     experiment_configs = [
-        (_experiment_name(path, root=config_root))  # load_experiment_config(path))
+        (_experiment_name(path, root=config_root), run_libero.ExperimentConfig.from_json(path))
         for path in client_paths
     ]
     client_args = run_libero.Args(experiment_config="", progress_type="logging", overwrite=True)

@@ -85,7 +85,7 @@ class JSONBaseModel(BaseModel):
 
     def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
         with open(filepath, "w") as f:
-            json.dump(self.model_dump(), f, indent=indent)
+            json.dump(self.model_dump(mode="json"), f, indent=indent)
 
     @classmethod
     def from_json(cls: type[J], filepath: pathlib.Path) -> J:
