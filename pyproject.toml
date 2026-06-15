@@ -359,6 +359,7 @@ dependencies = [
     "zipp==3.20.2",
     "albumentations==2.0.8",
     "armory-client",
+    "armory-evaluation",
     "armory-tui",
     "hatchling>=1.29.0",
 ]

@@ -86,7 +86,7 @@ class Case:
 
     @property
     def settings(self) -> run_libero.ExperimentConfig:
-        return run_libero.ExperimentConfig.from_config(self.experiment_config)
+        return run_libero.ExperimentConfig.from_json(self.experiment_config)
 
     @property
     def num_robots(self) -> int:

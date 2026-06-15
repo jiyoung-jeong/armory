@@ -21,8 +21,12 @@ dependencies = [
     "pydantic>=2",
     "pyarrow",
     "requests",
+    "tyro",
     "websockets>=13",
 ]
+
+[project.scripts]
+run-libero = "armory_evaluation.sims.libero.run:cli"
 
 [tool.uv.sources]
 armory-client = { workspace = true }

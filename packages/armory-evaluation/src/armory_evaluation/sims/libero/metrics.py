@@ -15,7 +15,6 @@ from matplotlib.patches import Patch
 from rich.console import Console
 from rich.table import Table
 
-from armory_client.schemas import ActionChunk
 from armory_evaluation.sims.libero.subscribers.saver import Result
 
 logger = logging.getLogger(__name__)
@@ -221,15 +220,15 @@ def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
             continue
 
         result = Result.from_json(metadata_file)
-        chunks = ActionChunk.from_parquet(action_chunk_file)
+        chunks = pd.read_parquet(action_chunk_file, engine="pyarrow")
 
-        for chunk in chunks:
+        for chunk in chunks.itertuples(index=False):
             rows.append(
                 {
                     "task_suite_name": result.task_suite_name,
                     "task_id": result.task_id,
                     "task_language": result.task_language,
-                    "latency": chunk.latency,
+                    "latency": chunk.response_timestamp - chunk.request_timestamp,
                     "max_execution_horizon": chunk.max_execution_horizon,
                 }
             )

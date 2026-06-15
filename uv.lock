@@ -213,6 +213,7 @@ dependencies = [
     { name = "argon2-cffi" },
     { name = "argon2-cffi-bindings" },
     { name = "armory-client" },
+    { name = "armory-evaluation" },
     { name = "armory-tui" },
     { name = "arrow" },
     { name = "asttokens" },
@@ -558,6 +559,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = "==25.1.0" },
     { name = "argon2-cffi-bindings", specifier = "==25.1.0" },
     { name = "armory-client", editable = "packages/armory-client" },
+    { name = "armory-evaluation", editable = "packages/armory-evaluation" },
     { name = "armory-tui", editable = "packages/armory-tui" },
     { name = "arrow", specifier = "==1.4.0" },
     { name = "asttokens", specifier = "==3.0.1" },
@@ -924,6 +926,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "requests" },
+    { name = "tyro" },
     { name = "websockets" },
 ]
 
@@ -936,6 +939,7 @@ requires-dist = [
     { name = "pyarrow" },
     { name = "pydantic", specifier = ">=2" },
     { name = "requests" },
+    { name = "tyro" },
     { name = "websockets", specifier = ">=13" },
 ]
 
