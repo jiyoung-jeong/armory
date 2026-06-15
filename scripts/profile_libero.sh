@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Profile a single-robot run_libero.py run with py-spy, producing a speedscope file.
+# Profile a single-robot run-libero run with py-spy, producing a speedscope file.
 #
 # Usage:
-#   scripts/profile_libero.sh [extra run_libero.py args...]
+#   scripts/profile_libero.sh [extra run-libero args...]
 #
 # Environment overrides:
 #   CLIENT_CONFIG  experiment config (default: configs/client/libero/profile_1robot.json)
@@ -71,7 +71,7 @@ else
 fi
 
 CLIENT_CMD=(
-    "$PYTHON" scripts/run_libero.py
+    uv run run-libero
     --experiment-config "$CLIENT_CONFIG"
     --host "$HOST" --port "$PORT"
     --output-dir "$RUN_DIR/client"

@@ -4,7 +4,7 @@ Run this in the second terminal of an interactive allocation. It iterates the
 case grid that ``run_sweep_server.py`` already materialized, and for each case:
 
   1. Waits for the server to write ``case_dir/server_ready.json``.
-  2. Runs ``scripts/run_libero.py --json-path case_dir/client_args.json`` to
+  2. Runs ``uv run run-libero --json-path case_dir/client_args.json`` to
      completion in the foreground.
   3. Writes ``case_dir/result.json`` via ``collect_results.write_case_result``
      (same schema the Slurm flow produces).
@@ -144,16 +144,14 @@ def _run_one_case_client(
         if stopping.is_set() or (run_root / "sweep_stopped").exists():
             return
         display.set_status("timed out waiting for server_ready.json")
-        write_case_result(
-            case_dir, status="failed", error="server_ready.json never appeared"
-        )
+        write_case_result(case_dir, status="failed", error="server_ready.json never appeared")
         _write_json(
             case_dir / "client_done.json",
             {"exit_code": -1, "finished_at": _utc_now_iso(), "duration_sec": 0},
         )
         return
 
-    display.set_status("running run_libero.py")
+    display.set_status("running run-libero")
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     stdout_path = logs / "client.stdout.log"
     stderr_path = logs / "client.stderr.log"
@@ -167,8 +165,7 @@ def _run_one_case_client(
             [
                 "uv",
                 "run",
-                "python",
-                "scripts/run_libero.py",
+                "run-libero",
                 "--json-path",
                 str(case_dir / "client_args.json"),
             ],
@@ -203,7 +200,7 @@ def _run_one_case_client(
         return
 
     status = "ok" if rc == 0 else "failed"
-    error = "" if rc == 0 else f"run_libero exited rc={rc}"
+    error = "" if rc == 0 else f"run-libero exited rc={rc}"
     write_case_result(case_dir, status=status, error=error)
     _write_json(
         case_dir / "client_done.json",
@@ -247,13 +244,9 @@ def main() -> None:
         except (OSError, json.JSONDecodeError):
             pass
     else:
-        print(
-            "warning: run_root/port.json not present yet — has the server script started?"
-        )
+        print("warning: run_root/port.json not present yet — has the server script started?")
 
-    selection = resume_prompt(
-        run_root, cases, role="CLIENT", non_interactive=args.non_interactive
-    )
+    selection = resume_prompt(run_root, cases, role="CLIENT", non_interactive=args.non_interactive)
     if not selection:
         print("No cases to run; exiting.")
         return

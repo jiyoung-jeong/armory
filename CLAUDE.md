@@ -25,8 +25,7 @@ uv run ruff format
 uv run scripts/serve.py --env LIBERO --max-batch-size 4
 
 # Run the LIBERO eval driver against a server
-uv run scripts/run_libero.py <args>      # thin shim, see note below
-uv run run-libero <args>                 # equivalent console script
+uv run run-libero <args>
 ```
 
 ## Architecture
@@ -79,8 +78,7 @@ operator front-end. `scripts/run_real.py` is the entry point.
 
 ## Conventions & gotchas
 
-- **`scripts/run_libero.py` is a backwards-compat shim** — the real eval driver lives in
-  `armory_evaluation.sims.libero.run`. Add new logic there, not in the script.
+- The LIBERO eval driver lives in `armory_evaluation.sims.libero.run` and is exposed as the `run-libero` console script.
 - **Experiment configs** live in `configs/client/**` (per-run robot fleet JSON) and `configs/server/`.
   `experiments/` holds named experiment definitions/results for sweeps. Modal and sbatch launchers
   (`scripts/modal/`, `scripts/sbatch/`) fan these out — see `scripts/sbatch/PHOENIX_NOTES.md`.

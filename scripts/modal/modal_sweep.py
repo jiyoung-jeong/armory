@@ -43,13 +43,13 @@ from typing import Any
 
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # _setups, _utils
-sys.path.insert(0, str(_HERE.parent))  # serve, run_libero
+sys.path.insert(0, str(_HERE.parent))  # serve
 sys.path.insert(0, str(_HERE.parent / "visualization"))  # plot_sweep
 
-import run_libero  # noqa: E402
 import serve  # noqa: E402
 from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
+from armory_evaluation.sims.libero import run as run_libero  # noqa: E402
 
 ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit", "lookahead-actions"}
 SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}

@@ -9,8 +9,8 @@ An experiment is a *policy server* talking to one or more *clients*. Combination
     default/ckpt     mock          gpu_server + cpu_mock_image    2 (split)
     default/ckpt     libero        gpu_server + libero GPU        2 (split)
 
-A *case* is a ``serve.Args`` plus a ``run_libero.Args``. The container pickles each
-into the run dir and execs the matching script. The sweep entrypoint inspects the
+A *case* is a ``serve.Args`` plus a ``run_libero.Args``. The container serializes each
+into the run dir and execs the matching entry point. The sweep entrypoint inspects the
 server policy and client env to pick a setup; nothing else here needs that knowledge.
 
 The colocated mock setup runs server + client as two subprocesses in one container.
@@ -37,9 +37,7 @@ import modal
 # scripts/ tree is mounted at /app/scripts/. Add both: the parent (for local
 # runs) and /app/scripts/modal (for remote, where _images.py + _utils.py live).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-sys.path.insert(0, "/app/scripts")
 sys.path.insert(0, "/app/scripts/modal")
-import run_libero  # noqa: E402
 import serve  # noqa: E402
 from _images import (  # noqa: E402
     CHECKPOINT_VOLUME_PATH,
@@ -49,6 +47,7 @@ from _images import (  # noqa: E402
     gpu_server_image,
 )
 from _utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
+from armory_evaluation.sims.libero import run as run_libero  # noqa: E402
 
 APP_NAME = "armory-experiments"
 
@@ -253,7 +252,8 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
     case.client_args.to_json(case.run_dir / "client_args.json")
     client_cmd = [
         sys.executable,
-        "scripts/run_libero.py",
+        "-m",
+        "armory_evaluation.sims.libero.run",
         "--json-path",
         str(case.run_dir / "client_args.json"),
     ]
@@ -387,7 +387,8 @@ class MockSetup:
         ]
         client_cmd = [
             sys.executable,
-            "scripts/run_libero.py",
+            "-m",
+            "armory_evaluation.sims.libero.run",
             "--json-path",
             str(case.run_dir / "client_args.json"),
         ]

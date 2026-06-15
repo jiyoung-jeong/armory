@@ -250,9 +250,7 @@ class BaseLiveDisplay:
             return Panel(Text("(no case selected)", style="dim"), title=title, border_style="blue")
         log_path = case_dir / "logs" / self.log_filename
         lines = _tail(log_path, self.log_tail_lines)
-        body = (
-            Text("\n".join(lines)) if lines else Text("(empty)", style="dim")
-        )
+        body = Text("\n".join(lines)) if lines else Text("(empty)", style="dim")
         return Panel(body, title=title, border_style="blue")
 
     def _render_totals(self) -> Panel:
@@ -485,12 +483,10 @@ def _smoke_main() -> None:
     with make_display(role=role, run_root=run_root, cases=cases, host="ice-1", port=8451) as d:
         for i, c in enumerate(cases):
             d.set_current(i, run_root / c.run_id)
-            for s in ("starting server", "waiting for /metadata (5s)", "running run_libero"):
+            for s in ("starting server", "waiting for /metadata (5s)", "running run-libero"):
                 d.set_status(s)
                 time.sleep(0.4)
-            (run_root / c.run_id / "result.json").write_text(
-                json.dumps({"status": "ok"}) + "\n"
-            )
+            (run_root / c.run_id / "result.json").write_text(json.dumps({"status": "ok"}) + "\n")
             time.sleep(0.3)
     print_final_summary(run_root, cases, role=role)
 

@@ -55,7 +55,7 @@ fi
 CLIENT_STATUS=ok
 CLIENT_ERROR=""
 if ! srun --het-group=1 \
-        uv run python scripts/run_libero.py --json-path "${CASE_DIR}/client_args.json" \
+        uv run run-libero --json-path "${CASE_DIR}/client_args.json" \
         >"${CASE_DIR}/logs/client.stdout.log" 2>"${CASE_DIR}/logs/client.stderr.log"; then
     CLIENT_STATUS=failed
     CLIENT_ERROR="client exited nonzero"

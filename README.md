@@ -6,4 +6,4 @@
 
 `uv run scripts/serve.py --env LIBERO --max-batch-size 4`
 
-`uv run scripts/run_libero.py <normal commands>`
+`uv run run-libero <normal commands>`

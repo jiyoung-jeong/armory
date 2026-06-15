@@ -1,4 +1,4 @@
-"""Submit Slurm scheduler sweeps using the current serve.py/run_libero.py JSON flow."""
+"""Submit Slurm scheduler sweeps using the current serve.py/run-libero JSON flow."""
 
 from __future__ import annotations
 
