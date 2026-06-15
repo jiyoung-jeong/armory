@@ -66,11 +66,7 @@ def pick_subset_task_ids(task_suite_name: str, subset_size: int, seed: int) -> l
     so each (seed, subset_size) combination is still reproducible.
     ``subset_size <= 0`` or ``>= n_tasks`` returns all task ids.
     """
-    if (
-        task_suite_name == "libero_10"
-        and subset_size == 2
-        and seed in _LIBERO_10_SEED_PAIRS
-    ):
+    if task_suite_name == "libero_10" and subset_size == 2 and seed in _LIBERO_10_SEED_PAIRS:
         return list(_LIBERO_10_SEED_PAIRS[seed])
 
     from libero.libero import benchmark
