@@ -17,12 +17,6 @@ from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
 from armory_client.protocol import SchedulerConfig, ServerMetadata
 from armory_evaluation.cli import JsonArgs
-from armory_evaluation.network_emulation import (
-    NetworkEmulationManager,
-    RobotNetworkHook,
-    WorkerNetworkContext,
-    experiment_requires_network_emulation,
-)
 from armory_evaluation.recording import JSONBaseModel
 from armory_evaluation.runtime import runtime as _runtime
 from armory_evaluation.runtime import subscriber as _subscriber
@@ -36,6 +30,12 @@ from armory_evaluation.sims.libero.seeding import seed_everything
 from armory_evaluation.sims.libero.subscribers.progress_subscriber import ProgressSubscriber
 from armory_evaluation.sims.libero.subscribers.saver import Saver
 from armory_evaluation.sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
+from armory_evaluation.toxiproxy import (
+    NetworkEmulationManager,
+    RobotNetworkHook,
+    WorkerNetworkContext,
+    experiment_requires_network_emulation,
+)
 
 logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224

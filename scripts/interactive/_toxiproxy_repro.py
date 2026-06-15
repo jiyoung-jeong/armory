@@ -36,7 +36,7 @@ _HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "packages" / "armory-client" / "src"))
 
-from armory_evaluation.network_emulation.toxiproxy import (  # noqa: E402
+from armory_evaluation.toxiproxy import (  # noqa: E402
     DEFAULT_TOXIC_DOWNSTREAM,
     DEFAULT_TOXIC_UPSTREAM,
     ToxiproxyController,
