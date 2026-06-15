@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
 import numpy as np
-from jaxtyping import Float
 
 from armory_client.messages import (
     InferResponse,
@@ -73,7 +72,7 @@ class BatchProfile:
 
 
 @dataclass(slots=True)
-class WarmupSeed:   
+class WarmupSeed:
     robot_id: RobotID
     obs_samples: list[tuple[float, float]]  # (arrival_ts, request_ts) per ping
     delivery_samples: list[tuple[float, float]]  # (client_receive_time, server_send_time) per ack
@@ -234,7 +233,7 @@ class InternalRequest:
     max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
-    noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
+    noise: np.ndarray | None = None  # action_horizon noise_dim
     type: str = "infer"  # FIXME: should be literal
 
     def __post_init__(self) -> None:

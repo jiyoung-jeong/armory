@@ -8,7 +8,6 @@ from typing import Any, TypeVar
 import numpy as np
 import pandas as pd
 import requests
-from jaxtyping import Float
 from pydantic import BaseModel, ConfigDict
 
 from armory_client import messages
@@ -162,6 +161,7 @@ class ParquetDataclass:
         return instances
 
 
+# TODO: move numpy comment type hints to other package
 @dataclass(frozen=True)
 class ActionChunk(ParquetDataclass):
     """
@@ -205,7 +205,7 @@ class ActionChunk(ParquetDataclass):
     def latency(self) -> float:
         return self.response_timestamp - self.request_timestamp
 
-    def get_action(self, index: int) -> Float[np.ndarray, " action_dim"]:
+    def get_action(self, index: int) -> np.ndarray:  # " action_dim"
         return self.actions[index]
 
 
@@ -217,7 +217,7 @@ class Action:
     """
 
     step: int  # TODO: should be renamed as action_index
-    action: Float[np.ndarray, " action_dim"]  # TODO: check the shape on this
+    action: np.ndarray  # action_dim  # TODO: check the shape on this
     action_chunk_index: int | None
     index_in_chunk: int | None
 
@@ -232,10 +232,10 @@ class Timestamp(CSVDataclass):
 
 @dataclass
 class Observation:
-    state: Float[np.ndarray, " state_dim"]
+    state: np.ndarray  # state_dim
     step: int
-    image: Float[np.ndarray, " h w c"]
-    wrist_image: Float[np.ndarray, " h w c"]
+    image: np.ndarray  # h w c
+    wrist_image: np.ndarray  # h w c
 
 
 @dataclass

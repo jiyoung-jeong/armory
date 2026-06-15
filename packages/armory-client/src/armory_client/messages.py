@@ -3,7 +3,6 @@ from enum import Enum
 from typing import Literal
 
 import numpy as np
-from jaxtyping import Float
 
 
 # TODO: merge with broker types
@@ -16,7 +15,7 @@ class InferType(Enum):
 
 @dataclass
 class RTCParams:
-    prev_action: Float[np.ndarray, "action_horizon action_dim"]
+    prev_action: np.ndarray  # action_horizon action_dim
     s_param: int
     d_param: int
 
@@ -46,7 +45,7 @@ class InferRequest:
     max_execution_horizon: int
     infer_type: InferType
     params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
-    noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
+    noise: np.ndarray | None = None  # action_horizon noise_dim
     type: Literal["infer"] = "infer"
 
     def __post_init__(self) -> None:
@@ -72,10 +71,10 @@ class InferResponse:
     observation_step: int  # from request
     action_index_start: int  # from request
     request_timestamp: float  # from request
-    actions: Float[np.ndarray, "1 action_horizon action_dim"]  # TODO: check the type on this
+    actions: np.ndarray  # 1 action_horizon action_dim # TODO: check the type on this
     min_execution_horizon: int
     max_execution_horizon: int
-    noise: Float[np.ndarray, "action_horizon noise_dim"] | None = None
+    noise: np.ndarray | None = None  # action_horizon noise_dim
     # Lifecycle timestamps (filled by server, all time.time()):
     server_arrival_time: float = 0.0  # WS: when observation arrived
     inference_start_time: float = 0.0  # GPU: before infer_batch

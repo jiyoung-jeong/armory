@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from jaxtyping import Float
 
 if TYPE_CHECKING:
     from libero.libero import benchmark
@@ -95,9 +94,9 @@ def create_episodes(task_suite_name: str, num_trials_per_task: int) -> list[Epis
     episodes: list[Episode] = []
     for task_id in range(num_tasks_in_suite):
         task: benchmark.Task = task_suite.get_task(task_id)
-        all_initial_states: Float[np.ndarray, "n_initial_states state_dim"] = (
-            task_suite.get_task_init_states(task_id)
-        )
+        all_initial_states: np.ndarray = task_suite.get_task_init_states(
+            task_id
+        )  # n_initial_states state_dim
 
         if len(all_initial_states) < num_trials_per_task:
             raise ValueError(f"Task {task_id} has less initial states than trials per task")
