@@ -372,6 +372,10 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-p no:hydra_pytest"
+# Only collect first-party tests (under tests/ and the workspace packages).
+# Without this, pytest recurses into third_party/ (e.g. openpi's conftest
+# imports pynvml) and aborts collection for the whole suite.
+testpaths = ["tests", "packages"]
 
 [tool.ruff]
 target-version = "py311"
