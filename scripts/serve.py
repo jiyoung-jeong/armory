@@ -11,13 +11,12 @@ from typing import Literal
 
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
-from armory_client.schemas import SchedulerConfig
+from armory_client.protocol import SchedulerConfig
 from openpi_adapter.serve_factory import EnvMode
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from armory_evaluation.sims.libero.seeding import seed_everything  # noqa: E402
 from utils import JsonArgs, resolve_policy  # noqa: E402
-
-from sims.libero.seeding import seed_everything  # noqa: E402
 
 
 class ModelFamily(str, enum.Enum):

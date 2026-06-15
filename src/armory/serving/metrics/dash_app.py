@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from dash import Input, Output, Patch, State, ctx, dcc, html
 
 from armory.serving.metrics.store import MetricsStore, Snapshot
-from armory_client.schemas import ServerMetadata
+from armory_client.protocol import ServerMetadata
 
 # ---------------------------------------------------------------------------
 # Plotly dark theme helpers

@@ -1,4 +1,4 @@
-from armory_client.network_emulation.toxiproxy import (
+from armory_evaluation.network_emulation.toxiproxy import (
     DEFAULT_TOXIC_DOWNSTREAM,
     DEFAULT_TOXIC_UPSTREAM,
     ExperimentConfig,

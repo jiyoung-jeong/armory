@@ -36,18 +36,18 @@ _HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = _HERE.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "packages" / "armory-client" / "src"))
 
-from armory_client.network_emulation.toxiproxy import (  # noqa: E402
+from armory_evaluation.network_emulation.toxiproxy import (  # noqa: E402
     DEFAULT_TOXIC_DOWNSTREAM,
     DEFAULT_TOXIC_UPSTREAM,
     ToxiproxyController,
 )
 
 TOXIPROXY_BIN = "/coc/flash7/rbansal66/vvla/toxiproxy-server-linux-amd64"
-LATENCY_MS = 100          # configured each direction
-INFER_S = 0.15            # server-side "inference" sleep (keeps resp in down-queue)
+LATENCY_MS = 100  # configured each direction
+INFER_S = 0.15  # server-side "inference" sleep (keeps resp in down-queue)
 N_REQUESTS = 40
 N_WARMUP = 3
-MSG_BYTES = 200_000       # ~obs-sized upstream payload
+MSG_BYTES = 200_000  # ~obs-sized upstream payload
 
 
 def _free_port() -> int:
@@ -76,7 +76,7 @@ def _handle_conn(conn: socket.socket, stop: threading.Event) -> None:
                 (plen,) = struct.unpack("!I", header)
                 _ = _recv_exactly(conn, plen)
                 t_arrival = time.time()
-                time.sleep(INFER_S)                       # mimic inference
+                time.sleep(INFER_S)  # mimic inference
                 t_send = time.time()
                 body = struct.pack("!dd", t_arrival, t_send)
                 conn.sendall(struct.pack("!I", len(body)) + body)
@@ -89,7 +89,7 @@ def _echo_server(server_sock: socket.socket, stop: threading.Event) -> None:
     while not stop.is_set():
         try:
             conn, _ = server_sock.accept()
-        except socket.timeout:
+        except TimeoutError:
             continue
         except OSError:
             break
@@ -138,7 +138,7 @@ def _run_condition(
 
     def p(x):
         a = np.asarray(x)
-        return f"p50={np.median(a):6.1f}  mean={a.mean():6.1f}  p95={np.percentile(a,95):6.1f}"
+        return f"p50={np.median(a):6.1f}  mean={a.mean():6.1f}  p95={np.percentile(a, 95):6.1f}"
 
     print(f"\n[{label}]  reapply={reapply}")
     print(f"  upstream   (client->server): {p(up)}")
@@ -171,7 +171,7 @@ def _client_worker(listen_host, listen_port, payload, out, idx):
 def _run_concurrent(label, ctrl, proxies, listen_host, echo_port, *, reapply):
     """K proxies + K parallel synchronous clients, like the real 10-robot run."""
     # Fresh toxics on every proxy.
-    for (proxy, lport) in proxies:
+    for proxy, lport in proxies:
         for t in (DEFAULT_TOXIC_UPSTREAM, DEFAULT_TOXIC_DOWNSTREAM):
             try:
                 ctrl._request("DELETE", f"/proxies/{proxy}/toxics/{t}", expected=(200, 204, 404))
@@ -220,7 +220,7 @@ def _run_concurrent(label, ctrl, proxies, listen_host, echo_port, *, reapply):
 
     def p(x):
         a = np.asarray(x)
-        return f"p50={np.median(a):6.1f}  mean={a.mean():6.1f}  p95={np.percentile(a,95):6.1f}"
+        return f"p50={np.median(a):6.1f}  mean={a.mean():6.1f}  p95={np.percentile(a, 95):6.1f}"
 
     print(f"\n[{label}]  {len(proxies)} concurrent clients, reapply={reapply}")
     print(f"  upstream   (client->server): {p(up)}")
@@ -232,7 +232,8 @@ def _attrs_only_update(ctrl: ToxiproxyController, proxy: str, latency_ms: int) -
     """Update both latency toxics sending ONLY the attributes (no name/type/stream)."""
     for t in (DEFAULT_TOXIC_UPSTREAM, DEFAULT_TOXIC_DOWNSTREAM):
         ctrl._request(
-            "POST", f"/proxies/{proxy}/toxics/{t}",
+            "POST",
+            f"/proxies/{proxy}/toxics/{t}",
             expected=(200, 201),
             json={"attributes": {"latency": int(latency_ms), "jitter": 0}},
         )
@@ -257,32 +258,63 @@ def main() -> None:
         server_bin=TOXIPROXY_BIN,
         server_args=["-host", "127.0.0.1", "-port", str(api_port)],
     )
-    print(f"toxiproxy api=127.0.0.1:{api_port}  proxy={listen_host}:{listen_port}"
-          f"  echo=127.0.0.1:{echo_port}")
-    print(f"config: latency={LATENCY_MS}ms each way, inference sleep={INFER_S*1000:.0f}ms, "
-          f"{N_REQUESTS} reqs/condition")
+    print(
+        f"toxiproxy api=127.0.0.1:{api_port}  proxy={listen_host}:{listen_port}"
+        f"  echo=127.0.0.1:{echo_port}"
+    )
+    print(
+        f"config: latency={LATENCY_MS}ms each way, inference sleep={INFER_S * 1000:.0f}ms, "
+        f"{N_REQUESTS} reqs/condition"
+    )
     ctrl.start_server()
     proxy = "repro_proxy"
     n_concurrent = 10
     extra_proxies = [(f"repro_proxy_{i}", _free_port()) for i in range(n_concurrent)]
     try:
-        ctrl.create_proxy(proxy, listen=f"{listen_host}:{listen_port}",
-                          upstream=f"127.0.0.1:{echo_port}")
-        _run_condition("A: 1 conn, set once, never re-apply", ctrl, proxy,
-                       listen_host, listen_port, reapply=None)
-        _run_condition("B: 1 conn, re-apply full body/req (production)", ctrl, proxy,
-                       listen_host, listen_port, reapply="full")
-        _run_condition("C: 1 conn, re-apply attrs-only/req", ctrl, proxy,
-                       listen_host, listen_port, reapply="attrs")
+        ctrl.create_proxy(
+            proxy, listen=f"{listen_host}:{listen_port}", upstream=f"127.0.0.1:{echo_port}"
+        )
+        _run_condition(
+            "A: 1 conn, set once, never re-apply",
+            ctrl,
+            proxy,
+            listen_host,
+            listen_port,
+            reapply=None,
+        )
+        _run_condition(
+            "B: 1 conn, re-apply full body/req (production)",
+            ctrl,
+            proxy,
+            listen_host,
+            listen_port,
+            reapply="full",
+        )
+        _run_condition(
+            "C: 1 conn, re-apply attrs-only/req",
+            ctrl,
+            proxy,
+            listen_host,
+            listen_port,
+            reapply="attrs",
+        )
 
         # Concurrency: 10 proxies + 10 parallel synchronous clients, like 10 robots.
-        for (pn, lport) in extra_proxies:
-            ctrl.create_proxy(pn, listen=f"{listen_host}:{lport}",
-                             upstream=f"127.0.0.1:{echo_port}")
-        _run_concurrent("D: 10 conns, set once", ctrl, extra_proxies,
-                        listen_host, echo_port, reapply=None)
-        _run_concurrent("E: 10 conns, re-apply full body/req (production)", ctrl, extra_proxies,
-                        listen_host, echo_port, reapply="full")
+        for pn, lport in extra_proxies:
+            ctrl.create_proxy(
+                pn, listen=f"{listen_host}:{lport}", upstream=f"127.0.0.1:{echo_port}"
+            )
+        _run_concurrent(
+            "D: 10 conns, set once", ctrl, extra_proxies, listen_host, echo_port, reapply=None
+        )
+        _run_concurrent(
+            "E: 10 conns, re-apply full body/req (production)",
+            ctrl,
+            extra_proxies,
+            listen_host,
+            echo_port,
+            reapply="full",
+        )
     finally:
         for pn in [proxy, *[p for p, _ in extra_proxies]]:
             try:

@@ -43,8 +43,7 @@ sys.path.insert(0, str(REPO_ROOT / "packages" / "armory-client" / "src"))
 
 import websockets.asyncio.client  # noqa: E402
 import websockets.sync.client  # noqa: E402
-
-from armory_client.network_emulation.toxiproxy import (  # noqa: E402
+from armory_evaluation.network_emulation.toxiproxy import (  # noqa: E402
     DEFAULT_TOXIC_DOWNSTREAM,
     DEFAULT_TOXIC_UPSTREAM,
     ToxiproxyController,

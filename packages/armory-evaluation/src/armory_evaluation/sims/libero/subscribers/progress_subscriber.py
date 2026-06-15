@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 from typing_extensions import override
 
-from armory_client.runtime import subscriber as _subscriber
-from sims.libero.episodes import Episode
+from armory_evaluation.runtime import subscriber as _subscriber
+from armory_evaluation.sims.libero.episodes import Episode
 
 if TYPE_CHECKING:
-    from sims.libero.env import LiberoSimEnvironment
+    from armory_evaluation.sims.libero.env import LiberoSimEnvironment
 
 
 logger = logging.getLogger(__name__)

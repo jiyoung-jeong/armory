@@ -68,7 +68,7 @@ from armory_client.messages import (
     ResponseAck,
     WarmupPong,
 )
-from armory_client.schemas import SchedulerConfig, ServerMetadata
+from armory_client.protocol import SchedulerConfig, ServerMetadata
 
 MAX_ROBOTS = 100
 NUM_WARMUP = 100

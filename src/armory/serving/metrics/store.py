@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import bisect
 import itertools
+import json
 import logging
+import pathlib
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
@@ -19,7 +21,6 @@ from armory.serving.metrics.schemas import (
 )
 from armory.serving.schemas import ResponseBatch, RobotID, SchedulerDecision, SlotRequest
 from armory_client.messages import EpisodeEnd, EpisodeStart, EpisodeStep, InferResponse, ResponseAck
-from armory_client.schemas import JSONDataclass
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +138,19 @@ class Snapshot:
         return [float(marker.get("t", 0.0)) for marker in self.replan_markers]
 
 
+class _JSONDataclass:
+    def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
+        with open(filepath, "w") as f:
+            json.dump(asdict(self), f, indent=indent)
+
+    @classmethod
+    def from_json(cls, filepath: pathlib.Path) -> _JSONDataclass:
+        with open(filepath) as f:
+            return cls(**json.load(f))
+
+
 @dataclass
-class MetricsStore(JSONDataclass):
+class MetricsStore(_JSONDataclass):
     """Single-call-site metrics store. All updates go through record_batch / record_ack."""
 
     start_time: float = float("inf")

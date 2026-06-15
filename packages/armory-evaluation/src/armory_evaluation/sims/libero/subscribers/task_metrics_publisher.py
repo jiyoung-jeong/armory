@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from armory_client.client import BidirectionalWebsocket
-from armory_client.runtime import subscriber as _subscriber
 from armory_client.schemas import Action, Observation
+from armory_evaluation.runtime import subscriber as _subscriber
 
 if TYPE_CHECKING:
     from libero.libero import benchmark
 
-    from sims.libero.env import LiberoSimEnvironment
+    from armory_evaluation.sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
 

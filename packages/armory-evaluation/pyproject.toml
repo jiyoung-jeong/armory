@@ -6,16 +6,23 @@ build-backend = "hatchling.build"
 only-include = ["src/armory_evaluation"]
 
 [tool.hatch.build.targets.wheel.sources]
-"src/armory-evaluation" = "armory_evaluation"
+"src/armory_evaluation" = "armory_evaluation"
 
 [project]
 name = "armory-evaluation"
 version = "0.1.0"
-description = "Lightweight client library for the armory serving system"
+description = "Evaluation harness for the armory serving system"
 requires-python = ">=3.10"
 dependencies = [
+    "armory-client",
     "numpy",
+    "pandas",
     "pillow",
+    "pydantic>=2",
+    "pyarrow",
     "requests",
     "websockets>=13",
 ]
+
+[tool.uv.sources]
+armory-client = { workspace = true }

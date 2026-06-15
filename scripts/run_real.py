@@ -619,7 +619,7 @@ def main(args: Args) -> None:
 
         # Finally: same offline metrics pass as run_libero.py.
         try:
-            from sims.libero.metrics import calculate_metrics, generate_all_plots
+            from armory_evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
 
             calculate_metrics(out)
             generate_all_plots(out)

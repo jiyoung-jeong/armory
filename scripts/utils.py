@@ -12,6 +12,7 @@ from typing import Any, NamedTuple, Self
 
 import numpy as np
 import tyro
+from armory_evaluation.recording import JSONBaseModel
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
@@ -21,7 +22,7 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
 
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory_client.messages import InferRequest, InferType
-from armory_client.schemas import JSONBaseModel, ServerMetadata
+from armory_client.protocol import ServerMetadata
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:

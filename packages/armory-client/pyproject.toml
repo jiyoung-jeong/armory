@@ -17,6 +17,7 @@ dependencies = [
     "msgpack>=1.0",
     "numpy",
     "pillow",
+    "pydantic>=2",
     "requests",
     "websockets>=13",
 ]

@@ -13,7 +13,8 @@ from armory_client.messages import (
     WarmupPing,
     WarmupPong,
 )
-from armory_client.schemas import Observation, SchedulerConfig, ServerMetadata
+from armory_client.protocol import SchedulerConfig, ServerMetadata
+from armory_client.schemas import Observation
 
 logger = logging.getLogger(__name__)
 

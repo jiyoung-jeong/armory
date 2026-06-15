@@ -2,6 +2,7 @@
 
 import json
 import logging
+import pathlib
 from collections.abc import Callable
 from dataclasses import asdict
 
@@ -14,8 +15,8 @@ from matplotlib.patches import Patch
 from rich.console import Console
 from rich.table import Table
 
-from armory_client.schemas import ActionChunk, pathlib
-from sims.libero.subscribers.saver import Result
+from armory_client.schemas import ActionChunk
+from armory_evaluation.sims.libero.subscribers.saver import Result
 
 logger = logging.getLogger(__name__)
 

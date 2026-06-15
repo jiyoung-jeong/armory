@@ -42,8 +42,7 @@ import matplotlib
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
-
-from sims.libero.metrics import (
+from armory_evaluation.sims.libero.metrics import (
     _build_actions_left_matrix,
     _load_scheduler_decisions,
     _server_to_perf_offset,
@@ -103,9 +102,7 @@ def build_heatmap_data(
 
     # Top-to-bottom display order: robot 11 first, then others (earliest first).
     top_to_bottom = ([PINNED_ROBOT] if PINNED_ROBOT in robots else []) + others_sorted
-    labels_ttb = (["Fast"] if PINNED_ROBOT in robots else []) + [
-        "Slow" for _ in others_sorted
-    ]
+    labels_ttb = (["Fast"] if PINNED_ROBOT in robots else []) + ["Slow" for _ in others_sorted]
 
     # imshow uses origin="lower" (array row 0 = bottom), so reverse.
     array_ids = top_to_bottom[::-1]
@@ -134,8 +131,6 @@ def draw_heatmap(
     title: str,
     show_ylabel: bool = True,
 ) -> tuple[matplotlib.image.AxesImage, matplotlib.image.AxesImage | None]:
-    n_robots = data.ordered.shape[0]
-
     main = data.ordered.copy()
     if data.pinned_row is not None:
         main[data.pinned_row, :] = np.nan
@@ -180,8 +175,13 @@ def draw_heatmap(
                     row = data.arr_row_of_robot.get(str(rid))
                     if row is None:
                         continue
-                    ax.plot([col, col], [row - 0.42, row + 0.42], color="black",
-                            linewidth=0.7, alpha=0.85)
+                    ax.plot(
+                        [col, col],
+                        [row - 0.42, row + 0.42],
+                        color="black",
+                        linewidth=0.7,
+                        alpha=0.85,
+                    )
 
     ax.set_yticks([])
     tick_interval = max(1, int(round(data.control_hz)))  # one tick per second
@@ -202,7 +202,9 @@ def generate(
     num_steps: int = 150,
     control_hz: float | None = None,
 ) -> None:
-    datasets = [(d, t, build_heatmap_data(d, num_steps, control_hz)) for d, t in zip(trial_dirs, titles)]
+    datasets = [
+        (d, t, build_heatmap_data(d, num_steps, control_hz)) for d, t in zip(trial_dirs, titles)
+    ]
     datasets = [(d, t, data) for d, t, data in datasets if data is not None]
     if not datasets:
         print("No actions_left.npy data found in any trial directory")
@@ -235,7 +237,9 @@ def generate(
 
     im_blue = im_red = None
     for i, (d, t, data) in enumerate(datasets):
-        im_blue, im_red = draw_heatmap(axes[i], data, d, vmax_blue, vmax_red, t, show_ylabel=(i == 0))
+        im_blue, im_red = draw_heatmap(
+            axes[i], data, d, vmax_blue, vmax_red, t, show_ylabel=(i == 0)
+        )
 
     cb_blue = fig.colorbar(im_blue, ax=list(axes), pad=0.01, fraction=0.03)
     cb_blue.set_label("Remaining Actions in Queue", fontweight="bold", fontsize=18)
@@ -259,19 +263,28 @@ def main() -> None:
         help="One trial dir, or two to render side by side (first = left panel).",
     )
     parser.add_argument(
-        "-o", "--output", type=pathlib.Path, default=None,
+        "-o",
+        "--output",
+        type=pathlib.Path,
+        default=None,
         help="Output PNG path (default chosen from the trial name(s)).",
     )
     parser.add_argument(
-        "--titles", type=str, default=None,
+        "--titles",
+        type=str,
+        default=None,
         help="Comma-separated panel titles. Default: 'Earliest Deadline First,Lookahead'.",
     )
     parser.add_argument(
-        "--num-steps", type=int, default=60,
+        "--num-steps",
+        type=int,
+        default=60,
         help="Cap the time axis to this many control steps (default: 150).",
     )
     parser.add_argument(
-        "--control-hz", type=float, default=None,
+        "--control-hz",
+        type=float,
+        default=None,
         help="Canvas control rate. Defaults to the max observed per-robot rate.",
     )
     args = parser.parse_args()

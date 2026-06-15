@@ -16,6 +16,7 @@ required-markers = [
 members = [
     "armory",
     "armory-client",
+    "armory-evaluation",
     "armory-tui",
 ]
 
@@ -211,6 +212,7 @@ dependencies = [
     { name = "anyio" },
     { name = "argon2-cffi" },
     { name = "argon2-cffi-bindings" },
+    { name = "armory-client" },
     { name = "armory-tui" },
     { name = "arrow" },
     { name = "asttokens" },
@@ -555,6 +557,7 @@ requires-dist = [
     { name = "anyio", specifier = "==4.13.0" },
     { name = "argon2-cffi", specifier = "==25.1.0" },
     { name = "argon2-cffi-bindings", specifier = "==25.1.0" },
+    { name = "armory-client", editable = "packages/armory-client" },
     { name = "armory-tui", editable = "packages/armory-tui" },
     { name = "arrow", specifier = "==1.4.0" },
     { name = "asttokens", specifier = "==3.0.1" },
@@ -894,6 +897,7 @@ dependencies = [
     { name = "msgpack" },
     { name = "numpy" },
     { name = "pillow" },
+    { name = "pydantic" },
     { name = "requests" },
     { name = "websockets" },
 ]
@@ -903,6 +907,34 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.0" },
     { name = "numpy" },
     { name = "pillow" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "requests" },
+    { name = "websockets", specifier = ">=13" },
+]
+
+[[package]]
+name = "armory-evaluation"
+version = "0.1.0"
+source = { editable = "packages/armory-evaluation" }
+dependencies = [
+    { name = "armory-client" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pyarrow" },
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "armory-client", editable = "packages/armory-client" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "pillow" },
+    { name = "pyarrow" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "requests" },
     { name = "websockets", specifier = ">=13" },
 ]

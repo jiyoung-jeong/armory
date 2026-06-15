@@ -11,33 +11,33 @@ from dataclasses import dataclass
 from typing import Any, Literal, Self  # Any used for shared globals
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
-from armory_client.client import BidirectionalWebsocket
-from armory_client.network_emulation import (
+from armory_evaluation.network_emulation import (
     NetworkEmulationManager,
     RobotNetworkHook,
     WorkerNetworkContext,
     experiment_requires_network_emulation,
 )
-from armory_client.runtime import runtime as _runtime
-from armory_client.runtime import subscriber as _subscriber
-from armory_client.runtime.agents import policy_agent as _policy_agent
-from armory_client.schemas import JSONBaseModel, SchedulerConfig, ServerMetadata
+from armory_evaluation.recording import JSONBaseModel
+from armory_evaluation.runtime import runtime as _runtime
+from armory_evaluation.runtime import subscriber as _subscriber
+from armory_evaluation.runtime.agents import policy_agent as _policy_agent
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory_client.client import BidirectionalWebsocket
+from armory_client.protocol import SchedulerConfig, ServerMetadata
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from armory_evaluation.sims.libero import logging_config
+from armory_evaluation.sims.libero.episodes import Episode, create_episodes, create_mock_episodes
+from armory_evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
+from armory_evaluation.sims.libero.mock_env import MockEnvironment
+from armory_evaluation.sims.libero.progress_manager import get_progress_manager
+from armory_evaluation.sims.libero.seeding import seed_everything
+from armory_evaluation.sims.libero.subscribers.progress_subscriber import ProgressSubscriber
+from armory_evaluation.sims.libero.subscribers.saver import Saver
+from armory_evaluation.sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
 from utils import JsonArgs  # noqa: E402
-
-from sims.libero import logging_config
-from sims.libero.episodes import Episode, create_episodes, create_mock_episodes
-from sims.libero.metrics import calculate_metrics, generate_all_plots
-from sims.libero.mock_env import MockEnvironment
-from sims.libero.progress_manager import get_progress_manager
-from sims.libero.seeding import seed_everything
-from sims.libero.subscribers.progress_subscriber import ProgressSubscriber
-from sims.libero.subscribers.saver import Saver
-from sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
 
 logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
@@ -232,10 +232,9 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     libero_utils = None
     task_suite = None
     if settings.env == "libero":
+        from armory_evaluation.sims.libero import utils as libero_utils  # noqa: F811
+        from armory_evaluation.sims.libero.env import LiberoSimEnvironment  # noqa: F811
         from libero.libero import benchmark
-
-        from sims.libero import utils as libero_utils  # noqa: F811
-        from sims.libero.env import LiberoSimEnvironment  # noqa: F811
 
         benchmark_dict: dict[str, type[benchmark.Benchmark]] = benchmark.get_benchmark_dict()
         task_suite = benchmark_dict[settings.task_suite_name]()
@@ -390,7 +389,7 @@ def _trial_loop(
                 return None
 
     else:
-        from sims.libero.episodes import _MockTask
+        from armory_evaluation.sims.libero.episodes import _MockTask
 
         task = _MockTask(language=f"mock task {task_id}")
         initial_states = np.zeros((1, 1), dtype=np.float32)
@@ -556,7 +555,7 @@ def main(args: Args) -> None:
     subset_task_ids: list[int] = []
     settings = args.experiment_config  # NOTE: hack for now, change everything below later
     if settings.use_trial_mode:
-        from sims.libero.episodes import (
+        from armory_evaluation.sims.libero.episodes import (
             _MockTask,
             assign_robots_to_tasks,
             pick_subset_task_ids,
