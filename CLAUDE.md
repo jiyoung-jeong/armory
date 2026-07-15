@@ -42,7 +42,7 @@ The codebase is a **uv workspace**: the root `armory` package (GPU-side serving)
   protocol** (`protocol.py`, `messages.py`, `schemas.py`). Owns `SchedulerConfig` and the msgpack/numpy
   wire format. `action_chunkers/` implement how a robot turns returned action chunks into per-step
   actions (sync, temporal ensembling, RTC, naive async). No heavy deps.
-- **`src/armory_evaluation`** (`armory_evaluation`) — eval harness. `runtime/` is the env↔agent loop;
+- **`src/evaluation`** (`evaluation`) — eval harness. `runtime/` is the env↔agent loop;
   `sims/libero/` is the LIBERO simulation driver (entry point `run-libero`). `toxiproxy.py` injects
   network latency for network-ablation experiments.
 - **`src/armory`** — the GPU serving system + scheduling research (depends on JAX/CUDA).
@@ -72,7 +72,7 @@ Two related but distinct directories:
 
 ## Conventions & gotchas
 
-- The LIBERO eval driver lives in `armory_evaluation.sims.libero.run` and is exposed as the `run-libero` console script.
+- The LIBERO eval driver lives in `evaluation.sims.libero.run` and is exposed as the `run-libero` console script.
 - **Experiment configs** live in `configs/client/**` (per-run robot fleet JSON) and `configs/server/`.
   `experiments/` holds named experiment definitions/results for sweeps. Modal and sbatch launchers
   (`scripts/modal/`, `scripts/sbatch/`) fan these out — see `scripts/sbatch/PHOENIX_NOTES.md`.

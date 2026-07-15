@@ -49,7 +49,8 @@ sys.path.insert(0, str(_HERE.parent / "visualization"))  # plot_sweep
 import serve  # noqa: E402
 from _setups import Case, app, select_setup  # noqa: E402
 from _utils import download_artifacts, write_rows  # noqa: E402
-from armory_evaluation.sims.libero import run as run_libero  # noqa: E402
+
+from evaluation.sims.libero import run as run_libero  # noqa: E402
 
 ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit", "lookahead-actions"}
 SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}

@@ -16,21 +16,21 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
 from armory_client.protocol import SchedulerConfig, ServerMetadata
-from armory_evaluation.cli import JsonArgs
-from armory_evaluation.recording import JSONBaseModel
-from armory_evaluation.runtime import runtime as _runtime
-from armory_evaluation.runtime import subscriber as _subscriber
-from armory_evaluation.runtime.agents import policy_agent as _policy_agent
-from armory_evaluation.sims.libero import logging_config
-from armory_evaluation.sims.libero.episodes import Episode, create_episodes, create_mock_episodes
-from armory_evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
-from armory_evaluation.sims.libero.mock_env import MockEnvironment
-from armory_evaluation.sims.libero.progress_manager import get_progress_manager
-from armory_evaluation.sims.libero.seeding import seed_everything
-from armory_evaluation.sims.libero.subscribers.progress_subscriber import ProgressSubscriber
-from armory_evaluation.sims.libero.subscribers.saver import Saver
-from armory_evaluation.sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
-from armory_evaluation.toxiproxy import (
+from evaluation.cli import JsonArgs
+from evaluation.recording import JSONBaseModel
+from evaluation.runtime import runtime as _runtime
+from evaluation.runtime import subscriber as _subscriber
+from evaluation.runtime.agents import policy_agent as _policy_agent
+from evaluation.sims.libero import logging_config
+from evaluation.sims.libero.episodes import Episode, create_episodes, create_mock_episodes
+from evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
+from evaluation.sims.libero.mock_env import MockEnvironment
+from evaluation.sims.libero.progress_manager import get_progress_manager
+from evaluation.sims.libero.seeding import seed_everything
+from evaluation.sims.libero.subscribers.progress_subscriber import ProgressSubscriber
+from evaluation.sims.libero.subscribers.saver import Saver
+from evaluation.sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
+from evaluation.toxiproxy import (
     NetworkEmulationManager,
     RobotNetworkHook,
     WorkerNetworkContext,
@@ -232,8 +232,8 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     if settings.env == "libero":
         from libero.libero import benchmark
 
-        from armory_evaluation.sims.libero import utils as libero_utils  # noqa: F811
-        from armory_evaluation.sims.libero.env import LiberoSimEnvironment  # noqa: F811
+        from evaluation.sims.libero import utils as libero_utils  # noqa: F811
+        from evaluation.sims.libero.env import LiberoSimEnvironment  # noqa: F811
 
         benchmark_dict: dict[str, type[benchmark.Benchmark]] = benchmark.get_benchmark_dict()
         task_suite = benchmark_dict[settings.task_suite_name]()
@@ -388,7 +388,7 @@ def _trial_loop(
                 return None
 
     else:
-        from armory_evaluation.sims.libero.episodes import _MockTask
+        from evaluation.sims.libero.episodes import _MockTask
 
         task = _MockTask(language=f"mock task {task_id}")
         initial_states = np.zeros((1, 1), dtype=np.float32)
@@ -554,7 +554,7 @@ def main(args: Args) -> None:
     subset_task_ids: list[int] = []
     settings = args.experiment_config  # NOTE: hack for now, change everything below later
     if settings.use_trial_mode:
-        from armory_evaluation.sims.libero.episodes import (
+        from evaluation.sims.libero.episodes import (
             _MockTask,
             assign_robots_to_tasks,
             pick_subset_task_ids,
@@ -674,7 +674,7 @@ def cli() -> None:
         # per-worker after the fork.
         multiprocessing.set_start_method("forkserver")
         multiprocessing.set_forkserver_preload(
-            ["numpy", "matplotlib", "robosuite", "armory_evaluation.sims.libero.env"]
+            ["numpy", "matplotlib", "robosuite", "evaluation.sims.libero.env"]
         )
     else:
         # macOS: forked processes can crash inside Apple frameworks; keep

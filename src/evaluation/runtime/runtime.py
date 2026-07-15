@@ -4,9 +4,9 @@ import logging
 import threading
 import time
 
-from armory_evaluation.runtime import agent as _agent
-from armory_evaluation.runtime import environment as _environment
-from armory_evaluation.runtime import subscriber as _subscriber
+from evaluation.runtime import agent as _agent
+from evaluation.runtime import environment as _environment
+from evaluation.runtime import subscriber as _subscriber
 
 # How long before the step deadline to switch from time.sleep to spinning.
 _SPIN_WINDOW_S = 0.002

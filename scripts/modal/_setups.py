@@ -47,7 +47,8 @@ from _images import (  # noqa: E402
     gpu_server_image,
 )
 from _utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
-from armory_evaluation.sims.libero import run as run_libero  # noqa: E402
+
+from evaluation.sims.libero import run as run_libero  # noqa: E402
 
 APP_NAME = "armory-experiments"
 
@@ -253,7 +254,7 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
     client_cmd = [
         sys.executable,
         "-m",
-        "armory_evaluation.sims.libero.run",
+        "evaluation.sims.libero.run",
         "--json-path",
         str(case.run_dir / "client_args.json"),
     ]
@@ -388,7 +389,7 @@ class MockSetup:
         client_cmd = [
             sys.executable,
             "-m",
-            "armory_evaluation.sims.libero.run",
+            "evaluation.sims.libero.run",
             "--json-path",
             str(case.run_dir / "client_args.json"),
         ]

@@ -8,7 +8,7 @@ from typing import Self
 
 import tyro
 
-from armory_evaluation.recording import JSONBaseModel
+from evaluation.recording import JSONBaseModel
 
 
 class JsonArgs(JSONBaseModel):

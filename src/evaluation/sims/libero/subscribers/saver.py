@@ -14,9 +14,9 @@ from typing_extensions import override
 
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.schemas import Action, Observation
-from armory_evaluation.recording import Timestamp
-from armory_evaluation.runtime import subscriber as _subscriber
-from armory_evaluation.runtime.saver_utils import (
+from evaluation.recording import Timestamp
+from evaluation.runtime import subscriber as _subscriber
+from evaluation.runtime.saver_utils import (
     EpisodeSaveData,
     Result,
     plot_cost_history,
@@ -29,7 +29,7 @@ from armory_evaluation.runtime.saver_utils import (
 if TYPE_CHECKING:
     from libero.libero import benchmark
 
-    from armory_evaluation.sims.libero.env import LiberoSimEnvironment
+    from evaluation.sims.libero.env import LiberoSimEnvironment
 
 logger = logging.getLogger(__name__)
 

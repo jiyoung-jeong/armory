@@ -7,8 +7,8 @@ from typing_extensions import override
 
 from armory_client import image_tools
 from armory_client.schemas import Action, Observation
-from armory_evaluation.runtime import environment as _environment
-from armory_evaluation.sims.libero import utils
+from evaluation.runtime import environment as _environment
+from evaluation.sims.libero import utils
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 NUM_STEPS_WAIT = 10

@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from armory_client.schemas import ActionChunk, Observation
-from armory_evaluation.recording import JSONDataclass, Timestamp
+from evaluation.recording import JSONDataclass, Timestamp
 
 
 @dataclass(frozen=True)

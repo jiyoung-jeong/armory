@@ -1,6 +1,6 @@
 import numpy as np
 
-from armory_evaluation import image_tools
+from evaluation import image_tools
 
 
 def test_resize_with_pad_shapes():

@@ -42,7 +42,8 @@ import matplotlib
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
-from armory_evaluation.sims.libero.metrics import (
+
+from evaluation.sims.libero.metrics import (
     _build_actions_left_matrix,
     _load_scheduler_decisions,
     _server_to_perf_offset,

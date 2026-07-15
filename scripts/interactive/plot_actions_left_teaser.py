@@ -27,7 +27,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from armory_evaluation.sims.libero.metrics import _build_actions_left_matrix  # noqa: E402
+from evaluation.sims.libero.metrics import _build_actions_left_matrix  # noqa: E402
 
 
 def _identify_fast_rows(run_dir: pathlib.Path, mat_robots: list[str]) -> list[int]:

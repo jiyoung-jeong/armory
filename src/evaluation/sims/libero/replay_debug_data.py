@@ -42,9 +42,9 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from armory_client import websocket_client_policy as _websocket_client_policy
 from armory_client.schemas import Action
-from armory_evaluation.recording import LiberoObservation
-from armory_evaluation.sims.libero import utils
-from armory_evaluation.sims.libero.env import LiberoSimEnvironment
+from evaluation.recording import LiberoObservation
+from evaluation.sims.libero import utils
+from evaluation.sims.libero.env import LiberoSimEnvironment
 
 LIBERO_ENV_RESOLUTION = 256
 

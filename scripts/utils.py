@@ -9,17 +9,17 @@ from collections.abc import Callable
 from typing import Any, NamedTuple
 
 import numpy as np
-from armory_evaluation.cli import JsonArgs  # noqa: F401  re-exported for scripts/serve.py
+
+from armory.checkpoints import OPENPI_CHECKPOINT
+from armory_client.messages import InferRequest, InferType
+from armory_client.protocol import ServerMetadata
+from evaluation.cli import JsonArgs  # noqa: F401  re-exported for scripts/serve.py
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
     get_gr00t_model_dims,
     is_groot_model,
 )
-
-from armory.checkpoints import OPENPI_CHECKPOINT
-from armory_client.messages import InferRequest, InferType
-from armory_client.protocol import ServerMetadata
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:
