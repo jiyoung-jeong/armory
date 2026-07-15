@@ -16,9 +16,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from armory_evaluation.recording import JSONDataclass, Timestamp
 
 from armory_client.schemas import ActionChunk, Observation
+from armory_evaluation.recording import JSONDataclass, Timestamp
 
 
 @dataclass(frozen=True)

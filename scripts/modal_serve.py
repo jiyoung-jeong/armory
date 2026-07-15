@@ -1,5 +1,4 @@
 import logging
-import pathlib
 import subprocess
 import threading
 import time
@@ -7,6 +6,7 @@ import time
 import modal
 import modal.experimental
 import requests
+from scripts.modal._images import gpu_server_image
 
 log = logging.getLogger(__name__)
 
@@ -27,99 +27,10 @@ ACTION_HORIZON_MULTIPLIERS = {
     20: 1.0,
 }
 
-REPO_ROOT = pathlib.Path(__file__).parent.parent
-
 checkpoint_volume = modal.Volume.from_name("openpi-checkpoints", create_if_missing=True)
 CHECKPOINT_VOLUME_PATH = "/checkpoints"
 
-REQUIREMENTS_FILE = REPO_ROOT / "requirements-modal.txt"
-
-_MODAL_EXCLUDE = [
-    "torch",
-    "jax",
-    "jaxlib",
-    "jax-cuda12-plugin",
-    "jax-cuda12-pjrt",
-    "openpi",
-    "openpi-client",
-    "gr00t",
-    "libero",
-    "av",
-]
-
-
-# NOTE: this is necessary because Modal does not support uv workspaces, which are in the pyproject.toml
-def generate_requirements() -> None:
-    """Export a flat requirements.txt for Modal (excludes packages installed separately)."""
-    cmd = [
-        "uv",
-        "export",
-        "--no-hashes",
-        "--no-dev",
-        "--no-emit-workspace",
-        *[arg for pkg in _MODAL_EXCLUDE for arg in ("--no-emit-package", pkg)],
-        "-o",
-        str(REQUIREMENTS_FILE),
-        "-q",
-    ]
-    subprocess.run(cmd, check=True, cwd=REPO_ROOT)
-    print(f"Written {REQUIREMENTS_FILE}")
-
-
-if modal.is_local():
-    generate_requirements()
-
-# ---------------------------------------------------------------------------
-# Image
-# ---------------------------------------------------------------------------
-_base = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install(
-        "git",
-        "libgl1",
-        "libglib2.0-0",
-        "libglfw3",
-        "libosmesa6",
-        "libegl1",
-        "build-essential",
-        "cmake",
-    )
-    .pip_install("torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cu124")
-    .pip_install(
-        "jax[cuda12]==0.5.3",
-        find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
-    )
-)
-
-image = (
-    _base.pip_install("av==17.0.0", "pytest==9.0.3")
-    .pip_install_from_requirements(str(REQUIREMENTS_FILE))
-    .env(
-        {
-            "OPENPI_DATA_HOME": CHECKPOINT_VOLUME_PATH,
-            "JAX_COMPILATION_CACHE_DIR": f"{CHECKPOINT_VOLUME_PATH}/.cache/jax_compilation",
-            "TORCHINDUCTOR_CACHE_DIR": f"{CHECKPOINT_VOLUME_PATH}/.cache/torch_inductor",
-            "XLA_FLAGS": "--xla_gpu_triton_gemm_any=True --xla_gpu_enable_latency_hiding_scheduler=true",
-            "GCLOUD_ANONYMOUS_ACCESS": "True",
-            "JAX_PLATFORMS": "cuda",
-            "TF_CPP_MIN_LOG_LEVEL": "2",  # to suppress warnings
-            "ABSL_FLAGS_VERBOSITY": "0",
-        }
-    )
-    .add_local_python_source(
-        "armory",
-        "armory_client",
-        "openpi",
-        "openpi_client",
-        "libero",
-        "gr00t",
-        "openpi_adapter",
-        "gr00t_adapter",
-        "sims",
-    )
-    .add_local_dir(str(REPO_ROOT / "scripts"), remote_path="/root/scripts")
-    .add_local_dir(str(REPO_ROOT / "configs"), remote_path="/root/configs")
-)
+image = gpu_server_image
 
 
 @app.cls(

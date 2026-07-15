@@ -21,4 +21,4 @@ dependencies = [
 armory-tui = "armory_tui.main:run"
 
 [tool.uv.sources]
-armory = { workspace = true }
+armory = { path = "../..", editable = true }
