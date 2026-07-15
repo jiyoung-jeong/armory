@@ -36,7 +36,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 for _p in (
     _REPO_ROOT / "src",
     _REPO_ROOT / "src/backends",
-    _REPO_ROOT / "packages/armory-client/src",
+    _REPO_ROOT / "armory-client/src",
 ):
     sys.path.insert(0, str(_p))
 
@@ -48,17 +48,15 @@ DYNAMIC_SCHEDULER = "dynamic-action"
 # Categorical palette for baselines — saturated, mutually distinguishable,
 # and chromatically separate from the dynamic-action teal gradient below.
 BASELINE_STYLE = {
-    "max-batch":         {"marker": "s", "color": "#1f77b4"},  # blue
-    "greedy-deadline":   {"marker": "^", "color": "#2ca02c"},  # green
-    "round-robin":       {"marker": "D", "color": "#d62728"},  # red
+    "max-batch": {"marker": "s", "color": "#1f77b4"},  # blue
+    "greedy-deadline": {"marker": "^", "color": "#2ca02c"},  # green
+    "round-robin": {"marker": "D", "color": "#d62728"},  # red
     "lookahead-actions": {"marker": "o", "color": "#ff7f0e"},  # orange
 }
 
 # Single-hue teal gradient: low alpha = pale, high alpha = deep teal. Reads
 # as "the same method shaded by alpha" instead of "four different methods".
-DYNAMIC_CMAP = LinearSegmentedColormap.from_list(
-    "dynamic_alpha_teal", ["#a8e0dc", "#0c4f4f"]
-)
+DYNAMIC_CMAP = LinearSegmentedColormap.from_list("dynamic_alpha_teal", ["#a8e0dc", "#0c4f4f"])
 
 
 def _plot_one(ax, sub: pd.DataFrame, *, y_col: str, y_label: str, title: str):
@@ -73,10 +71,15 @@ def _plot_one(ax, sub: pd.DataFrame, *, y_col: str, y_label: str, title: str):
         y = float(sub_b[y_col].iloc[0])
         style = BASELINE_STYLE[sched]
         ax.scatter(
-            x, y,
-            marker=style["marker"], s=130, color=style["color"],
-            edgecolors="black", linewidths=0.7,
-            label=sched, zorder=4,
+            x,
+            y,
+            marker=style["marker"],
+            s=130,
+            color=style["color"],
+            edgecolors="black",
+            linewidths=0.7,
+            label=sched,
+            zorder=4,
         )
 
     sub_d = (
@@ -91,11 +94,17 @@ def _plot_one(ax, sub: pd.DataFrame, *, y_col: str, y_label: str, title: str):
         # Connecting line in muted grey so the gradient on the points stands out.
         ax.plot(xs, ys, "-", color="#7a7a7a", linewidth=1.2, alpha=0.55, zorder=2)
         handle = ax.scatter(
-            xs, ys,
-            c=alphas, cmap=DYNAMIC_CMAP, s=85,
-            edgecolors="black", linewidths=0.6,
-            label=f"{DYNAMIC_SCHEDULER} (alpha sweep)", zorder=3,
-            vmin=0.0, vmax=1.0,
+            xs,
+            ys,
+            c=alphas,
+            cmap=DYNAMIC_CMAP,
+            s=85,
+            edgecolors="black",
+            linewidths=0.6,
+            label=f"{DYNAMIC_SCHEDULER} (alpha sweep)",
+            zorder=3,
+            vmin=0.0,
+            vmax=1.0,
         )
 
     ax.set_xlabel("Mean starvation rate  (lower is better)", fontsize=11)
@@ -148,7 +157,8 @@ def _save_plot(
             cbar.set_label("scheduler alpha", fontsize=10)
         fig.suptitle(
             f"scenario={scenario_id}, model={model}, seed={seed}",
-            fontsize=13, fontweight="bold",
+            fontsize=13,
+            fontweight="bold",
         )
         plt.tight_layout()
         safe_model = str(model).replace(".", "_").replace("/", "_")
@@ -161,7 +171,8 @@ def _save_plot(
 def plot_starvation_pareto(df: pd.DataFrame, plots_dir: pathlib.Path) -> None:
     """Pareto plot: mean vs worst-robot (max) starvation. Bottom-left = best."""
     _save_plot(
-        df, plots_dir,
+        df,
+        plots_dir,
         name_prefix="starvation_pareto",
         y_col="max_starvation",
         y_label="Worst-robot starvation rate  (lower is fairer)",
@@ -173,7 +184,8 @@ def plot_starvation_pareto(df: pd.DataFrame, plots_dir: pathlib.Path) -> None:
 def plot_starvation_vs_variance(df: pd.DataFrame, plots_dir: pathlib.Path) -> None:
     """Mean starvation vs cross-robot starvation variance. Bottom-left = best."""
     _save_plot(
-        df, plots_dir,
+        df,
+        plots_dir,
         name_prefix="starvation_vs_variance",
         y_col="starvation_variance",
         y_label="Cross-robot starvation variance  (lower is fairer)",
@@ -328,7 +340,9 @@ def plot_starvation_vs_variance(df: pd.DataFrame, plots_dir: pathlib.Path) -> No
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "output_dir",
         type=pathlib.Path,

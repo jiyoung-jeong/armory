@@ -9,7 +9,7 @@ only-include = [
     "src/backends/openpi_adapter",
     "src/backends/gr00t_adapter",
 ]
-dev-mode-dirs = ["src", "src/backends", "third_party/libero", "packages/armory-client/src"]
+dev-mode-dirs = ["src", "src/backends", "third_party/libero", "armory-client/src"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src/armory" = "armory"
@@ -90,12 +90,12 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-p no:hydra_pytest"
-testpaths = ["tests", "packages", "src"]
+testpaths = ["tests", "armory-client", "src"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["src", "packages/armory-client/src"]
+src = ["src", "armory-client/src"]
 extend-exclude = ["data", "logs", "third_party"]
 
 [tool.ruff.lint]
@@ -106,7 +106,7 @@ ignore = ["F722", "UP042"]
 known-first-party = ["armory", "armory_client", "armory_evaluation", "openpi_adapter", "gr00t_adapter"]
 
 [tool.uv.sources]
-armory-client = { path = "packages/armory-client", editable = true }
+armory-client = { path = "armory-client", editable = true }
 gr00t = { path = "third_party/Isaac-GR00T", editable = true }
 lerobot = { git = "https://github.com/huggingface/lerobot", rev = "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
 libero = { path = "third_party/libero", editable = true }

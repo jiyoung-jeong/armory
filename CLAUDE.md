@@ -12,7 +12,7 @@ GIT_LFS_SKIP_SMUDGE=1 uv sync
 ## Common commands
 
 ```bash
-# Tests (pytest is configured to only collect tests/ and packages/, never third_party/)
+# Tests (pytest is configured to only collect tests/, armory-client/, and src/; never third_party/)
 uv run pytest                                   # full suite
 uv run pytest tests/scheduling/mirror_test.py   # single file
 uv run pytest tests/scheduling/mirror_test.py::test_name   # single test
@@ -34,16 +34,16 @@ This is a research system for **serving robot manipulation policies (π0.5, GR00
 at once and evaluating scheduling algorithms** that decide which robots' observations get batched
 onto the GPU each step.
 
-The codebase is a **uv workspace**: the root `armory` package (GPU-side serving) plus three member
-packages under `packages/`. The split exists so the client and eval harness stay lightweight
+The codebase is a **uv workspace**: the root `armory` package (GPU-side serving) plus the standalone
+`armory-client` package. The split exists so the client stays lightweight
 (no JAX/CUDA) and installable on robots and Python 3.10:
 
-- **`packages/armory-client`** (`armory_client`) — lightweight client library and the **client↔server
+- **`armory-client`** (`armory_client`) — lightweight client library and the **client↔server
   protocol** (`protocol.py`, `messages.py`, `schemas.py`). Owns `SchedulerConfig` and the msgpack/numpy
   wire format. `action_chunkers/` implement how a robot turns returned action chunks into per-step
   actions (sync, temporal ensembling, RTC, naive async). No heavy deps.
-- **`packages/armory-evaluation`** (`armory_evaluation`) — eval harness. `runtime/` is the env↔agent
-  loop; `sims/libero/` is the LIBERO simulation driver (entry point `run-libero`). `toxiproxy.py` injects
+- **`src/armory_evaluation`** (`armory_evaluation`) — eval harness. `runtime/` is the env↔agent loop;
+  `sims/libero/` is the LIBERO simulation driver (entry point `run-libero`). `toxiproxy.py` injects
   network latency for network-ablation experiments.
 - **`src/armory`** — the GPU serving system + scheduling research (depends on JAX/CUDA).
 - **`src/backends`** — adapters that wrap external policy models behind a common interface

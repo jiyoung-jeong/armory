@@ -179,7 +179,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "armory-client", editable = "packages/armory-client" },
+    { name = "armory-client", editable = "armory-client" },
     { name = "av", marker = "extra == 'server'", specifier = ">=17" },
     { name = "bddl", marker = "extra == 'libero'", specifier = "==1.0.1" },
     { name = "cloudpickle", marker = "extra == 'libero'", specifier = ">=2.1" },
@@ -231,7 +231,7 @@ dev = [
 [[package]]
 name = "armory-client"
 version = "0.1.0"
-source = { editable = "packages/armory-client" }
+source = { editable = "armory-client" }
 dependencies = [
     { name = "msgpack" },
     { name = "numpy" },
