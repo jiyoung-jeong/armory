@@ -28,11 +28,9 @@ readme = "README.md"
 requires-python = ">=3.11, <3.12"
 dependencies = [
     "armory-client",
-    "asyncssh>=2.21",
     "msgpack>=1.1",
     "numpy>=2.0",
     "pydantic>=2.11",
-    "pyyaml>=6.0",
     "pyzmq>=27",
     "rich>=14",
 ]

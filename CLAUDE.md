@@ -45,7 +45,6 @@ packages under `packages/`. The split exists so the client and eval harness stay
 - **`packages/armory-evaluation`** (`armory_evaluation`) — eval harness. `runtime/` is the env↔agent
   loop; `sims/libero/` is the LIBERO simulation driver (entry point `run-libero`). `toxiproxy.py` injects
   network latency for network-ablation experiments.
-- **`packages/armory-tui`** (`armory_tui`) — curses TUI for orchestrating a real-robot fleet.
 - **`src/armory`** — the GPU serving system + scheduling research (depends on JAX/CUDA).
 - **`src/backends`** — adapters that wrap external policy models behind a common interface
   (`openpi_adapter`, `gr00t_adapter`). `third_party/{openpi,libero,Isaac-GR00T}` are editable submodules.
@@ -70,11 +69,6 @@ Two related but distinct directories:
 - `src/armory/scheduling/` contains the algorithm implementations; all subclass
   `RequestScheduler` (`base.py`). When adding an algorithm, implement the class here and register it in
   the registry.
-
-### Real-robot path (`src/armory/real/`)
-
-`fleet.py` / `dispatcher.py` / `config.py` drive physical robots; the `armory-tui` package is the
-operator front-end. `scripts/run_real.py` is the entry point.
 
 ## Conventions & gotchas
 
