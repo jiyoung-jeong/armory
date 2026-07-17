@@ -40,8 +40,8 @@ class Saver(_subscriber.Subscriber):
     def __init__(
         self,
         out_dir: pathlib.Path,
-        environment: LiberoSimEnvironment,
-        action_chunk_broker: ActionChunkBroker,
+        environment: LiberoSimEnvironment,  # NOTE: not the biggest fan of this dependency
+        action_chunk_broker: ActionChunkBroker,  # NOTE; not the biggest fan of this dependency
         task_suite_name: str,
         task_id: int,
         task: benchmark.Task,
