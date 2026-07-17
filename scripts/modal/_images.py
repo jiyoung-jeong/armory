@@ -34,6 +34,12 @@ _LIBERO_CLIENT_ENV = {
     "ABSL_FLAGS_VERBOSITY": "0",
     "MUJOCO_GL": "egl",
     "PYOPENGL_PLATFORM": "egl",
+    # nvidia/cuda base images only mount the NVIDIA EGL/GL ICD (needed for
+    # hardware-accelerated offscreen rendering) into the container when
+    # "graphics" is requested here; the image default (compute,utility) omits
+    # it, causing EGL to silently fall back to Mesa's software llvmpipe
+    # renderer with no error or warning.
+    "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics",
 }
 
 
@@ -81,6 +87,20 @@ def _bake_libero_config(image: modal.Image) -> modal.Image:
     )
 
 
+def _add_nvidia_egl_icd(image: modal.Image) -> modal.Image:
+    """Register the NVIDIA EGL backend with libglvnd.
+
+    The nvidia/cuda base images mount the NVIDIA driver's .so files into the
+    container at runtime, but ship no libglvnd ICD JSON for them. Without it,
+    libglvnd's EGL dispatcher only ever discovers Mesa's software `llvmpipe`
+    renderer (the sole vendor with a JSON in /usr/share/glvnd/egl_vendor.d/)
+    and silently renders on CPU instead of the GPU, ~10x slower, with no
+    error or warning anywhere.
+    """
+    icd = '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}'
+    return image.run_commands(f"echo '{icd}' > /usr/share/glvnd/egl_vendor.d/10_nvidia.json")
+
+
 def _add_libero_data(image: modal.Image) -> modal.Image:
     for name in ("bddl_files", "init_files", "assets"):
         image = image.add_local_dir(
@@ -125,8 +145,10 @@ gpu_libero_client_image = _add_libero_data(
     _add_repo_sources(
         _sync(
             _bake_libero_config(
-                _cuda_runtime_base.apt_install(*_EGL_APT, "build-essential", "clang", "cmake").env(
-                    _LIBERO_CLIENT_ENV
+                _add_nvidia_egl_icd(
+                    _cuda_runtime_base.apt_install(
+                        *_EGL_APT, "build-essential", "clang", "cmake"
+                    ).env(_LIBERO_CLIENT_ENV)
                 )
             ).workdir(str(REMOTE_ROOT)),
             "evaluation",

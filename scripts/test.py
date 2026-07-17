@@ -59,6 +59,40 @@ def run() -> bytes:
         bddl_file_name=task_bddl_file, camera_heights=224, camera_widths=224
     )
     raw_env.seed(7)
+
+    import os
+    import subprocess as _subprocess
+
+    print(f"[env] NVIDIA_DRIVER_CAPABILITIES={os.environ.get('NVIDIA_DRIVER_CAPABILITIES')!r}")
+    print(
+        "[env] egl_vendor.d="
+        + _subprocess.run(
+            ["ls", "-la", "/usr/share/glvnd/egl_vendor.d/"],
+            capture_output=True,
+            text=True,
+        ).stdout.replace("\n", " | ")
+    )
+    find_result = _subprocess.run(
+        ["find", "/", "-iname", "*nvidia*egl*", "-o", "-iname", "*EGL_nvidia*"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    print(f"[env] nvidia egl libs found: {find_result.stdout!r} err={find_result.stderr[:500]!r}")
+
+    # Diagnostic: which GL implementation did EGL actually bind to? If this
+    # says "llvmpipe"/"softpipe"/"SWR" instead of an NVIDIA string, the
+    # NVIDIA EGL device isn't the one being used despite MUJOCO_GL=egl.
+    try:
+        from OpenGL import GL as _gl
+
+        print(
+            f"[gl] vendor={_gl.glGetString(_gl.GL_VENDOR)} "
+            f"renderer={_gl.glGetString(_gl.GL_RENDERER)} "
+            f"version={_gl.glGetString(_gl.GL_VERSION)}"
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[gl] could not query GL strings: {e!r}")
     env = LiberoSimEnvironment(
         env=raw_env,
         task_description=task.language,
@@ -131,6 +165,33 @@ def run() -> bytes:
     for _ in range(10):
         single_cam_env.step(dummy_action)  # settle + reuse already-JIT-warmed controller
 
+    # Diagnostic: poll nvidia-smi in the background while stepping, to see
+    # whether the GPU is actually doing any work during "GPU-accelerated" render.
+    import subprocess
+    import threading
+
+    gpu_util_samples: list[int] = []
+    stop_poll = threading.Event()
+
+    def _poll_gpu() -> None:
+        while not stop_poll.is_set():
+            try:
+                out = subprocess.check_output(
+                    [
+                        "nvidia-smi",
+                        "--query-gpu=utilization.gpu",
+                        "--format=csv,noheader,nounits",
+                    ],
+                    timeout=1,
+                )
+                gpu_util_samples.append(int(out.decode().strip()))
+            except Exception:  # noqa: BLE001
+                pass
+            _time.sleep(0.02)
+
+    poll_thread = threading.Thread(target=_poll_gpu, daemon=True)
+    poll_thread.start()
+
     single_cam_deltas = []
     last = _time.perf_counter()
     for _ in range(60):
@@ -138,7 +199,18 @@ def run() -> bytes:
         now = _time.perf_counter()
         single_cam_deltas.append(now - last)
         last = now
+
+    stop_poll.set()
+    poll_thread.join()
     single_cam_env.close()
+
+    if gpu_util_samples:
+        print(
+            f"[gpu-util] samples={len(gpu_util_samples)} "
+            f"max={max(gpu_util_samples)}% mean={statistics.mean(gpu_util_samples):.1f}%"
+        )
+    else:
+        print("[gpu-util] no samples collected (nvidia-smi unavailable?)")
     print(
         f"[single-camera] steps={len(single_cam_deltas)} "
         f"mean={statistics.mean(single_cam_deltas) * 1000:.2f}ms "
