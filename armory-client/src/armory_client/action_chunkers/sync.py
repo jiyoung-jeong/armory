@@ -21,7 +21,7 @@ class SyncBroker(ActionChunkBroker):
         max_execution_horizon: int = 0,
         real: bool = False,
     ):
-        server_action_horizon = ws_client.server_metadata.action_horizon
+        server_action_horizon = ws_client.server_metadata["action_horizon"]
         resolved_max_execution_horizon = (
             server_action_horizon if max_execution_horizon <= 0 else int(max_execution_horizon)
         )

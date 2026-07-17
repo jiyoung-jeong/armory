@@ -9,8 +9,7 @@ from pydantic import BaseModel
 class SchedulerConfig(BaseModel):
     """Scheduler configuration shared between server boot and client reconfigure.
 
-    Owned by the client package as part of the client-server protocol: the
-    server consumes it at startup (scripts/serve.py) and accepts it via
+    The server consumes it at startup (scripts/serve.py) and accepts it via
     POST /reconfigure; clients send it to override scheduling per run.
     """
 

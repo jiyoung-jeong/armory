@@ -241,9 +241,6 @@ source = { editable = "armory-client" }
 dependencies = [
     { name = "msgpack" },
     { name = "numpy" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "requests" },
     { name = "websockets" },
 ]
 
@@ -251,9 +248,6 @@ dependencies = [
 requires-dist = [
     { name = "msgpack", specifier = ">=1.0" },
     { name = "numpy" },
-    { name = "pillow" },
-    { name = "pydantic", specifier = ">=2" },
-    { name = "requests" },
     { name = "websockets", specifier = ">=13" },
 ]
 

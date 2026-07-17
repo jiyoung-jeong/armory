@@ -9,9 +9,9 @@ import sys
 from dataclasses import field
 from typing import Literal
 
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
-from armory_client.protocol import SchedulerConfig
 from openpi_adapter.serve_factory import EnvMode
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))

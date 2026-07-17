@@ -13,14 +13,15 @@ from typing import Any, Literal, Self  # Any used for shared globals
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
-from armory_client.protocol import SchedulerConfig, ServerMetadata
 from evaluation.cli import JsonArgs
 from evaluation.recording import JSONBaseModel
 from evaluation.runtime import runtime as _runtime
 from evaluation.runtime import subscriber as _subscriber
 from evaluation.runtime.agents import policy_agent as _policy_agent
+from evaluation.server_control_client import ServerControlClient
 from evaluation.sims.libero import logging_config
 from evaluation.sims.libero.episodes import Episode, create_episodes, create_mock_episodes
 from evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
@@ -596,12 +597,7 @@ def main(args: Args) -> None:
         else:
             episodes = create_mock_episodes(settings.num_trials_per_task * len(settings.robots))
 
-    # Control-plane client: HTTP only, never connect()ed to the websocket.
-    control_client = BidirectionalWebsocket(
-        robot_id="__control__",
-        host=args.host,
-        port=args.port,
-    )
+    control_client = ServerControlClient(host=args.host, port=args.port)
     control_client.reconfigure_server(args.scheduler_config)
     control_client.reset_server()
     server_metadata = control_client.fetch_server_metadata()
