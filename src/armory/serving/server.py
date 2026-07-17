@@ -42,6 +42,7 @@ from starlette.websockets import WebSocketDisconnect
 from armory.serving.engine import GpuWorker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY, SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
@@ -68,7 +69,6 @@ from armory_client.messages import (
     ResponseAck,
     WarmupPong,
 )
-from armory_client.protocol import SchedulerConfig, ServerMetadata
 
 MAX_ROBOTS = 100
 NUM_WARMUP = 100
