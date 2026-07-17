@@ -125,6 +125,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyzmq" },
     { name = "rich" },
+    { name = "tyro" },
 ]
 
 [package.optional-dependencies]
@@ -218,6 +219,7 @@ requires-dist = [
     { name = "thop", marker = "extra == 'libero'", specifier = ">=0.1.1" },
     { name = "torch", marker = "extra == 'server'", specifier = "==2.7.1" },
     { name = "typing-extensions", marker = "extra == 'evaluation'", specifier = ">=4.12" },
+    { name = "tyro", specifier = ">=0.9.17" },
     { name = "tyro", marker = "extra == 'evaluation'", specifier = ">=0.9" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34" },
     { name = "websockets", marker = "extra == 'evaluation'", specifier = ">=13" },

@@ -33,6 +33,7 @@ dependencies = [
     "pydantic>=2.11",
     "pyzmq>=27",
     "rich>=14",
+    "tyro>=0.9.17",
 ]
 
 [project.optional-dependencies]
