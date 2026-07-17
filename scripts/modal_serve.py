@@ -1,4 +1,6 @@
+import json
 import logging
+import pathlib
 import subprocess
 import threading
 import time
@@ -6,7 +8,7 @@ import time
 import modal
 import modal.experimental
 import requests
-from scripts.modal._images import gpu_server_image
+from scripts.modal._images import REMOTE_ROOT, gpu_server_image
 
 log = logging.getLogger(__name__)
 
@@ -14,7 +16,7 @@ app = modal.App("armory-serve")
 
 GPU = "l40s"
 REGION = "us-east"
-ENV_MODE = "REAL_ACT_100"
+ENV_MODE = "LIBERO"
 MAX_BATCH_SIZE = 5
 PORT = 8080
 MODEL = "PI05"
@@ -43,6 +45,11 @@ image = gpu_server_image
     scaledown_window=60 * 60,  # seconds, time to wait before scaling down
     timeout=2 * 60 * 60,  # 2 hours
 )
+# run() blocks in self.process.wait() for the container's whole lifetime; without
+# concurrent inputs, the container's single input slot stays occupied and the
+# stable_endpoint ASGI route (same container/class instance) can never be served,
+# so external /metadata requests hang forever.
+@modal.concurrent(max_inputs=4)
 class ModalPolicyServer:
     @modal.enter(snap=True)
     def startup(self) -> None:
@@ -50,25 +57,34 @@ class ModalPolicyServer:
         logger = logging.getLogger(__name__)
         logger.info("Starting server")
 
+        # serve.py's Args nests scheduler options under a SchedulerConfig submodel and
+        # its policy field is a Checkpoint | Default | Mock union, both awkward to hit
+        # via plain CLI flags with tyro. --json-path (see evaluation.cli.JsonArgs)
+        # takes a plain JSON dict validated directly by pydantic, so enum fields need
+        # their value (lowercase), not their member name.
+        args_path = pathlib.Path("/tmp/serve_args.json")
+        args_path.write_text(
+            json.dumps(
+                {
+                    "model": MODEL.lower(),
+                    "env": ENV_MODE.lower(),
+                    "max_batch_size": MAX_BATCH_SIZE,
+                    "port": PORT,
+                    "scheduler": {
+                        "scheduling_algorithm": SCHEDULING_ALGORITHM,
+                        "alpha": ALPHA,
+                        "action_horizon_multipliers": {
+                            str(k): v for k, v in ACTION_HORIZON_MULTIPLIERS.items()
+                        },
+                    },
+                }
+            )
+        )
         cmd = [
             "python",
-            "/root/scripts/serve.py",
-            "--model",
-            MODEL,
-            "--env",
-            ENV_MODE,
-            "--max-batch-size",
-            str(MAX_BATCH_SIZE),
-            "--port",
-            str(PORT),
-            "--scheduling-algorithm",
-            SCHEDULING_ALGORITHM,
-            "--alpha",
-            str(ALPHA),
-            # "--min-observation-step-diff",
-            # str(MIN_OBSERVATION_STEP_DIFF),
-            "--action-horizon-multipliers",
-            *[str(x) for kv in ACTION_HORIZON_MULTIPLIERS.items() for x in kv],
+            str(REMOTE_ROOT / "scripts/serve.py"),
+            "--json-path",
+            str(args_path),
         ]
 
         def _stream_logs(proc: subprocess.Popen) -> None:
@@ -84,6 +100,8 @@ class ModalPolicyServer:
 
         self.process = _start_process()
         while True:
+            if self.process.poll() is not None:
+                raise RuntimeError(f"serve.py exited early with code {self.process.returncode}")
             try:
                 requests.get(f"http://localhost:{PORT}/metadata", timeout=5).raise_for_status()
                 logger.info("Server ready, snapshot will be taken now.")

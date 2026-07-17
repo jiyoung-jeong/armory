@@ -16,6 +16,15 @@ _EGL_APT = (
     "libegl1",
 )
 
+# openpi/openpi-client/gr00t are mounted by explicit path (see
+# _add_server_third_party_sources) instead of add_local_python_source, since these
+# submodules typically aren't installed in a macOS dev venv. PYTHONPATH must be set
+# before any add_local_* call in the image chain (Modal requires add_local_* to be
+# last), hence it lives in this env dict applied early rather than alongside the mounts.
+_SERVER_OPENPI_SRC = f"{REMOTE_ROOT}/third_party/openpi/src"
+_SERVER_OPENPI_CLIENT_SRC = f"{REMOTE_ROOT}/third_party/openpi/packages/openpi-client/src"
+_SERVER_GR00T_ROOT = f"{REMOTE_ROOT}/third_party/Isaac-GR00T"
+
 _CUDA_SERVER_ENV = {
     "MPLBACKEND": "Agg",
     "OPENPI_DATA_HOME": CHECKPOINT_VOLUME_PATH,
@@ -26,6 +35,7 @@ _CUDA_SERVER_ENV = {
     "JAX_PLATFORMS": "cuda",
     "TF_CPP_MIN_LOG_LEVEL": "2",
     "ABSL_FLAGS_VERBOSITY": "0",
+    "PYTHONPATH": ":".join([_SERVER_OPENPI_SRC, _SERVER_OPENPI_CLIENT_SRC, _SERVER_GR00T_ROOT]),
 }
 
 _LIBERO_CLIENT_ENV = {
@@ -110,6 +120,29 @@ def _add_libero_data(image: modal.Image) -> modal.Image:
     return image
 
 
+def _add_server_third_party_sources(image: modal.Image) -> modal.Image:
+    """Add openpi/openpi-client/gr00t source by explicit path instead of
+    ``add_local_python_source``.
+
+    ``add_local_python_source`` locates a package via the *local* machine's import
+    spec, but these submodules are Linux/CUDA-oriented and typically aren't
+    installed in a macOS dev venv (only Linux resolves the full `server` extra;
+    see root CLAUDE.md). Mounting them by path sidesteps needing a local install.
+    Must be called last in the image chain (nothing but other add_local_* calls
+    after it) -- PYTHONPATH for these paths is set via _CUDA_SERVER_ENV instead.
+    """
+    return (
+        image.add_local_dir(
+            str(REPO_ROOT / "third_party/openpi/src"), remote_path=_SERVER_OPENPI_SRC
+        )
+        .add_local_dir(
+            str(REPO_ROOT / "third_party/openpi/packages/openpi-client/src"),
+            remote_path=_SERVER_OPENPI_CLIENT_SRC,
+        )
+        .add_local_dir(str(REPO_ROOT / "third_party/Isaac-GR00T"), remote_path=_SERVER_GR00T_ROOT)
+    )
+
+
 _cuda_base = modal.Image.from_registry(
     "nvidia/cuda:12.2.0-devel-ubuntu22.04", add_python="3.11"
 ).apt_install("git", "build-essential", "clang", "cmake")
@@ -118,27 +151,26 @@ _cuda_runtime_base = modal.Image.from_registry(
     "nvidia/cuda:12.2.0-runtime-ubuntu22.04", add_python="3.11"
 )
 
-gpu_server_image = _add_repo_sources(
-    _sync(
-        _cuda_base.pip_install(
-            "torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cu124"
-        )
-        .pip_install(
-            "jax[cuda12]==0.5.3",
-            find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
-        )
-        .env(_CUDA_SERVER_ENV)
-        .workdir(str(REMOTE_ROOT)),
-        "server",
-    ),
-    "armory",
-    "evaluation",
-    "armory_client",
-    "openpi",
-    "openpi_client",
-    "openpi_adapter",
-    "gr00t",
-    "gr00t_adapter",
+gpu_server_image = _add_server_third_party_sources(
+    _add_repo_sources(
+        _sync(
+            _cuda_base.pip_install(
+                "torch==2.7.1", extra_index_url="https://download.pytorch.org/whl/cu124"
+            )
+            .pip_install(
+                "jax[cuda12]==0.5.3",
+                find_links="https://storage.googleapis.com/jax-releases/jax_cuda_releases.html",
+            )
+            .env(_CUDA_SERVER_ENV)
+            .workdir(str(REMOTE_ROOT)),
+            "server",
+        ),
+        "armory",
+        "evaluation",
+        "armory_client",
+        "openpi_adapter",
+        "gr00t_adapter",
+    )
 )
 
 gpu_libero_client_image = _add_libero_data(

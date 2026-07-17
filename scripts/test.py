@@ -5,33 +5,22 @@ import modal
 import numpy as np
 from scripts.modal._images import gpu_libero_client_image
 
-from armory_client.action_chunkers.action_chunk_broker import ActionChunkBrokerBase
-from armory_client.schemas import Action
+from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory_client.client import BidirectionalWebsocket
+from evaluation.runtime.agents.policy_agent import PolicyAgent
 from evaluation.runtime.runtime import Runtime
 
 app = modal.App("libero-speed")
 
 REMOTE_OUT_DIR = pathlib.Path("/tmp/libero_speed_out")
 
-
-class DummyAgent:
-    def __init__(self):
-        pass
-
-    def reset(self):
-        pass
-
-    def get_action(self, observation):
-        return Action(
-            step=observation.step,
-            action=np.zeros(7),
-            action_chunk_index=None,
-            index_in_chunk=None,
-        )
+CONTROL_HZ = 20
+MIN_EXECUTION_HORIZON = 1
+MAX_EXECUTION_HORIZON = 10
 
 
 @app.function(image=gpu_libero_client_image, gpu="L40S", timeout=600)
-def run() -> bytes:
+def run(server_url: str) -> bytes:
     import cProfile
     import csv
     import pathlib as _pathlib
@@ -98,13 +87,29 @@ def run() -> bytes:
         task_description=task.language,
         initial_states=np.array([initial_states[0]]),
         max_episode_steps=60,
-        control_hz=20,
+        control_hz=CONTROL_HZ,
     )
+
+    ws_client = BidirectionalWebsocket(
+        robot_id="robot_0",
+        host=server_url,
+        control_hz=CONTROL_HZ,
+    )
+    ws_client.connect()
+    broker = ActionChunkBrokerType.NAIVE_ASYNC.create(
+        BrokerConfig(
+            ws_client=ws_client,
+            control_hz=CONTROL_HZ,
+            min_execution_horizon=MIN_EXECUTION_HORIZON,
+            max_execution_horizon=MAX_EXECUTION_HORIZON,
+        )
+    )
+    agent = PolicyAgent(broker=broker)
 
     saver = Saver(
         out_dir=REMOTE_OUT_DIR,
         environment=env,
-        action_chunk_broker=ActionChunkBrokerBase(),
+        action_chunk_broker=broker,
         task_suite_name="libero_10",
         task_id=task_id,
         task=task,
@@ -113,7 +118,7 @@ def run() -> bytes:
 
     runtime = Runtime(
         environment=env,
-        agent=DummyAgent(),
+        agent=agent,
         subscribers=[saver],
         # Unthrottled: max_hz>0 would pace steps at a fixed rate, which floors
         # the measured per-step time at 1/max_hz and hides the true sim cost.
@@ -126,6 +131,7 @@ def run() -> bytes:
     runtime.run()
     profiler.disable()
     runtime.close()
+    ws_client.close()
 
     stats = pstats.Stats(profiler)
     print("\n=== cProfile: top 25 by cumulative time ===")
@@ -223,8 +229,8 @@ def run() -> bytes:
 
 
 @app.local_entrypoint()
-def main():
-    video_bytes = run.remote()
+def main(server_url: str):
+    video_bytes = run.remote(server_url)
     out_path = pathlib.Path("scripts/out.mp4")
     out_path.write_bytes(video_bytes)
     print(f"Saved video to {out_path}")
