@@ -7,6 +7,7 @@ from scripts.modal._images import gpu_libero_client_image
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
+from armory_client.schemas import Action, Observation
 from evaluation.runtime.agents.policy_agent import PolicyAgent
 from evaluation.runtime.runtime import Runtime
 
@@ -19,8 +20,19 @@ MIN_EXECUTION_HORIZON = 1
 MAX_EXECUTION_HORIZON = 10
 
 
-@app.function(image=gpu_libero_client_image, gpu="L40S", timeout=600)
-def run(server_url: str) -> bytes:
+class DummyAgent:
+    def __init__(self):
+        pass
+
+    def reset(self):
+        pass
+
+    def get_action(self, observation: Observation):
+        return Action(0, np.zeros(7), 0, 0)
+
+
+@app.function(image=gpu_libero_client_image, gpu="T4", timeout=600)
+def run(server_url: str | None) -> bytes | None:
     import cProfile
     import csv
     import pathlib as _pathlib
@@ -90,36 +102,42 @@ def run(server_url: str) -> bytes:
         control_hz=CONTROL_HZ,
     )
 
-    ws_client = BidirectionalWebsocket(
-        robot_id="robot_0",
-        host=server_url,
-        control_hz=CONTROL_HZ,
-    )
-    ws_client.connect()
-    broker = ActionChunkBrokerType.NAIVE_ASYNC.create(
-        BrokerConfig(
-            ws_client=ws_client,
+    subscribers = []
+    if server_url is not None:
+        ws_client = BidirectionalWebsocket(
+            robot_id="robot_0",
+            host=server_url,
             control_hz=CONTROL_HZ,
-            min_execution_horizon=MIN_EXECUTION_HORIZON,
-            max_execution_horizon=MAX_EXECUTION_HORIZON,
         )
-    )
-    agent = PolicyAgent(broker=broker)
+        ws_client.connect()
+        broker = ActionChunkBrokerType.NAIVE_ASYNC.create(
+            BrokerConfig(
+                ws_client=ws_client,
+                control_hz=CONTROL_HZ,
+                min_execution_horizon=MIN_EXECUTION_HORIZON,
+                max_execution_horizon=MAX_EXECUTION_HORIZON,
+            )
+        )
+        agent = PolicyAgent(broker=broker)
+        saver = Saver(
+            out_dir=REMOTE_OUT_DIR,
+            environment=env,
+            action_chunk_broker=broker,
+            task_suite_name="libero_10",
+            task_id=task_id,
+            task=task,
+            robot_idx=0,
+        )
+        subscribers.append(saver)
 
-    saver = Saver(
-        out_dir=REMOTE_OUT_DIR,
-        environment=env,
-        action_chunk_broker=broker,
-        task_suite_name="libero_10",
-        task_id=task_id,
-        task=task,
-        robot_idx=0,
-    )
+    else:
+        agent = DummyAgent()
+        broker = None
 
     runtime = Runtime(
         environment=env,
         agent=agent,
-        subscribers=[saver],
+        subscribers=subscribers,
         # Unthrottled: max_hz>0 would pace steps at a fixed rate, which floors
         # the measured per-step time at 1/max_hz and hides the true sim cost.
         max_hz=0,
@@ -131,7 +149,7 @@ def run(server_url: str) -> bytes:
     runtime.run()
     profiler.disable()
     runtime.close()
-    ws_client.close()
+    # ws_client.close()
 
     stats = pstats.Stats(profiler)
     print("\n=== cProfile: top 25 by cumulative time ===")
@@ -139,19 +157,21 @@ def run(server_url: str) -> bytes:
     print("\n=== cProfile: top 25 by self (internal) time ===")
     stats.sort_stats("tottime").print_stats(25)
 
-    episode_dir = next(REMOTE_OUT_DIR.glob("0/0_*"))
-    with open(episode_dir / "timestamps.csv") as f:
-        timestamps = [float(row["timestamp"]) for row in csv.DictReader(f)]
-    deltas = [b - a for a, b in zip(timestamps, timestamps[1:], strict=False)]
-    if deltas:
-        print(
-            f"[speed] steps={len(deltas)} "
-            f"mean={statistics.mean(deltas) * 1000:.2f}ms "
-            f"median={statistics.median(deltas) * 1000:.2f}ms "
-            f"min={min(deltas) * 1000:.2f}ms "
-            f"max={max(deltas) * 1000:.2f}ms "
-            f"hz={1 / statistics.mean(deltas):.2f}"
-        )
+    episode_dir = None
+    if server_url is not None:
+        episode_dir = next(REMOTE_OUT_DIR.glob("0/0_*"))
+        with open(episode_dir / "timestamps.csv") as f:
+            timestamps = [float(row["timestamp"]) for row in csv.DictReader(f)]
+        deltas = [b - a for a, b in zip(timestamps, timestamps[1:], strict=False)]
+        if deltas:
+            print(
+                f"[speed] steps={len(deltas)} "
+                f"mean={statistics.mean(deltas) * 1000:.2f}ms "
+                f"median={statistics.median(deltas) * 1000:.2f}ms "
+                f"min={min(deltas) * 1000:.2f}ms "
+                f"max={max(deltas) * 1000:.2f}ms "
+                f"hz={1 / statistics.mean(deltas):.2f}"
+            )
 
     # Experiment: how much of the render/readback cost is just "2 cameras"?
     # Raw loop bypassing LiberoSimEnvironment/Runtime/Saver entirely, rendering
@@ -225,12 +245,17 @@ def run(server_url: str) -> bytes:
         f"max={max(single_cam_deltas) * 1000:.2f}ms"
     )
 
+    if episode_dir is None:
+        return None
     return (episode_dir / "out.mp4").read_bytes()
 
 
 @app.local_entrypoint()
-def main(server_url: str):
+def main(server_url: str | None = None):
     video_bytes = run.remote(server_url)
-    out_path = pathlib.Path("scripts/out.mp4")
+    if video_bytes is None:
+        print("No server_url given; skipping video save.")
+        return
+    out_path = pathlib.Path("data/out.mp4")
     out_path.write_bytes(video_bytes)
     print(f"Saved video to {out_path}")
