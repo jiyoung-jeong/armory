@@ -1,9 +1,11 @@
+import json
 import logging
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 
 import numpy as np
-import requests
 import websockets.sync.client
 
 from armory_client import messages, msgpack_numpy
@@ -79,16 +81,12 @@ class BidirectionalWebsocket:
         logging.info(f"Waiting for server at {self._http_base}...")
         while True:
             try:
-                resp = requests.get(
-                    f"{self._http_base}/metadata",
-                    headers={"Authorization": f"Api-Key {self._api_key}"}
-                    if self._api_key
-                    else None,
-                    timeout=5,
-                )
-                resp.raise_for_status()
-                return resp.json()
-            except requests.exceptions.RequestException:
+                req = urllib.request.Request(f"{self._http_base}/metadata")
+                if self._api_key:
+                    req.add_header("Authorization", f"Api-Key {self._api_key}")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    return json.loads(resp.read())
+            except (urllib.error.URLError, OSError):
                 logging.info("Still waiting for server...")
                 time.sleep(5)
 
