@@ -13,12 +13,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _EGL_APT = (
     "libgl1",
     "libglib2.0-0",
-    "libglfw3",
-    "libosmesa6",
     "libegl1",
-    "libegl1-mesa-dev",
-    "libgles2-mesa-dev",
-    "libglvnd-dev",
 )
 
 _CUDA_SERVER_ENV = {
@@ -99,6 +94,10 @@ _cuda_base = modal.Image.from_registry(
     "nvidia/cuda:12.2.0-devel-ubuntu22.04", add_python="3.11"
 ).apt_install("git", "build-essential", "clang", "cmake")
 
+_cuda_runtime_base = modal.Image.from_registry(
+    "nvidia/cuda:12.2.0-runtime-ubuntu22.04", add_python="3.11"
+)
+
 gpu_server_image = _add_repo_sources(
     _sync(
         _cuda_base.pip_install(
@@ -125,9 +124,11 @@ gpu_server_image = _add_repo_sources(
 gpu_libero_client_image = _add_libero_data(
     _add_repo_sources(
         _sync(
-            _bake_libero_config(_cuda_base.apt_install(*_EGL_APT).env(_LIBERO_CLIENT_ENV)).workdir(
-                str(REMOTE_ROOT)
-            ),
+            _bake_libero_config(
+                _cuda_runtime_base.apt_install(*_EGL_APT, "build-essential", "clang", "cmake").env(
+                    _LIBERO_CLIENT_ENV
+                )
+            ).workdir(str(REMOTE_ROOT)),
             "evaluation",
             "libero",
         ),

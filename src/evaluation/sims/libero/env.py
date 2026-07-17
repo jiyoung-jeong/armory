@@ -5,8 +5,8 @@ import numpy as np
 from libero.libero.envs import OffScreenRenderEnv
 from typing_extensions import override
 
-from armory_client import image_tools
 from armory_client.schemas import Action, Observation
+from evaluation import image_tools
 from evaluation.runtime import environment as _environment
 from evaluation.sims.libero import utils
 
@@ -40,7 +40,7 @@ class LiberoSimEnvironment(_environment.Environment):
         *,
         resize_size: int = 224,
         max_episode_steps: int = 300,
-        control_hz: float = 100.0,
+        control_hz: float = 100.0,  # NOTE: no reason for sim to store control_hz if runtime has it?
         deadline_monotonic: float | None = None,
     ) -> None:
         self._env = env

@@ -20,9 +20,9 @@ class Runtime:
         environment: _environment.Environment,
         agent: _agent.Agent,
         subscribers: list[_subscriber.Subscriber],
-        max_hz: float = 0,
+        max_hz: float = 0,  # NOTE: shouldn't be max_hz, just hz?
         num_episodes: int = 1,
-        max_episode_steps: int = 0,
+        max_episode_steps: int = 0,  # NOTE: not sure if this should be passed?
     ) -> None:
         self._environment = environment
         self._agent = agent
