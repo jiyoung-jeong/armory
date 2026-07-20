@@ -26,7 +26,6 @@ from evaluation.sims.libero.episodes import Episode, create_episodes, create_moc
 from evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
 from evaluation.sims.libero.mock_env import MockEnvironment
 from evaluation.sims.libero.progress_manager import get_progress_manager
-from evaluation.sims.libero.seeding import seed_everything
 from evaluation.sims.libero.subscribers.progress_subscriber import ProgressSubscriber
 from evaluation.sims.libero.subscribers.saver import Saver
 from evaluation.sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
@@ -36,6 +35,7 @@ from evaluation.toxiproxy import (
     WorkerNetworkContext,
     experiment_requires_network_emulation,
 )
+from utils import seed_everything
 
 logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224

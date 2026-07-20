@@ -5,19 +5,16 @@ import logging
 import multiprocessing as mp
 import pathlib
 import socket
-import sys
 from dataclasses import field
 from typing import Literal
+
+from scripts.utils import JsonArgs, resolve_policy  # noqa: E402
 
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
 from armory.utils import logging_config
 from openpi_adapter.serve_factory import EnvMode
-
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from utils import JsonArgs, resolve_policy  # noqa: E402
-
-from evaluation.sims.libero.seeding import seed_everything  # noqa: E402
+from utils import seed_everything  # noqa: E402
 
 
 class ModelFamily(str, enum.Enum):
