@@ -33,20 +33,18 @@ from typing import Any
 
 import modal
 
-# Modal loads this module as /root/_setups.py for class services, but the repo's
+# Modal loads this module as /root/setups.py for class services, but the repo's
 # scripts/ tree is mounted at /app/scripts/. Add both: the parent (for local
-# runs) and /app/scripts/modal (for remote, where _images.py + _utils.py live).
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-sys.path.insert(0, "/app/scripts/modal")
+# runs) and /app/scripts/modal (for remote, where images.py + _utils.py live).
 import serve  # noqa: E402
-from _images import (  # noqa: E402
+from scripts.modal.images import (  # noqa: E402
     CHECKPOINT_VOLUME_PATH,
     REMOTE_ROOT,
     cpu_mock_image,
     gpu_libero_client_image,
     gpu_server_image,
 )
-from _utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
+from scripts.modal.utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
 
 from evaluation.sims.libero import run as run_libero  # noqa: E402
 

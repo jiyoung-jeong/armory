@@ -8,7 +8,7 @@ import time
 import modal
 import modal.experimental
 import requests
-from scripts.modal._images import REMOTE_ROOT, gpu_server_image
+from scripts.modal.images import REMOTE_ROOT, gpu_server_image
 
 log = logging.getLogger(__name__)
 
