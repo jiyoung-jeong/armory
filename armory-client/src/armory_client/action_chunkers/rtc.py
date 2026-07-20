@@ -5,6 +5,8 @@ from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from armory_client.schemas import Observation
 
+# TODO: delete this file, inference strategy should be decided on connection initiation
+
 
 class InferenceTimeRTCBroker(ActionChunkBroker):
     def __init__(
