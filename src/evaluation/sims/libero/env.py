@@ -17,6 +17,7 @@ RESIZE_SIZE = 224
 
 @dataclass
 class LiberoObservation(Observation):
+    state: np.ndarray
     image: np.ndarray
     wrist_image: np.ndarray
     prompt: str

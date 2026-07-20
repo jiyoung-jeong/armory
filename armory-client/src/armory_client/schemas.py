@@ -61,7 +61,4 @@ class Action:
 
 @dataclass
 class Observation:
-    state: np.ndarray
     step: int
-    image: np.ndarray
-    wrist_image: np.ndarray

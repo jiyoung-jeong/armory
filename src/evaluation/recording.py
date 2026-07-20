@@ -133,15 +133,6 @@ class Timestamp(CSVDataclass):
 
 
 @dataclass
-class LiberoObservation:
-    state: np.ndarray
-    step: int
-    image: np.ndarray
-    wrist_image: np.ndarray
-    prompt: str
-
-
-@dataclass
 class RuntimeMetadata(JSONDataclass):
     """Metadata about the runtime/experiment configuration."""
 

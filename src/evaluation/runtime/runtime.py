@@ -40,7 +40,7 @@ class Runtime:
         self._in_episode = False
 
     def run(self) -> None:
-        while self.time() < self._deadline:  # TODO: pull out into function
+        while time.monotonic() < self._deadline:  # TODO: pull out into function
             self._run_episode()
 
         # Final reset, this is important for real environments to move the robot to its home position.
@@ -60,7 +60,7 @@ class Runtime:
         step_time = 1 / self._step_rate if self._step_rate > 0 else 0
         last_step_time = time.perf_counter()
 
-        while self._in_episode and time.time < self._deadline:
+        while self._in_episode and time.monotonic() < self._deadline:
             self._step()
 
             next_step_time = last_step_time + step_time
