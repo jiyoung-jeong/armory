@@ -12,6 +12,7 @@ from evaluation.sims.libero import utils
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 NUM_STEPS_WAIT = 10
+RESIZE_SIZE = 224
 
 
 @dataclass
@@ -38,7 +39,6 @@ class LiberoSimEnvironment(_environment.Environment):
         task_description: str,
         initial_states: np.ndarray,
         *,
-        resize_size: int = 224,
         max_episode_steps: int = 300,
         control_hz: float = 100.0,  # NOTE: no reason for sim to store control_hz if runtime has it?
         deadline_monotonic: float | None = None,
@@ -46,7 +46,6 @@ class LiberoSimEnvironment(_environment.Environment):
         self._env = env
         self._task_description = task_description
         self._initial_states = initial_states
-        self._resize_size = resize_size
         self._max_episode_steps = max_episode_steps
         self._control_hz = control_hz
         # Hard wall-clock cutoff. When non-None and ``time.monotonic() >=
@@ -106,10 +105,10 @@ class LiberoSimEnvironment(_environment.Environment):
         img = np.ascontiguousarray(obs["agentview_image"][::-1, ::-1])
         wrist_img = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1, ::-1])
         img = image_tools.convert_to_uint8(
-            image_tools.resize_with_pad(img, self._resize_size, self._resize_size)
+            image_tools.resize_with_pad(img, RESIZE_SIZE, RESIZE_SIZE)
         )
         wrist_img = image_tools.convert_to_uint8(
-            image_tools.resize_with_pad(wrist_img, self._resize_size, self._resize_size)
+            image_tools.resize_with_pad(wrist_img, RESIZE_SIZE, RESIZE_SIZE)
         )
 
         state = np.concatenate(
