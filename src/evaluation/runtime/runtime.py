@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 import time
 
 from evaluation.runtime import agent as _agent
@@ -13,47 +12,44 @@ _SPIN_WINDOW_S = 0.002
 
 
 class Runtime:
-    """The core module orchestrating interactions between key components of the system."""
-
     def __init__(
         self,
         environment: _environment.Environment,
         agent: _agent.Agent,
         subscribers: list[_subscriber.Subscriber],
-        max_hz: float = 0,  # NOTE: shouldn't be max_hz, just hz?
-        num_episodes: int = 1,
-        max_episode_steps: int = 0,  # NOTE: not sure if this should be passed?
+        step_rate: float = 0,
+        deadline: float = 0,
     ) -> None:
+        """
+        Initialize the runtime loop for a single agent/environment rollout.
+
+        Args:
+            environment (_environment.Environment): The environment instance in which the agent will be rolled out.
+            agent (_agent.Agent): The agent controlling the environment.
+            subscribers (list[_subscriber.Subscriber]): List of subscriber objects that receive episode and step events.
+            step_rate (float, optional): Desired control rate in Hz (steps per second). If <= 0, runs as fast as possible. Defaults to 0.
+            deadline (float, optional): Absolute time (seconds since epoch or perf_counter) after which execution will stop. If 0, continues indefinitely. Defaults to 0.
+        """
+
         self._environment = environment
         self._agent = agent
         self._subscribers = subscribers
-        self._max_hz = max_hz
-        self._num_episodes = num_episodes
-        self._max_episode_steps = max_episode_steps
+        self._step_rate = step_rate
+        self._deadline = deadline
 
         self._in_episode = False
-        self._episode_steps = 0
 
     def run(self) -> None:
-        """Runs the runtime loop continuously until stop() is called or the environment is done."""
-        for _ in range(self._num_episodes):
+        while self.time() < self._deadline:  # TODO: pull out into function
             self._run_episode()
 
         # Final reset, this is important for real environments to move the robot to its home position.
         self._environment.reset()
 
-    def run_in_new_thread(self) -> threading.Thread:
-        """Runs the runtime loop in a new thread."""
-        thread = threading.Thread(target=self.run)
-        thread.start()
-        return thread
-
     def mark_episode_complete(self) -> None:
-        """Marks the end of an episode."""
         self._in_episode = False
 
     def _run_episode(self) -> None:
-        """Runs a single episode."""
         logging.info("Starting episode...")
         self._environment.reset()
         self._agent.reset()
@@ -61,13 +57,11 @@ class Runtime:
             subscriber.on_episode_start()
 
         self._in_episode = True
-        self._episode_steps = 0
-        step_time = 1 / self._max_hz if self._max_hz > 0 else 0
+        step_time = 1 / self._step_rate if self._step_rate > 0 else 0
         last_step_time = time.perf_counter()
 
-        while self._in_episode:
+        while self._in_episode and time.time < self._deadline:
             self._step()
-            self._episode_steps += 1
 
             next_step_time = last_step_time + step_time
             # Hybrid pacing: OS sleep granularity can overshoot by ~1ms, so
@@ -89,7 +83,6 @@ class Runtime:
         self._agent.reset()
 
     def _step(self) -> None:
-        """A single step of the runtime loop."""
         observation = self._environment.get_observation()
         action = self._agent.get_action(observation)
         self._environment.apply_action(action)
@@ -97,13 +90,10 @@ class Runtime:
         for subscriber in self._subscribers:
             subscriber.on_step(observation, action)
 
-        if self._environment.is_episode_complete() or (
-            self._max_episode_steps > 0 and self._episode_steps >= self._max_episode_steps
-        ):
+        if self._environment.is_episode_complete():
             self.mark_episode_complete()
 
     def close(self) -> None:
-        """Closes the runtime."""
         self._environment.close()
         for subscriber in self._subscribers:
             subscriber.close()

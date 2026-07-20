@@ -57,7 +57,6 @@ class ReplayConfig:
     host: str
     port: int
     seed: int = 7
-    resize_size: int = 224
     num_steps_wait: int = 10
     max_steps: int = 500
     control_hz: int = 20
@@ -364,7 +363,6 @@ def replay_episode(
         env=env_raw,
         task_description=task_description,
         initial_states=initial_state,
-        resize_size=config.resize_size,
         num_steps_wait=config.num_steps_wait,
         max_episode_steps=config.max_steps,
         control_hz=config.control_hz,

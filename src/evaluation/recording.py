@@ -149,7 +149,6 @@ class RuntimeMetadata(JSONDataclass):
     num_trials_per_task: int
     max_steps: int
     seed: int
-    resize_size: int
     num_robots: int
     control_hz: int
     broker_type: str
