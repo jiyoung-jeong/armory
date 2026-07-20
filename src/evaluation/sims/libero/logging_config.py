@@ -24,7 +24,9 @@ def setup_logging(level: int = logging.INFO, log_path: Path | None = None) -> No
         )
     ]
     if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         handlers.append(logging.FileHandler(log_path))
+
     logging.basicConfig(
         level=level,
         format="%(message)s",
