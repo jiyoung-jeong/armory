@@ -10,10 +10,11 @@ from typing_extensions import override
 
 from armory_client.schemas import Action, Observation
 from evaluation import image_tools
-from evaluation.runtime import environment as _environment
+from evaluation.envs.base import Environment
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
 NUM_STEPS_WAIT = 10
+LIBERO_ENV_RESOLUTION = 256
 RESIZE_SIZE = 224
 
 
@@ -25,14 +26,11 @@ class LiberoObservation(Observation):
     prompt: str
 
 
-LIBERO_ENV_RESOLUTION = 256
-
-
 def get_libero_env(task, seed) -> OffScreenRenderEnv:
-    """Initializes and returns the LIBERO environment, along with the task description."""
     task_bddl_file = (
         pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
     )
+    # TODO: figure out why we don't pass RESIZE_SIZE directly here, and then comment
     env_args = {
         "bddl_file_name": task_bddl_file,
         "camera_heights": LIBERO_ENV_RESOLUTION,
@@ -63,7 +61,7 @@ def quat2axisangle(quat):
     return (quat[:3] * 2.0 * math.acos(quat[3])) / den
 
 
-class LiberoSimEnvironment(_environment.Environment):
+class LiberoSimEnvironment(Environment):
     """Wraps a LIBERO ``OffScreenRenderEnv`` in the eval ``Environment`` interface.
 
     Bound to a single task. Each ``reset()`` loads the next pre-collected initial

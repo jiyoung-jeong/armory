@@ -2,10 +2,10 @@ from typing_extensions import override
 
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.schemas import Action, Observation
-from evaluation.runtime import agent as _agent
+from evaluation.agents.base import Agent
 
 
-class PolicyAgent(_agent.Agent):
+class PolicyAgent(Agent):
     """An agent that queries a remote policy server, mediated by an action-chunk broker.
 
     The broker owns the transport (websocket) and turns the server's stream of

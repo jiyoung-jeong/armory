@@ -13,8 +13,10 @@ Differences from the sim Saver:
   be hundreds of MB).
 """
 
+# TODO: leaving this here, this needs to be incorporated somehow
 from __future__ import annotations
 
+import abc
 import logging
 import pathlib
 import re
@@ -29,7 +31,7 @@ from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.schemas import Action, Observation
 from evaluation.recording import Timestamp
 from evaluation.runtime import subscriber as _subscriber
-from evaluation.runtime.saver_utils import (
+from evaluation.save import (
     EpisodeSaveData,
     Result,
     plot_cost_history,
@@ -43,6 +45,29 @@ logger = logging.getLogger(__name__)
 
 
 _ROBOT_IDX_RE = re.compile(r"(\d+)")
+
+
+class Subscriber(abc.ABC):
+    """Subscribes to events in the runtime.
+
+    Subscribers can be used to save data, visualize, etc.
+    """
+
+    @abc.abstractmethod
+    def on_episode_start(self) -> None:
+        """Called when an episode starts."""
+
+    @abc.abstractmethod
+    def on_step(self, observation: Observation, action: Action) -> None:
+        """Append a step to the episode."""
+
+    @abc.abstractmethod
+    def on_episode_end(self) -> None:
+        """Called when an episode ends."""
+
+    def close(self) -> None:
+        """Called when the runtime is closing."""
+        pass
 
 
 def _robot_idx_from_id(robot_id: str) -> int:

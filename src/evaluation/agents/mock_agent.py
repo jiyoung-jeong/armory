@@ -2,13 +2,13 @@ import numpy as np
 from typing_extensions import override
 
 from armory_client.schemas import Action, Observation
-from evaluation.runtime import agent as _agent
+from evaluation.agents.base import Agent
 
 # 6-DoF arm + gripper.
 _ACTION_DIM = 7
 
 
-class MockAgent(_agent.Agent):
+class MockAgent(Agent):
     """An agent that returns null actions without contacting any server.
 
     Unlike ``PolicyAgent``, this needs neither a websocket nor a broker — it lets

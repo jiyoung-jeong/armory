@@ -1,11 +1,3 @@
-"""HTTP-only control-plane client for the policy server.
-
-Distinct from armory_client.client.BidirectionalWebsocket, which owns the
-per-robot websocket data plane (observations/actions). This client issues
-one-off HTTP requests against the server's control endpoints and isn't
-associated with any robot connection.
-"""
-
 import logging
 import time
 

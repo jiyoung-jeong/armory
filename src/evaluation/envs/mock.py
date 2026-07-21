@@ -4,7 +4,7 @@ import numpy as np
 from typing_extensions import override
 
 from armory_client.schemas import Action, Observation
-from evaluation.runtime import environment as _environment
+from evaluation.envs.base import Environment
 
 IMAGE_SIZE = 224
 
@@ -17,7 +17,7 @@ class MockObservation(Observation):
     prompt: str = ""
 
 
-class MockEnvironment(_environment.Environment):
+class MockEnvironment(Environment):
     """Dummy environment that returns zero observations and counts steps.
 
     Still emits full-size images so it exercises the real wire payload for
