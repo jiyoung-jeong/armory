@@ -43,7 +43,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
-from evaluation.sims.libero.metrics import (
+from evaluation.metrics import (
     _build_actions_left_matrix,
     _load_scheduler_decisions,
     _server_to_perf_offset,

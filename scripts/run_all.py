@@ -8,98 +8,36 @@ import shutil
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Literal, Self  # Any used for shared globals
+from typing import Any, Literal  # Any used for shared globals
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import model_validator
 
-from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
+from armory_client.action_chunkers import BrokerConfig
 from armory_client.client import BidirectionalWebsocket
-from armory_client.protocol import SchedulerConfig, ServerMetadata
+from evaluation.agents import policy_agent as _policy_agent
 from evaluation.cli import JsonArgs
-from evaluation.recording import JSONBaseModel
+from evaluation.envs.libero import logging_config
+from evaluation.envs.libero.episodes import Episode, create_episodes, create_mock_episodes
+from evaluation.envs.mock import MockEnvironment
+from evaluation.metrics import calculate_metrics, generate_all_plots
 from evaluation.runtime import runtime as _runtime
 from evaluation.runtime import subscriber as _subscriber
-from evaluation.runtime.agents import policy_agent as _policy_agent
-from evaluation.sims.libero import logging_config
-from evaluation.sims.libero.episodes import Episode, create_episodes, create_mock_episodes
-from evaluation.sims.libero.metrics import calculate_metrics, generate_all_plots
-from evaluation.sims.libero.mock_env import MockEnvironment
-from evaluation.sims.libero.progress_manager import get_progress_manager
-from evaluation.sims.libero.subscribers.progress_subscriber import ProgressSubscriber
-from evaluation.sims.libero.subscribers.saver import Saver
-from evaluation.sims.libero.subscribers.task_metrics_publisher import TaskMetricsPublisher
+from evaluation.runtime.progress_manager import get_progress_manager
+from evaluation.runtime.subscribers.progress_subscriber import ProgressSubscriber
+from evaluation.runtime.subscribers.saver import Saver
 from evaluation.toxiproxy import (
     NetworkEmulationManager,
     RobotNetworkHook,
     WorkerNetworkContext,
     experiment_requires_network_emulation,
 )
+from evaluation.types import ExperimentConfig
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)
 RESIZE_SIZE = 224
-
-
-class ExecutionHorizon(BaseModel):
-    min: int = Field(ge=1, default=1)
-    max: int = 10
-
-    @model_validator(mode="after")
-    def _validate(self) -> Self:
-        if self.min > self.max:
-            raise ValueError("min_execution_horizon must be <= max_execution_horizon")
-        return self
-
-
-class NetworkLatency(BaseModel):
-    median: float = Field(ge=0.0, default=0.0)
-    sigma: float = Field(ge=0.0, default=0.0)
-
-
-class Robot(BaseModel):
-    execution_horizon: ExecutionHorizon = ExecutionHorizon()
-    observation_latency: NetworkLatency = NetworkLatency()
-    action_latency: NetworkLatency = NetworkLatency()
-    control_hz: int = Field(gt=0, default=20)
-    weight: int = 1
-
-
-class ExperimentConfig(JSONBaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    env: Literal["libero", "mock"] = "mock"
-    task_suite_name: str = "libero10"
-    num_trials_per_task: int = Field(ge=1, default=1)
-    max_steps: int = Field(gt=0, default=100)
-    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
-    robots: list[Robot] = [Robot()]
-    # New "trial" mode: when wall_clock_time_limit_s > 0, the seed picks
-    # ``subset_size`` tasks from the suite (0 = all tasks), each robot is
-    # pinned to one of those tasks, and runs episodes back-to-back until
-    # its per-robot wall-clock budget is exhausted. ``max_steps`` still
-    # caps each individual episode.
-    subset_size: int = 0  # TODO: what is this, can we remove it?
-    wall_clock_time_limit_s: float = Field(default=0.0, ge=0.0)
-    seed: int = Field(default=7, ge=0)
-
-    @property
-    def use_trial_mode(self) -> bool:
-        return self.wall_clock_time_limit_s > 0.0
-
-    def execution_horizon_for_robot(self, robot_idx: int) -> ExecutionHorizon:
-        return self.robots[robot_idx].execution_horizon
-
-    def max_execution_horizons(self) -> list[int]:
-        return [r.execution_horizon.max for r in self.robots]
-
-    @model_validator(mode="after")
-    def _validate(self) -> Self:
-        if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
-            raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
-        if not self.use_trial_mode and self.num_trials_per_task <= 0:
-            raise ValueError("num_trials_per_task must be positive")
-        return self
 
 
 class Args(JsonArgs):
@@ -232,8 +170,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
     if settings.env == "libero":
         from libero.libero import benchmark
 
-        from evaluation.sims.libero import utils as libero_utils  # noqa: F811
-        from evaluation.sims.libero.env import LiberoSimEnvironment  # noqa: F811
+        from evaluation.envs.libero import LiberoSimEnvironment  # noqa: F811
 
         benchmark_dict: dict[str, type[benchmark.Benchmark]] = benchmark.get_benchmark_dict()
         task_suite = benchmark_dict[settings.task_suite_name]()
@@ -267,13 +204,7 @@ def _robot_worker(worker_args: _WorkerArgs) -> None:
                 save_video=settings.env != "mock",
                 executor=saver_executor,
                 pending_slots=saver_pending_slots,
-            ),
-            TaskMetricsPublisher(
-                ws_client=ws_client,
-                environment=env,
-                task_suite_name=episode.task_suite_name,
-                task_id=episode.task_id,
-                task=episode.task,
+                control_hz=settings.robot[robot_idx].control_hz,
             ),
         ]
         if _progress_queue is not None:
@@ -388,7 +319,7 @@ def _trial_loop(
                 return None
 
     else:
-        from evaluation.sims.libero.episodes import _MockTask
+        from evaluation.envs.libero.episodes import _MockTask
 
         task = _MockTask(language=f"mock task {task_id}")
         initial_states = np.zeros((1, 1), dtype=np.float32)
@@ -554,7 +485,7 @@ def main(args: Args) -> None:
     subset_task_ids: list[int] = []
     settings = args.experiment_config  # NOTE: hack for now, change everything below later
     if settings.use_trial_mode:
-        from evaluation.sims.libero.episodes import (
+        from evaluation.envs.libero.episodes import (
             _MockTask,
             assign_robots_to_tasks,
             pick_subset_task_ids,
@@ -674,7 +605,7 @@ def cli() -> None:
         # per-worker after the fork.
         multiprocessing.set_start_method("forkserver")
         multiprocessing.set_forkserver_preload(
-            ["numpy", "matplotlib", "robosuite", "evaluation.sims.libero.env"]
+            ["numpy", "matplotlib", "robosuite", "evaluation.envs.libero.env"]
         )
     else:
         # macOS: forked processes can crash inside Apple frameworks; keep

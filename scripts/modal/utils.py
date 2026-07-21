@@ -94,7 +94,7 @@ def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
         out["action_horizon"] = server.get("action_horizon", "")
 
     try:
-        from evaluation.sims.libero.metrics import (
+        from evaluation.metrics import (
             compute_server_timing_health,  # noqa: PLC0415
         )
 
@@ -104,7 +104,7 @@ def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     try:
-        from evaluation.sims.libero.metrics import compute_fairness_metrics  # noqa: PLC0415
+        from evaluation.metrics import compute_fairness_metrics  # noqa: PLC0415
 
         fairness = compute_fairness_metrics(output_dir)
         if fairness is not None:
@@ -119,7 +119,7 @@ def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
     try:
-        from evaluation.sims.libero.metrics import (
+        from evaluation.metrics import (
             compute_starvation_variance_series,  # noqa: PLC0415
         )
 

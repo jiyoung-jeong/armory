@@ -1,38 +1,46 @@
 import abc
 
+import numpy as np
+
 from armory_client.schemas import Action, Observation
 
 
 class Environment(abc.ABC):
-    """An Environment represents the robot and the environment it inhabits.
-
-    The primary contract of environments is that they can be queried for observations
-    about their state, and have actions applied to them to change that state.
-    """
-
     @abc.abstractmethod
     def reset(self) -> None:
-        """Reset the environment to its initial state.
-
-        This will be called once before starting each episode.
-        """
+        """Called once before each episode."""
 
     @abc.abstractmethod
     def is_episode_complete(self) -> bool:
-        """Allow the environment to signal that the episode is complete.
-
-        This will be called after each step. It should return `True` if the episode is
-        complete (either successfully or unsuccessfully), and `False` otherwise.
-        """
+        pass
 
     @abc.abstractmethod
     def get_observation(self) -> Observation:
-        """Query the environment for the current state."""
+        pass
 
     @abc.abstractmethod
     def apply_action(self, action: Action) -> None:
-        """Take an action in the environment."""
+        pass
 
     @abc.abstractmethod
     def close(self) -> None:
-        """Close the environment."""
+        pass
+
+    # --- Episode outcome / metadata read at episode end for logging. ---
+    # Concrete defaults so envs that have no notion of these don't need to
+    # override them.
+
+    @property
+    def current_success(self) -> bool:
+        """Whether the most recent episode achieved its task."""
+        return False
+
+    @property
+    def current_initial_state(self) -> np.ndarray | None:
+        """The initial state the current episode was reset to, if any."""
+        return None
+
+    @property
+    def task_language(self) -> str:
+        """Natural-language description of the task, for saved metadata."""
+        return ""

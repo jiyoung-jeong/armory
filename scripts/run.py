@@ -1,42 +1,58 @@
+"""Run a single robot against a policy server and save its episodes."""
+
 import datetime
 import logging
 import pathlib
 import shutil
-import time
+from enum import Enum
 
 from pydantic import Field, model_validator
 
 from armory.serving.protocol import SchedulerConfig
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from evaluation.cli import JsonArgs
-from evaluation.runtime.agents import policy_agent as _policy_agent
-from evaluation.runtime.runtime import Runtime
+from evaluation.runtime import agent as _agent
+from evaluation.runtime import environment as _environment
+from evaluation.runtime.agents.mock_agent import MockAgent
+from evaluation.runtime.agents.policy_agent import PolicyAgent
+from evaluation.save import SaveMeta
 from evaluation.server_control_client import ServerControlClient
 from evaluation.sims.libero import logging_config
-from evaluation.sims.libero.env import LiberoSimEnvironment
 from evaluation.sims.libero.mock_env import MockEnvironment
-from evaluation.types import EnvironmentType, ExecutionHorizon, NetworkLatency
+from evaluation.sims.libero.run_robot import run_robot
+from evaluation.types import EnvironmentType, ExecutionHorizon
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
 
+class AgentType(Enum):
+    POLICY = "policy"  # queries the remote policy server
+    MOCK = "mock"  # returns null actions, no server (offline loop test)
+
+
 class Args(JsonArgs):
     # environment
     env: EnvironmentType = EnvironmentType.MOCK
+    task_suite_name: str = "libero_10"
+    task_id: int = 0
     max_steps: int = Field(gt=0, default=100)
-    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
-    time_limit: float = Field(default=0.0, ge=0.0)
 
-    # robot
+    # agent
+    agent: AgentType = AgentType.POLICY
+    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
     execution_horizon: ExecutionHorizon = ExecutionHorizon()
-    observation_latency: NetworkLatency = NetworkLatency()
-    action_latency: NetworkLatency = NetworkLatency()
     control_hz: int = Field(gt=0, default=20)
+
+    # rollout
+    num_episodes: int = Field(gt=0, default=1)
+    time_limit: float = Field(default=0.0, ge=0.0)
 
     scheduler_config: SchedulerConfig = SchedulerConfig()
 
+    robot_idx: int = 0
     seed: int = Field(default=7, ge=0)
     host: str = "0.0.0.0"
     port: int = 8080
@@ -50,66 +66,46 @@ class Args(JsonArgs):
         return self
 
 
-def create_mock_environment():
-    return MockEnvironment()
+def create_environment(args: Args) -> _environment.Environment:
+    if args.env == EnvironmentType.MOCK:
+        return MockEnvironment(max_episode_steps=args.max_steps)
+    if args.env == EnvironmentType.LIBERO:
+        # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
+        from evaluation.sims.libero.env import LiberoSimEnvironment
 
-
-def create_libero_environment(task_id: int, seed: int):
-    from libero.libero.benchmark import Benchmark, Task, get_benchmark_dict
-
-    from evaluation.sims.libero.utils import _get_libero_env
-
-    benchmark_dict: dict[str, type[Benchmark]] = get_benchmark_dict()
-    task_suite = benchmark_dict["libero_10"]()
-
-    task: Task = task_suite.get_task(task_id)
-    raw_env, _ = _get_libero_env(task, seed=seed)
-
-    return LiberoSimEnvironment(
-        env=raw_env,
-        task_description=task.language,
-        initial_state=task_suite.get_task_init_states(task_id),
-    )
+        return LiberoSimEnvironment(
+            task_id=args.task_id,
+            task_suite_name=args.task_suite_name,
+            max_episode_steps=args.max_steps,
+            seed=args.seed,
+        )
+    raise ValueError(f"Unsupported env: {args.env}")
 
 
 def create_agent(
-    host: str,
-    port: str,
-    control_hz: float,
-    execution_horizon: ExecutionHorizon,
-    action_chunk_broker_type: ActionChunkBrokerType,
-):
+    args: Args,
+) -> tuple[_agent.Agent, BidirectionalWebsocket | None, ActionChunkBroker | None]:
+    """Build the agent plus the resources the caller must later close/snapshot."""
+    if args.agent == AgentType.MOCK:
+        return MockAgent(), None, None
+
     ws_client = BidirectionalWebsocket(
-        robot_id="robot",
-        host=host,
-        port=port,
-        control_hz=control_hz,
+        robot_id=f"robot_{args.robot_idx}",
+        host=args.host,
+        port=args.port,
+        control_hz=args.control_hz,
     )
     ws_client.connect()
 
-    config = BrokerConfig(
-        ws_client=ws_client,
-        control_hz=control_hz,
-        min_execution_horizon=execution_horizon.min,
-        max_execution_horizon=execution_horizon.max,
+    broker = args.action_chunk_broker_type.create(
+        BrokerConfig(
+            ws_client=ws_client,
+            control_hz=args.control_hz,
+            min_execution_horizon=args.execution_horizon.min,
+            max_execution_horizon=args.execution_horizon.max,
+        )
     )
-    broker = action_chunk_broker_type.create(config)
-    return _policy_agent.PolicyAgent(broker=broker)
-
-
-def run_robot(create_agent, create_environment, control_hz: float, time_limit: float) -> None:
-    # NOTE: we pass factory methods instead of directly creating objects so this function can be directly used with multiprocessing
-    env = create_environment()
-    agent = create_agent()
-
-    runtime = Runtime(
-        environment=env,
-        agent=agent,
-        control_hz=control_hz,  # NOTE: maybe don't need to pass this
-        deadline=time.monotonic() + time_limit,
-    )
-    runtime.run()
-    runtime.close()
+    return PolicyAgent(broker), ws_client, broker
 
 
 def main(args: Args) -> None:
@@ -125,18 +121,39 @@ def main(args: Args) -> None:
     )
     logging_config.setup_logging(log_path=log_path, level=logging.INFO)
 
-    control_client = ServerControlClient(host=args.host, port=args.port)
-    control_client.reconfigure_server(args.scheduler_config)
-    control_client.reset_server()
+    if args.agent == AgentType.POLICY:
+        control_client = ServerControlClient(host=args.host, port=args.port)
+        control_client.reconfigure_server(args.scheduler_config)
+        control_client.reset_server()
 
-    run_robot()
+    environment = create_environment(args)
+    agent, ws_client, broker = create_agent(args)
+
+    meta = SaveMeta(
+        out_dir=args.output_dir,
+        robot_idx=args.robot_idx,
+        task_suite_name=args.task_suite_name,
+        task_id=args.task_id,
+        task_language=environment.task_language,
+        control_hz=args.control_hz,
+        # Zero-image mock frames aren't worth encoding.
+        save_video=args.env != EnvironmentType.MOCK,
+    )
+
+    try:
+        run_robot(
+            environment=environment,
+            agent=agent,
+            meta=meta,
+            broker=broker,
+            num_episodes=args.num_episodes,
+            time_limit=args.time_limit,
+        )
+    finally:
+        environment.close()
+        if ws_client is not None:
+            ws_client.close()
 
 
 if __name__ == "__main__":
     main(Args.from_cli())
-
-
-# to decide:
-# how to save?
-# I don't want to import env stuff if I don't need, but I also want to share imports when I can
-# does mock agent need a websocket
