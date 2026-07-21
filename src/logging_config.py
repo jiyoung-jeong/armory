@@ -1,5 +1,3 @@
-"""Centralized logging configuration for libero examples."""
-
 import logging
 from pathlib import Path
 
