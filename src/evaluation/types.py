@@ -1,9 +1,15 @@
-from typing import Literal, Self  # Any used for shared globals
+from enum import Enum
+from typing import Self  # Any used for shared globals
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType
 from evaluation.recording import JSONBaseModel
+
+
+class EnvironmentType(Enum):
+    LIBERO = 1
+    MOCK = 2
 
 
 class ExecutionHorizon(BaseModel):
@@ -33,7 +39,7 @@ class Robot(BaseModel):
 class ExperimentConfig(JSONBaseModel):
     model_config = ConfigDict(frozen=True)
 
-    env: Literal["libero", "mock"] = "mock"
+    env: EnvironmentType = EnvironmentType.MOCK
     task_suite_name: str = "libero10"
     num_trials_per_task: int = Field(ge=1, default=1)
     max_steps: int = Field(gt=0, default=100)

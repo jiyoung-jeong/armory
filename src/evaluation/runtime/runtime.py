@@ -17,7 +17,7 @@ class Runtime:
         environment: _environment.Environment,
         agent: _agent.Agent,
         subscribers: list[_subscriber.Subscriber],
-        step_rate: float = 0,
+        control_hz: float = 0,
         deadline: float = 0,
     ) -> None:
         """
@@ -34,7 +34,7 @@ class Runtime:
         self._environment = environment
         self._agent = agent
         self._subscribers = subscribers
-        self._step_rate = step_rate
+        self._control_hz = control_hz
         self._deadline = deadline
 
         self._in_episode = False
@@ -57,7 +57,7 @@ class Runtime:
             subscriber.on_episode_start()
 
         self._in_episode = True
-        step_time = 1 / self._step_rate if self._step_rate > 0 else 0
+        step_time = 1 / self._control_hz if self._control_hz > 0 else 0
         last_step_time = time.perf_counter()
 
         while self._in_episode and time.monotonic() < self._deadline:

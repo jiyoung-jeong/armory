@@ -41,14 +41,12 @@ class LiberoSimEnvironment(_environment.Environment):
         initial_states: np.ndarray,
         *,
         max_episode_steps: int = 300,
-        control_hz: float = 100.0,  # NOTE: no reason for sim to store control_hz if runtime has it?
-        deadline_monotonic: float | None = None,
+        deadline_monotonic: float | None = None,  # TODO: shouldn't need this either
     ) -> None:
         self._env = env
         self._task_description = task_description
         self._initial_states = initial_states
         self._max_episode_steps = max_episode_steps
-        self._control_hz = control_hz
         # Hard wall-clock cutoff. When non-None and ``time.monotonic() >=
         # deadline_monotonic``, ``is_episode_complete()`` returns True so the
         # Runtime exits the inner step loop at the next checkpoint. Used by
@@ -170,10 +168,6 @@ class LiberoSimEnvironment(_environment.Environment):
     @property
     def current_success(self) -> bool:
         return self._current_success
-
-    @property
-    def control_hz(self) -> float:
-        return self._control_hz
 
     @property
     def max_episode_steps(self) -> int:

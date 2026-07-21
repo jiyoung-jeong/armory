@@ -254,7 +254,7 @@ def assert_egl_rendering() -> None:
 
     MUJOCO_GL=egl silently falls back to Mesa's software `llvmpipe` renderer
     when libglvnd can't find the NVIDIA EGL ICD (see `_add_nvidia_egl_icd` in
-    scripts/modal/_images.py), which craters sim throughput with no error.
+    scripts/modal/images.py), which craters sim throughput with no error.
     """
     from OpenGL import GL
 

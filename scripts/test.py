@@ -3,7 +3,7 @@ import statistics
 
 import modal
 import numpy as np
-from scripts.modal._images import gpu_libero_client_image
+from scripts.modal.images import gpu_libero_client_image
 
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket

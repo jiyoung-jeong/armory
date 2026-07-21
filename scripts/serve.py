@@ -12,7 +12,7 @@ from scripts.utils import JsonArgs, resolve_policy  # noqa: E402
 
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
-from armory.utils import logging_config
+from logging_config import setup_logging
 from openpi_adapter.serve_factory import EnvMode
 from utils import seed_everything  # noqa: E402
 
@@ -68,7 +68,7 @@ def main(args: Args) -> None:
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
     )
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_queue, log_listener = logging_config.setup_logging(
+    log_queue, log_listener = setup_logging(
         log_path=log_path, level=getattr(logging, args.log_level)
     )
 

@@ -45,6 +45,7 @@ class Saver(_subscriber.Subscriber):
         task_suite_name: str,
         task_id: int,
         task: benchmark.Task,
+        control_hz: float,
         robot_idx: int,
         save_video: bool = True,
         executor: ThreadPoolExecutor | None = None,
@@ -60,7 +61,7 @@ class Saver(_subscriber.Subscriber):
         self._action_chunk_broker = action_chunk_broker
         self._save_video_enabled = save_video
         self._timestamps: list[Timestamp] = []
-        self._control_hz = environment.control_hz
+        self._control_hz = control_hz
         self._observations_buffer: dict[int, Observation] = {}
         # When ``executor`` is provided, the caller owns its lifetime and the
         # per-episode ``close()`` is a no-op — this lets repeated episodes
