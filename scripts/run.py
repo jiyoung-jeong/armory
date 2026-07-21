@@ -8,20 +8,20 @@ from enum import Enum
 
 from pydantic import Field, model_validator
 
+import logging_config
 from armory.serving.protocol import SchedulerConfig
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
+from evaluation.agents.mock_agent import MockAgent
+from evaluation.agents.policy_agent import PolicyAgent
 from evaluation.cli import JsonArgs
+from evaluation.envs.mock import MockEnvironment
+from evaluation.run_robot import run_robot
 from evaluation.runtime import agent as _agent
 from evaluation.runtime import environment as _environment
-from evaluation.runtime.agents.mock_agent import MockAgent
-from evaluation.runtime.agents.policy_agent import PolicyAgent
 from evaluation.save import SaveMeta
 from evaluation.server_control_client import ServerControlClient
-from evaluation.sims.libero import logging_config
-from evaluation.sims.libero.mock_env import MockEnvironment
-from evaluation.sims.libero.run_robot import run_robot
 from evaluation.types import EnvironmentType, ExecutionHorizon
 from utils import seed_everything
 
@@ -71,7 +71,7 @@ def create_environment(args: Args) -> _environment.Environment:
         return MockEnvironment(max_episode_steps=args.max_steps)
     if args.env == EnvironmentType.LIBERO:
         # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
-        from evaluation.sims.libero.env import LiberoSimEnvironment
+        from evaluation.envs.libero import LiberoSimEnvironment
 
         return LiberoSimEnvironment(
             task_id=args.task_id,
