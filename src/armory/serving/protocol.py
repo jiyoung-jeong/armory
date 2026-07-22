@@ -22,7 +22,7 @@ class SchedulerConfig(BaseModel):
     def to_scheduler_kwargs(self) -> dict | None:
         if self.scheduling_algorithm == "dynamic-action":
             return {"alpha": self.alpha}
-        if self.scheduling_algorithm in ("lookahead-actions"):
+        if self.scheduling_algorithm == "lookahead-actions":
             return {"action_horizon_multipliers": self.action_horizon_multipliers}
         return None
 
@@ -64,8 +64,3 @@ class ServerMetadata:
     def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
         with open(filepath, "w") as f:
             json.dump(asdict(self), f, indent=indent)
-
-    @classmethod
-    def from_json(cls, filepath: pathlib.Path) -> "ServerMetadata":
-        with open(filepath) as f:
-            return cls(**json.load(f))

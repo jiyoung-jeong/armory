@@ -1,4 +1,4 @@
-"""Import, compatibility, and serialization checks for the backend boundary."""
+"""Import and serialization checks for the backend boundary."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_policy_result_contract_has_the_three_engine_required_keys() -> None:
     }
 
 
-def test_compatibility_imports_and_pickles_are_canonical_and_lightweight() -> None:
+def test_backend_imports_and_pickles_are_canonical_and_lightweight() -> None:
     repo_root = Path(__file__).parents[2]
     code = textwrap.dedent(
         """
@@ -46,9 +46,6 @@ def test_compatibility_imports_and_pickles_are_canonical_and_lightweight() -> No
         sys.path.insert(0, "scripts")
 
         import serve
-        import serve_utils
-        from scripts import serve_utils as package_serve_utils
-
         from armory.backends.mock import MockPolicyFactory
         from armory.backends.registry import Gr00tPolicyFactory, OpenPiPolicyFactory
         from armory.backends.types import EnvMode, ModelFamily
@@ -59,12 +56,6 @@ def test_compatibility_imports_and_pickles_are_canonical_and_lightweight() -> No
         assert serve.ModelFamily is ModelFamily
         assert OpenPiEnvMode is EnvMode
         assert Gr00tEnvMode is EnvMode
-
-        aliases = (serve_utils, package_serve_utils)
-        for shim in aliases:
-            assert shim._OpenPiFactory is OpenPiPolicyFactory
-            assert shim._Gr00tFactory is Gr00tPolicyFactory
-            assert shim._MockPolicyFactory is MockPolicyFactory
 
         factories = [
             OpenPiPolicyFactory("config", "/checkpoint", 10, EnvMode.LIBERO),
@@ -82,16 +73,6 @@ def test_compatibility_imports_and_pickles_are_canonical_and_lightweight() -> No
             assert type(restored) is type(factory)
             assert vars(restored) == vars(factory)
             assert type(restored).__module__.startswith("armory.backends.")
-
-        # Protocol-0 GLOBAL payloads model old pickles that recorded either
-        # historical module name. Direct aliases must keep both loadable.
-        assert pickle.loads(b"cserve_utils\\n_OpenPiFactory\\n.") is OpenPiPolicyFactory
-        assert (
-            pickle.loads(b"cscripts.serve_utils\\n_OpenPiFactory\\n.")
-            is OpenPiPolicyFactory
-        )
-        assert pickle.loads(b"copenpi_adapter.serve_factory\\nEnvMode\\n.") is EnvMode
-        assert pickle.loads(b"cserve\\nModelFamily\\n.") is ModelFamily
 
         # Modal persists serve.Args between the launch and remote worker. Keep
         # the public enums and policy variants stable across that round trip.

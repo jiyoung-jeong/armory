@@ -9,8 +9,6 @@ import numpy as np
 class InferType(Enum):
     SYNC = "sync"
     INFERENCE_TIME_RTC = "inference_time_rtc"
-    TRAIN_TIME_RTC = "train_time_rtc"
-    VLASH = "vlash"
 
 
 @dataclass
@@ -18,18 +16,6 @@ class RTCParams:
     prev_action: np.ndarray  # action_horizon action_dim
     s_param: int
     d_param: int
-
-
-@dataclass
-class VlashParams:
-    # TODO:
-    pass
-
-
-@dataclass
-class TrainTimeRTCParams:
-    # TODO:
-    pass
 
 
 # message types shared between client and server
@@ -44,7 +30,7 @@ class InferRequest:
     min_execution_horizon: int
     max_execution_horizon: int
     infer_type: InferType
-    params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
+    params: RTCParams | None = None
     noise: np.ndarray | None = None  # action_horizon noise_dim
     type: Literal["infer"] = "infer"
 

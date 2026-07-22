@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import NamedTuple
 
 from armory.backends.mock import MockPolicyFactory
@@ -127,25 +126,3 @@ def resolve_policy(
         factory = OpenPiPolicyFactory(config_name, checkpoint_dir, num_steps, env)
 
     return ResolvedPolicy(metadata=metadata, factory=factory)
-
-
-def create_default_policy(
-    env: EnvMode,
-    *,
-    batch_size: int = 1,
-    sample_kwargs: dict | None = None,
-):
-    """Legacy convenience helper retained for compatibility."""
-    if checkpoint := OPENPI_CHECKPOINT.get(env):
-        # This call is intentionally preserved verbatim; the helper predates
-        # the current create_policy signature and has no in-repo callers.
-        creator: Callable = create_policy
-        return creator(
-            checkpoint["config"],
-            checkpoint["dir"],
-            sample_kwargs=sample_kwargs,
-            use_triton_optimized=(env == EnvMode.LIBERO_REALTIME),
-            batch_size=batch_size,
-            env_mode=env,
-        )
-    raise ValueError(f"Unsupported environment mode: {env}")

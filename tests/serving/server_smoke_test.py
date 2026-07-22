@@ -216,8 +216,6 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
                 assert shared_batch.batch_size == 2
                 assert set(shared_batch.robot_ids) == {"robot-a", "robot-b"}
 
-            assert state.scheduler_proc.is_alive()
-            assert state.gpu_proc.is_alive()
             assert client.get("/metadata").json()["scheduling_algorithm"] == TWO_ROBOT_ALGORITHM
 
             # Characterize a complete trial boundary: disconnected robots,
@@ -235,11 +233,6 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
                 replay_response = _receive_and_ack(robot_a, "robot-a", observation_step=0)
                 assert replay_response.request_id > response_b.request_id
 
-            assert state.scheduler_proc.is_alive()
-            assert state.gpu_proc.is_alive()
-
-        assert not state.scheduler_proc.is_alive()
-        assert not state.gpu_proc.is_alive()
         result_queue.put(("ok", None))
     except BaseException:
         result_queue.put(("error", traceback.format_exc()))

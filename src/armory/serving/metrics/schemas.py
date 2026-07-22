@@ -40,10 +40,6 @@ class ResponseRecord:
     min_execution_horizon: int = 0  # client: minimum action advance before re-serving
     max_execution_horizon: int = 0  # client: how many actions were in the response chunk
 
-    def __post_init__(self) -> None:
-        if isinstance(self.request, dict):
-            self.request = RequestRecord(**self.request)
-
     @property
     def queue_delay_ms(self) -> float:
         return (self.inference_start_time - self.request.server_arrival_time) * 1000
@@ -85,8 +81,6 @@ class Episode:
     step_timestamps: list[float] = field(default_factory=list)  # client-side step timestamps
 
     def __post_init__(self) -> None:
-        self.requests = [RequestRecord(**r) if isinstance(r, dict) else r for r in self.requests]
-        self.responses = [ResponseRecord(**r) if isinstance(r, dict) else r for r in self.responses]
         assert all(
             next_request.action_index_start >= prev_request.action_index_start
             for prev_request, next_request in zip(
@@ -171,15 +165,6 @@ class Robot:
     # Requests/responses received before any EpisodeStart (robots that don't send episode data).
     orphan_requests: list[RequestRecord] = field(default_factory=list)
     orphan_responses: list[ResponseRecord] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        self.episodes = [Episode(**e) if isinstance(e, dict) else e for e in self.episodes]
-        self.orphan_requests = [
-            RequestRecord(**r) if isinstance(r, dict) else r for r in self.orphan_requests
-        ]
-        self.orphan_responses = [
-            ResponseRecord(**r) if isinstance(r, dict) else r for r in self.orphan_responses
-        ]
 
     @property
     def current_episode(self) -> Episode:
@@ -313,24 +298,6 @@ class BatchSummary(NamedTuple):
     batch_size: int | None = None
     # > 0 marks a synthetic idle batch: the GPU slept this long, no inference.
     idle_duration: float = 0.0
-
-    @classmethod
-    def from_json(cls, data: BatchSummary | dict | list) -> BatchSummary:
-        if isinstance(data, cls):
-            return data
-        if isinstance(data, dict):
-            return cls(**data)
-        if len(data) == 5:
-            batch_id, robot_ids, request_ids, inference_start_time, inference_end_time = data
-            return cls(
-                batch_id=batch_id,
-                robot_ids=robot_ids,
-                request_ids=request_ids,
-                inference_start_time=inference_start_time,
-                inference_end_time=inference_end_time,
-                batch_size=len(robot_ids),
-            )
-        return cls(*data)
 
     @property
     def gpu_time_ms(self) -> float:

@@ -554,8 +554,6 @@ def _busy_fig(batches: list[dict]) -> go.Figure:
 def _gantt_fig(
     batches: list[dict],
     window_s: float,
-    replan_markers: list[dict],
-    kickoff_markers: list[dict],
     scheduling_decisions: list[dict] | None = None,
     idle_periods: list[dict] | None = None,
 ) -> go.Figure:
@@ -593,35 +591,15 @@ def _gantt_fig(
         "#4dd0e1",
     ]
     rc = {r: palette[i % len(palette)] for i, r in enumerate(all_robots)}
-    plan_palette = [
-        "#ff8a65",
-        "#81c784",
-        "#4fc3f7",
-        "#ce93d8",
-        "#ffb74d",
-        "#f06292",
-        "#4db6ac",
-        "#aed581",
-        "#7986cb",
-        "#4dd0e1",
-    ]
-
-    def _plan_color(plan_index: int | None) -> str:
-        if plan_index is None:
-            return "#546e7a"
-        return plan_palette[plan_index % len(plan_palette)]
-
     tmap: dict[str, dict] = {}
     for b in visible:
         dur = b["inference_end_t"] - b["inference_start_t"]
-        border_color = _plan_color(b.get("plan_index"))
         for rid in b["robot_ids"]:
             if rid not in tmap:
-                tmap[rid] = {"x": [], "base": [], "y": [], "color": rc[rid], "line_color": []}
+                tmap[rid] = {"x": [], "base": [], "y": [], "color": rc[rid]}
             tmap[rid]["x"].append(dur)
             tmap[rid]["base"].append(b["inference_start_t"])
             tmap[rid]["y"].append(rid)
-            tmap[rid]["line_color"].append(border_color)
     for rid, td in sorted(tmap.items()):
         fig.add_trace(
             go.Bar(
@@ -632,7 +610,7 @@ def _gantt_fig(
                 name=rid,
                 marker={
                     "color": td["color"],
-                    "line": {"width": 2, "color": td["line_color"]},
+                    "line": {"width": 2, "color": "#546e7a"},
                 },
             )
         )
@@ -686,29 +664,6 @@ def _gantt_fig(
             annotation_font_size=9,
             annotation_font_color="#9e9e9e",
         )
-    for marker in replan_markers:
-        t = marker["t"]
-        if visible_min_t <= t <= max_t:
-            fig.add_vline(
-                x=t,
-                line_width=1.5,
-                line_dash="solid",
-                line_color=_plan_color(marker.get("plan_index")),
-            )
-    for marker in kickoff_markers:
-        t = marker["t"]
-        if visible_min_t <= t <= max_t:
-            # Draw kickoff as a short tick near the x-axis to reduce timeline clutter.
-            fig.add_shape(
-                type="line",
-                x0=t,
-                x1=t,
-                y0=0.0,
-                y1=0.04,
-                xref="x",
-                yref="paper",
-                line={"width": 2.0, "color": _plan_color(marker.get("plan_index"))},
-            )
     fig.update_layout(
         **_layout(
             barmode="overlay",
@@ -1147,8 +1102,6 @@ def create_dash_app(metadata: ServerMetadata, metrics_store: MetricsStore) -> da
         gantt = _gantt_fig(
             batches,
             float(window_s) if window_s else float("inf"),
-            snap.replan_markers,
-            snap.kickoff_markers,
             snap.scheduling_decisions,
             snap.idle_history,
         )

@@ -50,8 +50,6 @@ class ServerState:
     scheduler_sock: zmq.asyncio.Socket  # PUB to scheduler
     response_queues: dict[str, asyncio.Queue]
     slots: RobotSlots  # WS manages slot allocation
-    gpu_proc: mp.Process
-    scheduler_proc: mp.Process
     metrics_store: MetricsStore
     robot_metadata: dict[str, ConnectRequest]
     batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
@@ -265,8 +263,6 @@ def create_lifespan(
             scheduler_sock=scheduler_sock,
             response_queues=response_queues,
             slots=slots,
-            gpu_proc=gpu_proc,
-            scheduler_proc=scheduler_proc,
             metrics_store=metrics_store,
             robot_metadata={},
             batch_queue=batch_queue,

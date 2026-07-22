@@ -29,8 +29,6 @@ from armory_client.messages import (
     InferType,
     ResetRequest,
     RTCParams,
-    TrainTimeRTCParams,
-    VlashParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -269,9 +267,7 @@ class GpuWorker:
             else:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
 
-    def _make_params(
-        self, slot_data: SlotData, batch_size: int
-    ) -> RTCParams | VlashParams | TrainTimeRTCParams | None:
+    def _make_params(self, slot_data: SlotData, batch_size: int) -> RTCParams | None:
         if (
             slot_data.infer_type == InferType.INFERENCE_TIME_RTC
             and slot_data.robot_id in self._last_served_action_index

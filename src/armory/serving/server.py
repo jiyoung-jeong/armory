@@ -28,51 +28,14 @@ import uvicorn
 from fastapi import FastAPI, WebSocket
 
 from armory.backends.types import PolicyFactory
+from armory.serving import runtime as _runtime
 from armory.serving.metrics import MetricsStore
 from armory.serving.protocol import ServerMetadata
 from armory.serving.routes import register_routes
-from armory.serving.runtime import (
-    MAX_ROBOTS,
-    BackendResources,
-    ServerState,
-    _router_task,  # noqa: F401 - explicit legacy import path
-    _scheduler_metrics_task,  # noqa: F401 - explicit legacy import path
-    _start_backend,
-    _watchdog_task,  # noqa: F401 - explicit legacy import path
-    create_lifespan,
-    socket_addresses,
-)
-from armory.serving.schemas import RobotID
-from armory.serving.session import (
-    _handshake as _ws_handshake,  # noqa: F401 - explicit legacy import path
-)
-from armory.serving.session import (
-    _warmup,
-    serve_websocket_session,
-)
+from armory.serving.session import serve_websocket_session
 
 NUM_WARMUP = 100
 _request_id_counter = itertools.count(1)
-
-
-def _deferred_start_backend(
-    metadata: ServerMetadata,
-    policy_factory: PolicyFactory,
-    scheduler_kwargs: dict[str, object] | None,
-    log_queue: mp.Queue | None,
-) -> BackendResources:
-    """Resolve the compatibility binding when ASGI lifespan actually starts."""
-    return _start_backend(metadata, policy_factory, scheduler_kwargs, log_queue)
-
-
-async def _ws_warmup(
-    websocket: WebSocket,
-    state: ServerState,
-    robot_id: RobotID,
-    action_payload_size: int,
-) -> None:
-    """Compatibility wrapper for the former server-local warmup helper."""
-    await _warmup(websocket, state, robot_id, action_payload_size, NUM_WARMUP)
 
 
 def create_app(
@@ -83,20 +46,19 @@ def create_app(
 ) -> FastAPI:
     """Compose the server runtime, WebSocket transport, and HTTP routes."""
     metrics_store = MetricsStore()
-    lifespan = create_lifespan(
+    lifespan = _runtime.create_lifespan(
         metadata,
         policy_factory,
         scheduler_kwargs,
         log_queue,
         metrics_store,
-        start_backend=_deferred_start_backend,
     )
     app = FastAPI(lifespan=lifespan)
 
     @app.websocket("/ws")
     async def ws_handler(websocket: WebSocket) -> None:
         await websocket.accept()
-        state: ServerState = websocket.app.state.server
+        state: _runtime.ServerState = websocket.app.state.server
         await serve_websocket_session(
             websocket,
             state,
@@ -133,10 +95,7 @@ class PolicyServer:
 
 
 __all__ = [
-    "MAX_ROBOTS",
     "NUM_WARMUP",
     "PolicyServer",
-    "ServerState",
     "create_app",
-    "socket_addresses",
 ]

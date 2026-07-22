@@ -28,7 +28,6 @@ _CLASS_MAPPING = {
     "rtc": InferenceTimeRTCBroker,
     "naive_async": NaiveAsyncBroker,
     "temporal_ensembling": TemporalEnsemblingBroker,
-    # "vlash": VLashBroker,
 }
 
 
@@ -37,7 +36,6 @@ class ActionChunkBrokerType(Enum):
     NAIVE_ASYNC = "naive_async"
     RTC = "rtc"
     TEMPORAL_ENSEMBLING = "temporal_ensembling"
-    # TODO: vlash
 
     def get_class(self) -> type[ActionChunkBroker]:
         return _CLASS_MAPPING[self.value]

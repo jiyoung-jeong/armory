@@ -12,13 +12,12 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from scripts import serve_utils
 
 from armory.backends import registry as backend_registry
 from armory.backends.mock import MockPolicyFactory
 from armory.backends.types import EnvMode
 from armory_client.messages import InferRequest
-from openpi_adapter.serve_factory import EnvMode as LegacyOpenPiEnvMode
+from openpi_adapter.serve_factory import EnvMode as OpenPiEnvMode
 
 
 @pytest.mark.parametrize(
@@ -205,11 +204,5 @@ def test_resolved_policy_factories_round_trip_through_pickle(
     assert type(restored).__module__.startswith("armory.backends.")
 
 
-def test_legacy_backend_exports_alias_canonical_objects() -> None:
-    assert LegacyOpenPiEnvMode is EnvMode
-    assert serve_utils.EnvMode is EnvMode
-    assert serve_utils.ResolvedPolicy is backend_registry.ResolvedPolicy
-    assert serve_utils.resolve_policy is backend_registry.resolve_policy
-    assert serve_utils._OpenPiFactory is backend_registry.OpenPiPolicyFactory
-    assert serve_utils._Gr00tFactory is backend_registry.Gr00tPolicyFactory
-    assert serve_utils._MockPolicyFactory is MockPolicyFactory
+def test_backend_env_mode_is_canonical() -> None:
+    assert OpenPiEnvMode is EnvMode

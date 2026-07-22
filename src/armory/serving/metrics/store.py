@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import bisect
 import itertools
-import json
 import logging
-import pathlib
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -52,8 +49,6 @@ class Snapshot:
     idle_history: list[dict]
     outbound_delays_ms: dict[str, list[float]]
     scheduler_timing_ms: dict[str, list[float]]
-    replan_markers: list[dict]
-    kickoff_markers: list[dict]
     task_events: list[dict]
     task_progress: list[dict]
     scheduling_decisions: list[dict]
@@ -132,25 +127,9 @@ class Snapshot:
             else 0.0
         )
 
-    @property
-    def replan_times_s(self) -> list[float]:
-        """Backward-compat shim for older dashboard code paths."""
-        return [float(marker.get("t", 0.0)) for marker in self.replan_markers]
-
-
-class _JSONDataclass:
-    def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
-        with open(filepath, "w") as f:
-            json.dump(asdict(self), f, indent=indent)
-
-    @classmethod
-    def from_json(cls, filepath: pathlib.Path) -> _JSONDataclass:
-        with open(filepath) as f:
-            return cls(**json.load(f))
-
 
 @dataclass
-class MetricsStore(_JSONDataclass):
+class MetricsStore:
     """Single-call-site metrics store. All updates go through record_batch / record_ack."""
 
     start_time: float = float("inf")
@@ -161,21 +140,6 @@ class MetricsStore(_JSONDataclass):
     # GPU-time / batch-size stats; surfaced only on the gantt.
     idle_batches: list[BatchSummary] = field(default_factory=list)
     scheduler_decisions: list[SchedulerDecision] = field(default_factory=list)
-
-    def __post_init__(self):
-        self.batches = [BatchSummary.from_json(b) for b in self.batches]
-        self.idle_batches = [BatchSummary.from_json(b) for b in self.idle_batches]
-        self.robots = {
-            robot_id: v
-            if isinstance(v, Robot)
-            else Robot(**v)
-            if isinstance(v, dict)
-            else Robot(robot_id=robot_id, episodes=[])
-            for robot_id, v in self.robots.items()
-        }
-        self.scheduler_decisions = [
-            SchedulerDecision.from_json(s) for s in self.scheduler_decisions
-        ]
 
     def record_batch(self, batch: ResponseBatch) -> None:
         """Called once per batch by _router_task."""
@@ -442,45 +406,6 @@ class MetricsStore(_JSONDataclass):
 
             # ---- batch history for charts ----
             # FIXME: maybe move these into their own classes
-            plan_activation_abs = sorted(
-                sample.started_at
-                for sample in self.scheduler_decisions
-                if sample.metric_name == "plan_activated" and sample.started_at <= self.end_time
-            )
-            kickoff_abs = sorted(
-                sample.started_at
-                for sample in self.scheduler_decisions
-                if sample.metric_name == "replan_kickoff" and sample.started_at <= self.end_time
-            )
-            replan_markers = [
-                {
-                    "t": round(ts - t0, 3),
-                    "plan_index": idx,
-                }
-                for idx, ts in enumerate(plan_activation_abs)
-                if start_timestamp <= ts < self.end_time
-            ]
-            kickoff_markers = []
-            kickoff_cursor = 0
-            for plan_index, activation_ts in enumerate(plan_activation_abs):
-                while (
-                    kickoff_cursor + 1 < len(kickoff_abs)
-                    and kickoff_abs[kickoff_cursor + 1] <= activation_ts
-                ):
-                    kickoff_cursor += 1
-                if (
-                    kickoff_cursor < len(kickoff_abs)
-                    and kickoff_abs[kickoff_cursor] <= activation_ts
-                ):
-                    kickoff_ts = kickoff_abs[kickoff_cursor]
-                    if start_timestamp <= kickoff_ts < self.end_time:
-                        kickoff_markers.append(
-                            {
-                                "t": round(kickoff_ts - t0, 3),
-                                "plan_index": plan_index,
-                            }
-                        )
-
             response_by_id: dict[int, ResponseRecord] = {
                 resp.request.request_id: resp
                 for robot in self.robots.values()
@@ -488,11 +413,6 @@ class MetricsStore(_JSONDataclass):
             }
             batch_history = []
             for i, b in enumerate(batches):
-                plan_index = None
-                if plan_activation_abs:
-                    idx = bisect.bisect_right(plan_activation_abs, b.inference_start_time) - 1
-                    if idx >= 0:
-                        plan_index = idx
                 per_req = []
                 for rid, req_id in zip(b.robot_ids, b.request_ids, strict=True):
                     resp = response_by_id.get(req_id)
@@ -530,7 +450,6 @@ class MetricsStore(_JSONDataclass):
                         "inference_start_t": round(b.inference_start_time - t0, 3),
                         "inference_end_t": round(b.inference_end_time - t0, 3),
                         "robot_ids": b.robot_ids,
-                        "plan_index": plan_index,
                         "per_request": per_req,
                     }
                 )
@@ -562,25 +481,22 @@ class MetricsStore(_JSONDataclass):
             for sample in self.scheduler_decisions:
                 if sample.started_at < start_timestamp or sample.started_at > self.end_time:
                     continue
-                if sample.metric_name == "batch_scheduled":
-                    scheduling_decisions.append(
-                        {
-                            "t": round(sample.started_at - t0, 3),
-                            "duration_ms": round(sample.duration * 1000, 3),
-                            "scheduler": sample.scheduler_name,
-                            "candidates": sample.candidates,
-                            "scheduled": sample.scheduled,
-                            "batch_id": sample.batch_id,
-                            "in_flight_batches": sample.in_flight_batches,
-                            "next_server_available_t": round(sample.next_server_available - t0, 3),
-                            "deadlines": {
-                                rid: round(d - t0, 3) for rid, d in sample.deadlines.items()
-                            },
-                            "notes": sample.notes,
-                        }
-                    )
+                scheduling_decisions.append(
+                    {
+                        "t": round(sample.started_at - t0, 3),
+                        "duration_ms": round(sample.duration * 1000, 3),
+                        "scheduler": sample.scheduler_name,
+                        "candidates": sample.candidates,
+                        "scheduled": sample.scheduled,
+                        "batch_id": sample.batch_id,
+                        "in_flight_batches": sample.in_flight_batches,
+                        "next_server_available_t": round(sample.next_server_available - t0, 3),
+                        "deadlines": {rid: round(d - t0, 3) for rid, d in sample.deadlines.items()},
+                        "notes": sample.notes,
+                    }
+                )
                 scheduler_timing_ms.setdefault(
-                    f"{sample.scheduler_name}.{sample.metric_name}", []
+                    f"{sample.scheduler_name}.batch_scheduled", []
                 ).append(round(sample.duration * 1000, 3))
 
             # ---- task events (completed episodes in window) ----
@@ -656,8 +572,6 @@ class MetricsStore(_JSONDataclass):
                 idle_history=idle_history,
                 outbound_delays_ms=outbound_delays_ms,
                 scheduler_timing_ms=scheduler_timing_ms,
-                replan_markers=replan_markers,
-                kickoff_markers=kickoff_markers,
                 task_events=task_events,
                 task_progress=task_progress,
                 scheduling_decisions=scheduling_decisions,
