@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from openpi_adapter.serve_factory import EnvMode
+from armory.backends.types import EnvMode
 
 
 class OpenPiCheckpointEntry(TypedDict):

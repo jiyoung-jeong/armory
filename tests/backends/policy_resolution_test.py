@@ -10,10 +10,15 @@ from __future__ import annotations
 import pickle
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from scripts import serve_utils
 
-from openpi_adapter.serve_factory import EnvMode
+from armory.backends import registry as backend_registry
+from armory.backends.mock import MockPolicyFactory
+from armory.backends.types import EnvMode
+from armory_client.messages import InferRequest
+from openpi_adapter.serve_factory import EnvMode as LegacyOpenPiEnvMode
 
 
 @pytest.mark.parametrize(
@@ -31,9 +36,9 @@ def test_resolve_openpi_policy_metadata_and_factory(
     expected_config: str,
     expected_dir: str,
 ) -> None:
-    monkeypatch.setattr(serve_utils, "get_model_dims", lambda config_name: (17, 23))
+    monkeypatch.setattr(backend_registry, "get_model_dims", lambda config_name: (17, 23))
 
-    resolved = serve_utils.resolve_policy(
+    resolved = backend_registry.resolve_policy(
         model="pi05",
         env=EnvMode.LIBERO,
         policy_config=policy_config,
@@ -53,7 +58,7 @@ def test_resolve_openpi_policy_metadata_and_factory(
     assert resolved.metadata.scheduling_algorithm == "round-robin"
     assert resolved.metadata.scheduler_kwargs is None
 
-    assert isinstance(resolved.factory, serve_utils._OpenPiFactory)
+    assert isinstance(resolved.factory, backend_registry.OpenPiPolicyFactory)
     assert resolved.factory.config_name == expected_config
     assert resolved.factory.checkpoint_dir == expected_dir
     assert resolved.factory.num_steps == 9
@@ -72,7 +77,7 @@ def test_resolve_gr00t_policy_metadata_and_factory(
     policy_dir: str | None,
     expected_checkpoint: str,
 ) -> None:
-    resolved = serve_utils.resolve_policy(
+    resolved = backend_registry.resolve_policy(
         model="gr00t-n1.7",
         env=EnvMode.LIBERO,
         # Existing behavior: this OpenPI-oriented field is ignored by GR00T.
@@ -93,7 +98,7 @@ def test_resolve_gr00t_policy_metadata_and_factory(
     assert resolved.metadata.scheduling_algorithm == "lookahead-actions"
     assert resolved.metadata.scheduler_kwargs is None
 
-    assert isinstance(resolved.factory, serve_utils._Gr00tFactory)
+    assert isinstance(resolved.factory, backend_registry.Gr00tPolicyFactory)
     assert resolved.factory.model_family == "gr00t-n1.7"
     assert resolved.factory.env is EnvMode.LIBERO
     assert resolved.factory.checkpoint_dir == policy_dir
@@ -102,7 +107,7 @@ def test_resolve_gr00t_policy_metadata_and_factory(
 def test_resolve_mock_policy_metadata_and_factory() -> None:
     mock = SimpleNamespace(action_horizon=20, action_dim=7, model="pi05", gpu="l40s")
 
-    resolved = serve_utils.resolve_policy(
+    resolved = backend_registry.resolve_policy(
         model="pi05",
         env=EnvMode.LIBERO,
         policy_config=None,
@@ -122,7 +127,7 @@ def test_resolve_mock_policy_metadata_and_factory() -> None:
     assert resolved.metadata.env == "libero"
     assert resolved.metadata.scheduling_algorithm == "greedy-deadline"
 
-    assert isinstance(resolved.factory, serve_utils._MockPolicyFactory)
+    assert isinstance(resolved.factory, MockPolicyFactory)
     assert resolved.factory._env == "libero"
     assert resolved.factory._action_horizon == 20
     assert resolved.factory._action_dim == 7
@@ -131,15 +136,38 @@ def test_resolve_mock_policy_metadata_and_factory() -> None:
     assert resolved.factory._inference_latency[5] == pytest.approx(0.2111)
 
 
+def test_mock_factory_constructs_the_same_engine_policy_contract() -> None:
+    factory = MockPolicyFactory(
+        env="libero",
+        action_horizon=20,
+        action_dim=7,
+        model="pi05",
+        gpu="l40s",
+    )
+    policy = factory()
+    request = policy.make_infer_request()
+    assert isinstance(request, InferRequest)
+    assert policy.metadata == {"env": "libero"}
+
+    policy._inference_latency[1] = 0.0
+    [result] = policy.infer_batch([request])
+
+    assert set(result) == {"actions", "noise", "rtc_prev_actions"}
+    assert result["actions"].shape == (20, 7)
+    assert result["actions"].dtype == np.float32
+    assert result["noise"] is None
+    assert result["rtc_prev_actions"] is result["actions"]
+
+
 @pytest.mark.parametrize("backend", ["openpi", "gr00t", "mock"])
 def test_resolved_policy_factories_round_trip_through_pickle(
     monkeypatch: pytest.MonkeyPatch,
     backend: str,
 ) -> None:
-    monkeypatch.setattr(serve_utils, "get_model_dims", lambda config_name: (17, 23))
+    monkeypatch.setattr(backend_registry, "get_model_dims", lambda config_name: (17, 23))
 
     if backend == "openpi":
-        resolved = serve_utils.resolve_policy(
+        resolved = backend_registry.resolve_policy(
             model="pi05",
             env=EnvMode.LIBERO,
             policy_config=None,
@@ -149,7 +177,7 @@ def test_resolved_policy_factories_round_trip_through_pickle(
             scheduling_algorithm="round-robin",
         )
     elif backend == "gr00t":
-        resolved = serve_utils.resolve_policy(
+        resolved = backend_registry.resolve_policy(
             model="gr00t-n1.7",
             env=EnvMode.LIBERO,
             policy_config=None,
@@ -159,7 +187,7 @@ def test_resolved_policy_factories_round_trip_through_pickle(
             scheduling_algorithm="round-robin",
         )
     else:
-        resolved = serve_utils.resolve_policy(
+        resolved = backend_registry.resolve_policy(
             model="pi05",
             env=EnvMode.LIBERO,
             policy_config=None,
@@ -174,3 +202,14 @@ def test_resolved_policy_factories_round_trip_through_pickle(
 
     assert type(restored) is type(resolved.factory)
     assert vars(restored) == vars(resolved.factory)
+    assert type(restored).__module__.startswith("armory.backends.")
+
+
+def test_legacy_backend_exports_alias_canonical_objects() -> None:
+    assert LegacyOpenPiEnvMode is EnvMode
+    assert serve_utils.EnvMode is EnvMode
+    assert serve_utils.ResolvedPolicy is backend_registry.ResolvedPolicy
+    assert serve_utils.resolve_policy is backend_registry.resolve_policy
+    assert serve_utils._OpenPiFactory is backend_registry.OpenPiPolicyFactory
+    assert serve_utils._Gr00tFactory is backend_registry.Gr00tPolicyFactory
+    assert serve_utils._MockPolicyFactory is MockPolicyFactory

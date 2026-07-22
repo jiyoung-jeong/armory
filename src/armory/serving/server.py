@@ -27,7 +27,6 @@ import queue
 import signal
 import time
 import uuid
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from multiprocessing.synchronize import Event
 from typing import Any
@@ -39,6 +38,7 @@ from fastapi.concurrency import asynccontextmanager
 from starlette.middleware.wsgi import WSGIMiddleware
 from starlette.websockets import WebSocketDisconnect
 
+from armory.backends.types import PolicyFactory
 from armory.serving.engine import GpuWorker
 from armory.serving.metrics import MetricsStore
 from armory.serving.metrics.dash_app import create_dash_app
@@ -242,7 +242,7 @@ async def _scheduler_metrics_task(
 
 def _start_backend(
     metadata: ServerMetadata,
-    policy_factory: Callable,
+    policy_factory: PolicyFactory,
     scheduler_kwargs: dict[str, object] | None,
     log_queue: mp.Queue | None,
 ) -> tuple[mp.Process, mp.Process, RobotSlots, Event, Event, mp.Queue, mp.Queue]:
@@ -300,7 +300,7 @@ def _start_backend(
 
 def create_app(
     metadata: ServerMetadata,
-    policy_factory: Callable,
+    policy_factory: PolicyFactory,
     scheduler_kwargs: dict[str, object] | None = None,
     log_queue: mp.Queue | None = None,
 ) -> FastAPI:
@@ -643,7 +643,7 @@ class PolicyServer:
     def __init__(
         self,
         metadata: ServerMetadata,
-        policy_factory: Callable,
+        policy_factory: PolicyFactory,
         scheduler_kwargs: dict[str, object] | None = None,
         log_queue: mp.Queue | None = None,
     ):

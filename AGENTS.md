@@ -46,8 +46,13 @@ The codebase is a **uv workspace**: the root `armory` package (GPU-side serving)
   `sims/libero/` is the LIBERO simulation driver (entry point `run-libero`). `toxiproxy.py` injects
   network latency for network-ablation experiments.
 - **`src/armory`** — the GPU serving system + scheduling research (depends on JAX/CUDA).
+- **`src/armory/backends`** — backend-neutral model/environment types, the serving-policy
+  contract, policy resolution, stable picklable factories, and the lightweight mock policy.
 - **`src/backends`** — adapters that wrap external policy models behind a common interface
   (`openpi_adapter`, `gr00t_adapter`). `third_party/{openpi,libero,Isaac-GR00T}` are editable submodules.
+
+`scripts/serve_utils.py` is a compatibility shim for older imports and pickles; new backend launch
+code belongs in `armory.backends`.
 
 ### Serving system (`src/armory/serving/`)
 

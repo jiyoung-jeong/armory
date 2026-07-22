@@ -1,6 +1,5 @@
 import dataclasses
 import datetime
-import enum
 import logging
 import multiprocessing as mp
 import pathlib
@@ -8,18 +7,13 @@ import socket
 from dataclasses import field
 from typing import Literal
 
-from serve_utils import JsonArgs, resolve_policy  # noqa: E402
-
+from armory.backends.registry import resolve_policy
+from armory.backends.types import EnvMode, ModelFamily
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
 from armory.utils.logging_config import setup_logging
-from openpi_adapter.serve_factory import EnvMode
+from evaluation.cli import JsonArgs
 from utils import seed_everything  # noqa: E402
-
-
-class ModelFamily(str, enum.Enum):
-    PI05 = "pi05"
-    GROOT_N17 = "gr00t-n1.7"
 
 
 @dataclasses.dataclass

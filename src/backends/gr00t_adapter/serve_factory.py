@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pathlib
 
+from armory.backends.types import EnvMode
 from armory.checkpoints import GROOT_CHECKPOINT
 from gr00t_adapter.policy_adapter import Gr00tPolicyAdapter
-from openpi_adapter.serve_factory import EnvMode
 
 
 def _resolve(model_family: str, env: EnvMode) -> dict:
