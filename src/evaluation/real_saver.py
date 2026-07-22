@@ -30,7 +30,6 @@ from typing_extensions import override
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.schemas import Action, Observation
 from evaluation.recording import Timestamp
-from evaluation.runtime import subscriber as _subscriber
 from evaluation.save import (
     EpisodeSaveData,
     Result,
@@ -79,7 +78,7 @@ def _robot_idx_from_id(robot_id: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-class RealSaver(_subscriber.Subscriber):
+class RealSaver(Subscriber):
     """Saves real-robot trajectory data; on-disk layout matches the sim Saver."""
 
     def __init__(
