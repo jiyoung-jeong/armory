@@ -76,7 +76,16 @@ server = [
     "uvicorn>=0.34",
 ]
 groot = [
-    "albumentations"
+    "albumentations>=2.0,<3",
+    "diffusers>=0.33,<0.34",
+    "dm-tree>=0.1.8",
+    "huggingface-hub>=0.34,<1",
+    "opencv-python-headless>=4.10,<4.13",
+    "pillow>=11",
+    "scipy>=1.15",
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "transformers==4.57.0",
 ]
 dev = [
     "modal>=1.4",
