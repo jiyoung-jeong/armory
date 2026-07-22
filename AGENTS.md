@@ -65,6 +65,12 @@ docstring at the top of `server.py` before touching it, the topology is non-obvi
 
 The server accepts `POST /reconfigure` to swap scheduling algorithm / params at runtime without restart.
 
+Serving responsibilities are split without changing that topology:
+- `server.py` is the stable composition facade (`create_app`, `PolicyServer`).
+- `runtime.py` owns subprocess startup/shutdown, IPC endpoints, background tasks, and `ServerState`.
+- `session.py` owns one robot's WebSocket handshake, warmup, receive/send loops, and disconnect cleanup.
+- `routes.py` owns the HTTP control plane and dashboard mount.
+
 ### Scheduling (the research surface)
 
 Two related but distinct directories:

@@ -238,6 +238,8 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             assert state.scheduler_proc.is_alive()
             assert state.gpu_proc.is_alive()
 
+        assert not state.scheduler_proc.is_alive()
+        assert not state.gpu_proc.is_alive()
         result_queue.put(("ok", None))
     except BaseException:
         result_queue.put(("error", traceback.format_exc()))
