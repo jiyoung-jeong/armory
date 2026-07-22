@@ -8,9 +8,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from armory_client.schemas import Action, Observation
+from evaluation.agents import base as _agent
+from evaluation.envs import base as _environment
 from evaluation.recording import Timestamp
-from evaluation.runtime import agent as _agent
-from evaluation.runtime import environment as _environment
 
 logger = logging.getLogger(__name__)
 

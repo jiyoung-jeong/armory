@@ -13,13 +13,13 @@ from armory.serving.protocol import SchedulerConfig
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
+from evaluation.agents import base as _agent
 from evaluation.agents.mock_agent import MockAgent
 from evaluation.agents.policy_agent import PolicyAgent
 from evaluation.cli import JsonArgs
+from evaluation.envs import base as _environment
 from evaluation.envs.mock import MockEnvironment
 from evaluation.run_robot import run_robot
-from evaluation.runtime import agent as _agent
-from evaluation.runtime import environment as _environment
 from evaluation.save import SaveMeta
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import EnvironmentType, ExecutionHorizon

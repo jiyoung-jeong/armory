@@ -15,8 +15,8 @@ import numpy as np
 
 from armory_client.schemas import ActionChunk
 from evaluation.recording import Timestamp
-from evaluation.runtime.runtime import Rollout
-from evaluation.runtime.saver_utils import (
+from evaluation.runtime import Rollout
+from evaluation.saver_utils import (
     EpisodeSaveData,
     Result,
     plot_cost_history,
