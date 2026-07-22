@@ -171,6 +171,11 @@ server = [
     { name = "torch" },
     { name = "uvicorn" },
 ]
+serving-web = [
+    { name = "dash" },
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -182,14 +187,15 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "armory", extras = ["serving-web"], marker = "extra == 'server'" },
     { name = "armory-client", editable = "armory-client" },
     { name = "av", marker = "extra == 'server'", specifier = ">=17" },
     { name = "bddl", marker = "extra == 'libero'", specifier = "==1.0.1" },
     { name = "chex", marker = "extra == 'server'" },
     { name = "cloudpickle", marker = "extra == 'libero'", specifier = ">=2.1" },
-    { name = "dash", marker = "extra == 'server'", specifier = ">=4" },
+    { name = "dash", marker = "extra == 'serving-web'", specifier = ">=4" },
     { name = "easydict", marker = "extra == 'libero'", specifier = "==1.9" },
-    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'serving-web'", specifier = ">=0.115" },
     { name = "future", marker = "extra == 'libero'", specifier = ">=1.0" },
     { name = "gr00t", marker = "extra == 'server'", editable = "third_party/Isaac-GR00T" },
     { name = "gym", marker = "extra == 'libero'", specifier = "==0.25.2" },
@@ -221,10 +227,10 @@ requires-dist = [
     { name = "typing-extensions", marker = "extra == 'evaluation'", specifier = ">=4.12" },
     { name = "tyro", specifier = ">=0.9.17" },
     { name = "tyro", marker = "extra == 'evaluation'", specifier = ">=0.9" },
-    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34" },
+    { name = "uvicorn", marker = "extra == 'serving-web'", specifier = ">=0.34" },
     { name = "websockets", marker = "extra == 'evaluation'", specifier = ">=13" },
 ]
-provides-extras = ["evaluation", "libero", "server", "dev"]
+provides-extras = ["evaluation", "libero", "serving-web", "server", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -201,12 +201,16 @@ gpu_libero_client_image = _add_libero_data(
 )
 
 cpu_mock_image = _add_repo_sources(
+    # `serving-web` gives the mock policy server (armory.serving.server) its
+    # web-serving deps (fastapi/uvicorn/dash) without the GPU `server` stack,
+    # so a CPU-only mock server can run.
     _sync(
         modal.Image.debian_slim(python_version="3.11")
         .apt_install("git")
         .env({"MPLBACKEND": "Agg"})
         .workdir(str(REMOTE_ROOT)),
         "evaluation",
+        "serving-web",
     ),
     "armory",
     "evaluation",

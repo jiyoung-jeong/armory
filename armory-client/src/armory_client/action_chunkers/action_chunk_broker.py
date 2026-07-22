@@ -116,10 +116,23 @@ class ActionChunkBroker(ActionChunkBrokerBase):
 
         self._ws_client = ws_client
         self._lock = threading.Lock()
+        self._closed = False
         self._background_thread = threading.Thread(target=self._receive_actions, daemon=True)
 
         self.reset()
         self._background_thread.start()
+
+    def close(self) -> None:
+        """Stop the background receive thread and close the websocket.
+
+        Without this the daemon receive thread is still blocked in ``receive()``
+        at interpreter exit and gets torn down mid-I/O, aborting the process
+        (``_enter_buffered_busy`` fatal error). Closing the socket unblocks the
+        thread so it can exit cleanly before we join it.
+        """
+        self._closed = True
+        self._ws_client.close()
+        self._background_thread.join(timeout=5)
 
     def infer(self, obs: Observation) -> Action:
         """Client continuously streams observations to the server."""
@@ -141,8 +154,13 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         )
 
     def _receive_actions(self) -> None:
-        while True:
-            infer_response = self._ws_client.receive()
+        while not self._closed:
+            try:
+                infer_response = self._ws_client.receive()
+            except Exception:
+                if self._closed:
+                    return  # socket closed by close(); exit quietly
+                raise
             with self._lock:
                 action_chunk = self.receive_response(infer_response)
 

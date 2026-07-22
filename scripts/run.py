@@ -151,7 +151,12 @@ def main(args: Args) -> None:
         )
     finally:
         environment.close()
-        if ws_client is not None:
+        # close() stops the broker's background receive thread and the websocket;
+        # closing only ws_client would leave that daemon thread to be killed
+        # mid-I/O at interpreter exit (SIGABRT).
+        if broker is not None:
+            broker.close()
+        elif ws_client is not None:
             ws_client.close()
 
 
