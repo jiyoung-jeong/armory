@@ -8,11 +8,11 @@ import socket
 from dataclasses import field
 from typing import Literal
 
-from scripts.utils import JsonArgs, resolve_policy  # noqa: E402
+from serve_utils import JsonArgs, resolve_policy  # noqa: E402
 
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
-from logging_config import setup_logging
+from armory.utils.logging_config import setup_logging
 from openpi_adapter.serve_factory import EnvMode
 from utils import seed_everything  # noqa: E402
 

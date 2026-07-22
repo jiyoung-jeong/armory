@@ -187,6 +187,7 @@ jax_cache/
 plots/
 .ruff_cache/
 /experiments/
+video/
 
 # AI
 .claude/

@@ -12,17 +12,17 @@ from armory.serving.protocol import SchedulerConfig
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
+from evaluation.agents import base as _agent
+from evaluation.agents.mock_agent import MockAgent
+from evaluation.agents.policy_agent import PolicyAgent
 from evaluation.cli import JsonArgs
-from evaluation.runtime import agent as _agent
-from evaluation.runtime import environment as _environment
-from evaluation.runtime.agents.mock_agent import MockAgent
-from evaluation.runtime.agents.policy_agent import PolicyAgent
+from evaluation.envs import base as _environment
+from evaluation.envs.mock import MockEnvironment
+from evaluation.run_robot import run_robot
 from evaluation.save import SaveMeta
 from evaluation.server_control_client import ServerControlClient
-from evaluation.sims.libero import logging_config
-from evaluation.sims.libero.mock_env import MockEnvironment
-from evaluation.sims.libero.run_robot import run_robot
 from evaluation.types import EnvironmentType, ExecutionHorizon
+from logging_config import setup_logging
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def create_environment(args: Args) -> _environment.Environment:
         return MockEnvironment(max_episode_steps=args.max_steps)
     if args.env == EnvironmentType.LIBERO:
         # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
-        from evaluation.sims.libero.env import LiberoSimEnvironment
+        from evaluation.envs.libero import LiberoSimEnvironment
 
         return LiberoSimEnvironment(
             task_id=args.task_id,
@@ -119,7 +119,7 @@ def main(args: Args) -> None:
         args.output_dir
         / f"run_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
     )
-    logging_config.setup_logging(log_path=log_path, level=logging.INFO)
+    setup_logging(log_path=log_path, level=logging.INFO)
 
     if args.agent == AgentType.POLICY:
         control_client = ServerControlClient(host=args.host, port=args.port)
@@ -151,7 +151,9 @@ def main(args: Args) -> None:
         )
     finally:
         environment.close()
-        if ws_client is not None:
+        if broker is not None:
+            broker.close()
+        elif ws_client is not None:
             ws_client.close()
 
 

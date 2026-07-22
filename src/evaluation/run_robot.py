@@ -14,9 +14,9 @@ import math
 import time
 
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
-from evaluation.runtime import agent as _agent
-from evaluation.runtime import environment as _environment
-from evaluation.runtime.runtime import Runtime
+from evaluation.agents.base import Agent
+from evaluation.envs.base import Environment
+from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, build_episode_save_data, save_episode
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,8 @@ logger = logging.getLogger(__name__)
 
 def run_robot(
     *,
-    environment: _environment.Environment,
-    agent: _agent.Agent,
+    environment: Environment,
+    agent: Agent,
     meta: SaveMeta,
     broker: ActionChunkBroker | None = None,
     num_episodes: int = 1,

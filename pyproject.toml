@@ -53,9 +53,11 @@ libero = [
     "cloudpickle>=2.1",
     "easydict==1.9",
     "future>=1.0",
-    "gym==0.25.2",
+    "gymnasium==0.29.1",
     "mujoco>=3.1",
     "opencv-python>=4.10",
+    "pyopengl==3.1.10",
+    "pyopengl-accelerate==3.1.10",
     "robomimic==0.2.0",
     "robosuite==1.4.1",
     "thop>=0.1.1",
@@ -72,6 +74,9 @@ server = [
     "openpi",
     "torch==2.7.1",
     "uvicorn>=0.34",
+]
+groot = [
+    "albumentations"
 ]
 dev = [
     "modal>=1.4",
