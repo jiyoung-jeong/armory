@@ -3,8 +3,8 @@
     # mock agent + mock env, no server (one CPU container)
     uv run modal run scripts/modal/run.py
 
-    # single robot vs a real policy (server GPU + libero client GPU, two containers)
-    uv run modal run scripts/modal/run.py --json-path client.json --server real
+    # single robot vs a real policy in LIBERO sim (server GPU + libero client GPU)
+    uv run modal run scripts/modal/run.py --json-path client.json --server sim
 
     # ...vs a lightweight mock policy server (for scheduling tests)
     uv run modal run scripts/modal/run.py --json-path client.json --server mock
@@ -38,7 +38,6 @@ from scripts.modal.utils import ARTIFACTS_VOLUME_NAME
 
 REGION = "us-east"
 PORT = 8080
-GPU = "L40S"
 TIMEOUT = 2 * 60 * 60
 CLIENT_OUT = REMOTE_ROOT / "run_out"
 REMOTE_ARTIFACTS = pathlib.Path("/artifacts")
@@ -94,12 +93,12 @@ def _run_client(client_json: str, stamp: str, shutdown) -> None:  # noqa: ANN001
 
 @app.function(
     image=gpu_server_image,
-    gpu=GPU,
+    gpu="L40S",
     region=REGION,
     volumes={CHECKPOINT_VOLUME_PATH: checkpoint_volume},
     timeout=TIMEOUT,
 )
-def serve_real(server_json: str, stamp: str, urls, shutdown) -> None:  # noqa: ANN001
+def serve_sim(server_json: str, stamp: str, urls, shutdown) -> None:  # noqa: ANN001
     _serve(server_json, stamp, urls, shutdown)
 
 
@@ -110,7 +109,7 @@ def serve_mock(server_json: str, stamp: str, urls, shutdown) -> None:  # noqa: A
 
 @app.function(
     image=gpu_libero_client_image,
-    gpu=GPU,
+    gpu="T4",
     region=REGION,
     volumes={str(REMOTE_ARTIFACTS): artifacts_volume},
     timeout=TIMEOUT,
@@ -161,8 +160,8 @@ def _await_server(urls, stamp: str) -> tuple[str, int]:  # noqa: ANN001
 
 @app.local_entrypoint()
 def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run_out") -> None:
-    if server not in {"none", "mock", "real"}:
-        raise SystemExit("--server must be 'none', 'mock', or 'real'.")
+    if server not in {"none", "mock", "sim"}:
+        raise SystemExit("--server must be 'none', 'mock', or 'sim'.")
 
     client_cfg = json.loads(pathlib.Path(json_path).read_text()) if json_path else {}
     env = int(client_cfg.get("env", 2))  # 1=LIBERO, 2=MOCK
@@ -181,7 +180,7 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run
         server_cfg = _server_config()
         if server == "mock":
             server_cfg["policy"] = {"action_horizon": 50, "action_dim": 14, "gpu": "l40s"}
-        server_fn = serve_real if server == "real" else serve_mock
+        server_fn = serve_sim if server == "sim" else serve_mock
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
             handle = server_fn.spawn(json.dumps(server_cfg), stamp, urls, shutdown)
             print(f"[{stamp}] server spawned; waiting for tunnel + /metadata")
