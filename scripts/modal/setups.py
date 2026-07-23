@@ -40,8 +40,9 @@ if TYPE_CHECKING:
     # runtime (thanks to `from __future__ import annotations`), so importing
     # setups.py stays light enough to launch run.py from a macOS dev venv.
     import serve
+    from scripts import run_all
 
-    from evaluation.sims.libero import run as run_libero
+    from evaluation.types import EnvironmentType, ExperimentConfig
 
 APP_NAME = "armory-experiments"
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
@@ -62,8 +63,7 @@ checkpoint_volume = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_mis
 @dataclasses.dataclass(frozen=True)
 class Case:
     server_args: serve.Args
-    client_args: run_libero.Args
-    experiment_config: dict[str, Any]
+    client_args: run_all.Args  # embeds experiment_config + scheduler_config
     experiment_name: str
     stream_logs: bool
     stamp: str
@@ -72,31 +72,29 @@ class Case:
     def __post_init__(self) -> None:
         # serve.Args has no output_dir; only the client needs it for metrics.
         self.client_args.output_dir = self.run_dir / "outputs"
-        self.client_args.experiment_config = str(self.run_dir / "experiment_config.json")
+        self.client_args.overwrite = True
 
     @property
-    def settings(self) -> run_libero.ExperimentConfig:
-        from evaluation.sims.libero import run as run_libero
-
-        return run_libero.ExperimentConfig.from_json(self.experiment_config)
+    def experiment_config(self) -> ExperimentConfig:
+        return self.client_args.experiment_config
 
     @property
     def num_robots(self) -> int:
-        return self.settings.num_robots
+        return len(self.experiment_config.robots)
 
     @property
-    def client_env(self) -> str:
-        return self.settings.env
+    def client_env(self) -> EnvironmentType:
+        return self.experiment_config.env
 
     @property
     def run_id(self) -> str:
         parts = [
-            f"scheduler={self.server_args.scheduling_algorithm}",
+            f"scheduler={self.server_args.scheduler.scheduling_algorithm}",
             f"experiment={self.experiment_name}",
             f"num_robots={self.num_robots}",
-            f"seed={self.client_args.seed}",
+            f"seed={self.experiment_config.seed}",
             f"max_batch_size={self.server_args.max_batch_size}",
-            f"alpha={self.server_args.alpha}",
+            f"alpha={self.server_args.scheduler.alpha}",
         ]
         if self.server_variant:
             parts.append(f"server_variant={self.server_variant}")
@@ -107,6 +105,30 @@ class Case:
     @property
     def run_dir(self) -> pathlib.Path:
         return REMOTE_ROOT / self.stamp / self.run_id
+
+    def to_payload(self) -> dict[str, Any]:
+        """Flatten to primitives + JSON strings for CaseRunner.
+
+        Case holds pydantic ``serve.Args``/``run_all.Args``; Modal would have to
+        import ``serve`` on the orchestrator container to unpickle them, and that
+        bare module isn't importable there. So Case stays local and only this
+        plain dict (str/int/bool) crosses the Modal boundary.
+        """
+        import serve
+
+        from evaluation.types import EnvironmentType
+
+        return {
+            "run_id": self.run_id,
+            "run_dir": str(self.run_dir),
+            "server_args_json": self.server_args.model_dump_json(),
+            "client_args_json": self.client_args.model_dump_json(),
+            "num_robots": self.num_robots,
+            "mock_policy": isinstance(self.server_args.policy, serve.Mock),
+            "mock_env": self.client_env == EnvironmentType.MOCK,
+            "port": self.server_args.port,
+            "stream_logs": self.stream_logs,
+        }
 
 
 # --------------------------------------------------------------------------
@@ -175,14 +197,10 @@ def _client_cmd(run_dir: pathlib.Path, module: str) -> list[str]:
     return [sys.executable, "-m", module, "--json-path", str(run_dir / "client_args.json")]
 
 
-def _prepare(
-    run_dir: pathlib.Path, *, args_name: str, args_json: str, experiment_json: str | None
-) -> pathlib.Path:
+def _prepare(run_dir: pathlib.Path, *, args_name: str, args_json: str) -> pathlib.Path:
     log_dir = run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / args_name).write_text(args_json)
-    if experiment_json is not None:
-        (run_dir / "experiment_config.json").write_text(experiment_json)
     return log_dir
 
 
@@ -214,7 +232,6 @@ def _serve(
     *,
     run_dir: str,
     args_json: str,
-    experiment_json: str | None,
     port: int,
     run_id: str,
     stream_logs: bool,
@@ -223,9 +240,7 @@ def _serve(
 ) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     run_dir = pathlib.Path(run_dir)
-    log_dir = _prepare(
-        run_dir, args_name="server_args.json", args_json=args_json, experiment_json=experiment_json
-    )
+    log_dir = _prepare(run_dir, args_name="server_args.json", args_json=args_json)
     cmd = _server_cmd(run_dir)
     _write_command_manifest(run_dir, {"server": cmd})
     status, error, proc = "ok", None, None
@@ -259,16 +274,13 @@ def _run(
     module: str,
     run_dir: str,
     args_json: str,
-    experiment_json: str | None,
     run_id: str,
     stream_logs: bool,
     shutdown: modal.Dict,
 ) -> dict[str, Any]:
     """Run the client to completion, summarize its metrics, ship the run dir."""
     run_dir = pathlib.Path(run_dir)
-    log_dir = _prepare(
-        run_dir, args_name="client_args.json", args_json=args_json, experiment_json=experiment_json
-    )
+    log_dir = _prepare(run_dir, args_name="client_args.json", args_json=args_json)
     cmd = _client_cmd(run_dir, module)
     _write_command_manifest(run_dir, {"client": cmd})
     result: dict[str, Any] = {"run_id": run_id}
@@ -377,49 +389,43 @@ class CpuMockClient:
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class CaseRunner:
-    """Run one case: server and client on separate containers, bridged by a tunnel."""
+    """Run one case: server and client on separate containers, bridged by a tunnel.
+
+    Takes a plain ``Case.to_payload()`` dict (never a ``Case``) so nothing here
+    needs ``serve``/``run_all`` importable to deserialize the argument.
+    """
 
     @modal.method()
-    def run(self, case: Case) -> dict[str, Any]:
-        import serve  # heavy import; only needed to pick the server image
-
-        server = CpuMockServer() if isinstance(case.server_args.policy, serve.Mock) else GpuServer()
-        client_cls = CpuMockClient if case.client_env == "mock" else LiberoClient
-        client = client_cls.with_options(cpu=case.num_robots)()  # 1 cpu per robot process
-        run_dir = str(case.run_dir)
-        experiment_json = json.dumps(case.experiment_config, indent=2)
+    def run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        run_id = payload["run_id"]
+        run_dir = payload["run_dir"]
+        server = CpuMockServer() if payload["mock_policy"] else GpuServer()
+        client_cls = CpuMockClient if payload["mock_env"] else LiberoClient
+        client = client_cls.with_options(cpu=payload["num_robots"])()  # 1 cpu per robot process
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
             handle = server.serve.spawn(
                 run_dir=run_dir,
-                args_json=case.server_args.model_dump_json(),
-                experiment_json=experiment_json,
-                port=case.server_args.port,
-                run_id=case.run_id,
-                stream_logs=case.stream_logs,
+                args_json=payload["server_args_json"],
+                port=payload["port"],
+                run_id=run_id,
+                stream_logs=payload["stream_logs"],
                 urls=urls,
                 shutdown=shutdown,
             )
-            print(f"[orch/{case.run_id}] server spawned; waiting for tunnel", flush=True)
-            host, port = _await_server(urls, case.run_id)
+            print(f"[orch/{run_id}] server spawned; waiting for tunnel", flush=True)
+            host, port = _await_server(urls, run_id)
             if not host:
-                return {
-                    "run_id": case.run_id,
-                    "status": "failed",
-                    "error": "server failed before forwarding",
-                }
-            case.client_args.host = host
-            case.client_args.port = port
-            print(
-                f"[orch/{case.run_id}] server ready at {host}:{port}; launching client", flush=True
-            )
+                return {"run_id": run_id, "status": "failed", "error": "server failed before fwd"}
+            client_args = json.loads(payload["client_args_json"])
+            client_args["host"], client_args["port"] = host, port
+            print(f"[orch/{run_id}] server ready at {host}:{port}; launching client", flush=True)
             try:
                 return client.run.remote(
-                    module="evaluation.sims.libero.run",
+                    module="scripts.run_all",
                     run_dir=run_dir,
-                    args_json=case.client_args.model_dump_json(),
-                    experiment_json=experiment_json,
-                    run_id=case.run_id,
-                    stream_logs=case.stream_logs,
+                    args_json=json.dumps(client_args),
+                    run_id=run_id,
+                    stream_logs=payload["stream_logs"],
                     shutdown=shutdown,
                 )
             finally:

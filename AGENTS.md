@@ -83,6 +83,11 @@ Two related but distinct directories:
 
 ## Modal
 
+**You can test this repo's serving/eval infra by running it on Modal directly — see
+[`scripts/modal/README.md`](scripts/modal/README.md).** Cheap CPU "mock" runs
+exercise the full server↔client path in a couple of minutes without a local GPU;
+`uv run modal run scripts/modal/run.py --server mock` is the quickest smoke test.
+
 Use Modal skills for all GPU work:
 - modal-basic-skills: foundational Modal platform knowledge
 - modal-gpu-dev: launch interactive GPU sandboxes for debugging and prototyping

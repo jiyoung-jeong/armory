@@ -58,7 +58,6 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run
                 module="scripts.run",
                 run_dir=run_dir,
                 args_json=json.dumps(client_cfg),
-                experiment_json=None,
                 run_id=stamp,
                 stream_logs=True,
                 shutdown=shutdown,
@@ -72,7 +71,6 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run
             handle = server_worker.serve.spawn(
                 run_dir=run_dir,
                 args_json=json.dumps(server_cfg),
-                experiment_json=None,
                 port=PORT,
                 run_id=stamp,
                 stream_logs=True,
@@ -90,7 +88,6 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run
                     module="scripts.run",
                     run_dir=run_dir,
                     args_json=json.dumps(client_cfg),
-                    experiment_json=None,
                     run_id=stamp,
                     stream_logs=True,
                     shutdown=shutdown,
