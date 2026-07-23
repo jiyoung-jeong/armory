@@ -100,6 +100,10 @@ def _add_repo_sources(image: modal.Image, *modules: str) -> modal.Image:
         image.add_local_python_source(*modules)
         .add_local_dir(str(REPO_ROOT / "configs"), remote_path=str(REMOTE_ROOT / "configs"))
         .add_local_dir(str(REPO_ROOT / "scripts"), remote_path=str(REMOTE_ROOT / "scripts"))
+        .add_local_file(
+            str(REPO_ROOT / "src/armory/backends/inference_profiles.json"),
+            "/root/armory/backends/inference_profiles.json",
+        )
         .add_local_file(str(REPO_ROOT / "src/utils.py"), "/root/utils.py")
         .add_local_file(str(REPO_ROOT / "src/logging_config.py"), "/root/logging_config.py")
     )

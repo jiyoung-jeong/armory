@@ -231,6 +231,7 @@ def _serve(
 ) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     run_dir = pathlib.Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "server_args.json").write_text(args_json)
     cmd = _server_cmd(run_dir)
     _write_command_manifest(run_dir, {"server": cmd})
@@ -271,6 +272,7 @@ def _run(
 ) -> dict[str, Any]:
     """Run the client to completion, summarize its metrics, ship the run dir."""
     run_dir = pathlib.Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "client_args.json").write_text(args_json)
     cmd = _client_cmd(run_dir, module)
     _write_command_manifest(run_dir, {"client": cmd})
