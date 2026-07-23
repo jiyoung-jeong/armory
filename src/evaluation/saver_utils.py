@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -75,22 +74,3 @@ def save_cost_history_npy(cost_history: list[float], out_folder: pathlib.Path) -
     costs = np.array(cost_history, dtype=np.float64)
     np.save(out_folder / "cost_history.npy", costs)
     return costs
-
-
-def plot_cost_history(
-    costs: np.ndarray,
-    out_folder: pathlib.Path,
-    robot_idx: int,
-    task_suite_name: str,
-    task_id: int,
-) -> None:
-    steps = np.arange(len(costs))
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(steps, costs, linewidth=0.8, color="steelblue")
-    ax.set_xlabel("Environment step")
-    ax.set_ylabel("Cost (s)")
-    ax.set_title(f"Cost per step — robot {robot_idx} | {task_suite_name} task {task_id}")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(out_folder / "cost_history.png", dpi=150)
-    plt.close(fig)

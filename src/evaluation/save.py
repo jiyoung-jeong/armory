@@ -16,7 +16,6 @@ import numpy as np
 from evaluation.runtime import Rollout
 from evaluation.saver_utils import (
     Result,
-    plot_cost_history,
     save_action_chunks,
     save_actions_left,
     save_cost_history_npy,
@@ -135,11 +134,4 @@ def _save_debug_data(out_folder: pathlib.Path, rollout: Rollout) -> None:
 
 
 def _save_cost_history(out_folder: pathlib.Path, rollout: Rollout, meta: SaveMeta) -> None:
-    costs = save_cost_history_npy(cost_history(rollout), out_folder)
-    plot_cost_history(
-        costs,
-        out_folder,
-        robot_idx=meta.robot_idx,
-        task_suite_name=meta.task_suite_name,
-        task_id=meta.task_id,
-    )
+    save_cost_history_npy(cost_history(rollout), out_folder)
