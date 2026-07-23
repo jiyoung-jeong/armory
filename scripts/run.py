@@ -151,9 +151,7 @@ def main(args: Args) -> None:
         )
     finally:
         environment.close()
-        if broker is not None:
-            broker.close()
-        elif ws_client is not None:
+        if ws_client is not None:
             ws_client.close()
 
 

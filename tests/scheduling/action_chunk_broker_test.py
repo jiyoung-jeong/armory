@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import threading
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -91,24 +90,15 @@ class _FakeWebsocket:
     def __init__(self) -> None:
         self.sent: list[dict] = []
         self._closed = threading.Event()
-        self.receive_entered = threading.Event()
-        self.close_count = 0
 
     def send(self, *args, **kwargs) -> None:
         self.sent.append(kwargs)
 
     def receive(self):
-        self.receive_entered.set()
-        if not self._closed.wait(timeout=1):
-            raise TimeoutError("test websocket was not closed")
-        raise RuntimeError("websocket closed")
+        self._closed.wait()
 
     def reset(self) -> None:
         pass
-
-    def close(self) -> None:
-        self.close_count += 1
-        self._closed.set()
 
 
 def test_action_chunk_broker_sends_configured_min_execution_horizon() -> None:
@@ -120,44 +110,7 @@ def test_action_chunk_broker_sends_configured_min_execution_horizon() -> None:
         max_execution_horizon=5,
     )
 
-    try:
-        broker._infer(SimpleNamespace(step=0))
+    broker._infer(SimpleNamespace(step=0))
 
-        assert ws.sent[-1]["min_execution_horizon"] == 3
-        assert ws.sent[-1]["max_execution_horizon"] == 5
-    finally:
-        broker.close()
-
-
-def test_action_chunk_broker_close_stops_receiver_without_error(caplog) -> None:
-    ws = _FakeWebsocket()
-    broker = ActionChunkBroker(ws, control_hz=10)
-    assert ws.receive_entered.wait(timeout=1)
-
-    with caplog.at_level(logging.ERROR):
-        broker.close()
-        broker.close()
-
-    assert not broker._background_thread.is_alive()
-    assert ws.close_count == 1
-    assert "Action response receiver stopped unexpectedly" not in caplog.text
-
-
-class _BrokenWebsocket(_FakeWebsocket):
-    def receive(self):
-        self.receive_entered.set()
-        raise RuntimeError("receive failed")
-
-
-def test_action_chunk_broker_logs_unexpected_receive_failure(caplog) -> None:
-    ws = _BrokenWebsocket()
-    with caplog.at_level(logging.ERROR):
-        broker = ActionChunkBroker(ws, control_hz=10)
-        broker._background_thread.join(timeout=1)
-
-    try:
-        assert not broker._background_thread.is_alive()
-        assert "Action response receiver stopped unexpectedly" in caplog.text
-        assert "receive failed" in caplog.text
-    finally:
-        broker.close()
+    assert ws.sent[-1]["min_execution_horizon"] == 3
+    assert ws.sent[-1]["max_execution_horizon"] == 5

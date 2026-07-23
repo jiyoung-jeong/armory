@@ -1,4 +1,3 @@
-import logging
 import threading
 import time
 from collections import deque
@@ -6,8 +5,6 @@ from collections import deque
 from armory_client.client import BidirectionalWebsocket
 from armory_client.messages import InferResponse
 from armory_client.schemas import Action, ActionChunk, Observation
-
-logger = logging.getLogger(__name__)
 
 
 # NOTE: use concurrent.futures to infer in background if this takes too long
@@ -119,8 +116,6 @@ class ActionChunkBroker(ActionChunkBrokerBase):
 
         self._ws_client = ws_client
         self._lock = threading.Lock()
-        self._close_lock = threading.Lock()
-        self._stop_event = threading.Event()
         self._background_thread = threading.Thread(target=self._receive_actions, daemon=True)
 
         self.reset()
@@ -146,61 +141,26 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         )
 
     def _receive_actions(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                infer_response = self._ws_client.receive()
-                with self._lock:
-                    # close() may have unblocked receive() while this thread was
-                    # waiting for the broker lock. Don't process a final response
-                    # after shutdown has begun.
-                    if self._stop_event.is_set():
-                        return
+        while True:
+            infer_response = self._ws_client.receive()
+            with self._lock:
+                action_chunk = self.receive_response(infer_response)
 
-                    action_chunk = self.receive_response(infer_response)
-
-                    # TODO: should be tested too
-                    first_executed_index = max(
-                        0, self._next_action_step - action_chunk.action_index_start
-                    )
-                    self._ws_client.send_ack(
-                        request_id=action_chunk.request_id,
-                        chunk_id=action_chunk.chunk_id,
-                        observation_step=action_chunk.observation_step,
-                        receive_time=action_chunk.response_timestamp,
-                        action_index_start=action_chunk.action_index_start,
-                        min_execution_horizon=action_chunk.min_execution_horizon,
-                        max_execution_horizon=action_chunk.max_execution_horizon,
-                        execution_start_step=action_chunk.execution_start_step,
-                        first_executed_index=first_executed_index,
-                    )
-            except Exception:  # noqa: BLE001
-                # Closing the websocket is what wakes a receiver blocked in recv().
-                # Its resulting ConnectionClosed exception is normal during close().
-                if self._stop_event.is_set():
-                    return
-                logger.exception("Action response receiver stopped unexpectedly")
-                return
-
-    def close(self, timeout: float = 5.0) -> None:
-        """Stop the response thread and close its websocket transport.
-
-        Closing the transport unblocks a thread waiting in ``receive``. The
-        method is idempotent so callers can safely use it from nested cleanup
-        paths.
-        """
-        with self._close_lock:
-            if self._stop_event.is_set():
-                return
-            self._stop_event.set()
-            try:
-                self._ws_client.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to close action broker websocket")
-
-        if threading.current_thread() is not self._background_thread:
-            self._background_thread.join(timeout=timeout)
-            if self._background_thread.is_alive():
-                logger.warning("Action response receiver did not stop within %.1f seconds", timeout)
+                # TODO: should be tested too
+                first_executed_index = max(
+                    0, self._next_action_step - action_chunk.action_index_start
+                )
+                self._ws_client.send_ack(
+                    request_id=action_chunk.request_id,
+                    chunk_id=action_chunk.chunk_id,
+                    observation_step=action_chunk.observation_step,
+                    receive_time=action_chunk.response_timestamp,
+                    action_index_start=action_chunk.action_index_start,
+                    min_execution_horizon=action_chunk.min_execution_horizon,
+                    max_execution_horizon=action_chunk.max_execution_horizon,
+                    execution_start_step=action_chunk.execution_start_step,
+                    first_executed_index=first_executed_index,
+                )
 
     def reset(self) -> None:
         with self._lock:
