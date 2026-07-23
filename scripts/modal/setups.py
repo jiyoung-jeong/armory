@@ -9,7 +9,7 @@ image-pinned workers: ``GpuServer``/``CpuMockServer`` and ``LiberoClient``/
 ``CpuMockClient``.
 
 The sweep entrypoint (``sweep_experiments.py``) drives these per ``Case`` via
-``CaseRunner``; ``run.py`` drives the same workers directly for a single robot.
+``CaseRunner``; ``run.py`` drives the same workers directly for a single case.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ if TYPE_CHECKING:
     # Heavy, GPU/Linux-only imports; the annotations below never resolve them at
     # runtime (thanks to `from __future__ import annotations`), so importing
     # setups.py stays light enough to launch run.py from a macOS dev venv.
+    import run
     import serve
-    from scripts import run_all
 
     from evaluation.types import EnvironmentType, ExperimentConfig
 
@@ -63,7 +63,7 @@ checkpoint_volume = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_mis
 @dataclasses.dataclass(frozen=True)
 class Case:
     server_args: serve.Args
-    client_args: run_all.Args  # embeds experiment_config + scheduler_config
+    client_args: run.Args  # embeds experiment_config + scheduler_config
     experiment_name: str
     stream_logs: bool
     stamp: str
