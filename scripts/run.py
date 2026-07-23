@@ -23,8 +23,8 @@ from evaluation.metrics import calculate_metrics, generate_all_plots
 from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
-from evaluation.types import EnvironmentType, ExperimentConfig, JsonArgs
-from utils import assert_egl_rendering, seed_everything
+from evaluation.types import EnvironmentType, ExperimentConfig
+from utils import JsonArgs, assert_egl_rendering, seed_everything
 
 logger = logging.getLogger(__name__)
 LIBERO_TASK_SUITE = "libero_10"

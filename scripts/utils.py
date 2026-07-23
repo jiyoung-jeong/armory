@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import pathlib
 import subprocess
 import time
 from collections.abc import Callable
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Self
 
 import numpy as np
+import tyro
 
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory.serving.protocol import ServerMetadata
 from armory_client.messages import InferRequest, InferType
-from evaluation.types import JsonArgs  # noqa: F401  re-exported for scripts/serve.py
+from evaluation.recording import JSONBaseModel
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
@@ -24,6 +27,23 @@ from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 with open("configs/inference_profiles.json") as f:
     INFERENCE_PROFILES = json.load(f)
+
+
+class JsonArgs(JSONBaseModel):
+    """Pydantic args base that supports `--json-path` defaults overlaid by tyro CLI flags."""
+
+    json_path: pathlib.Path | None = None
+
+    @classmethod
+    def from_cli(cls) -> Self:
+        pre = argparse.ArgumentParser(add_help=False)
+        pre.add_argument("--json-path", type=pathlib.Path, default=None)
+        known, remaining = pre.parse_known_args()
+
+        if known.json_path is not None:
+            defaults = cls.from_json(known.json_path)
+            return tyro.cli(cls, args=remaining, default=defaults)
+        return tyro.cli(cls, args=remaining)
 
 
 def get_gpu_info() -> dict[str, Any]:
