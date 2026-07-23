@@ -72,34 +72,16 @@ def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
 def save_action_chunks(action_chunks: tuple[ActionChunk, ...], out_folder: pathlib.Path) -> None:
     if not action_chunks:
         return
-    data: dict[str, list] = {
-        "chunk_id": [],
-        "observation_step": [],
-        "action_index_start": [],
-        "execution_start_step": [],
-        "actions": [],
-        "min_execution_horizon": [],
-        "max_execution_horizon": [],
-        "request_timestamp": [],
-        "response_timestamp": [],
-        "request_id": [],
-        "noise": [],
-    }
-    for chunk in action_chunks:
-        data["chunk_id"].append(chunk.chunk_id)
-        data["observation_step"].append(chunk.observation_step)
-        data["action_index_start"].append(chunk.action_index_start)
-        data["execution_start_step"].append(chunk.execution_start_step)
-        data["actions"].append(chunk.actions.tolist())
-        data["min_execution_horizon"].append(chunk.min_execution_horizon)
-        data["max_execution_horizon"].append(chunk.max_execution_horizon)
-        data["request_timestamp"].append(chunk.request_timestamp)
-        data["response_timestamp"].append(chunk.response_timestamp)
-        data["request_id"].append(chunk.request_id)
-        data["noise"].append(chunk.noise.tolist() if chunk.noise is not None else None)
-    pd.DataFrame(data).to_parquet(
+    pd.DataFrame.from_records(_action_chunk_record(chunk) for chunk in action_chunks).to_parquet(
         out_folder / "action_chunks.parquet", engine="pyarrow", index=False
     )
+
+
+def _action_chunk_record(chunk: ActionChunk) -> dict[str, object]:
+    record = {field.name: getattr(chunk, field.name) for field in dataclasses.fields(chunk)}
+    record["actions"] = chunk.actions.tolist()
+    record["noise"] = chunk.noise.tolist() if chunk.noise is not None else None
+    return record
 
 
 def cost_history(rollout: Rollout) -> list[float]:
