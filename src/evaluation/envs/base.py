@@ -2,7 +2,7 @@ import abc
 
 import numpy as np
 
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 
 
 class Environment(abc.ABC):
@@ -20,6 +20,13 @@ class Environment(abc.ABC):
 
     @abc.abstractmethod
     def apply_action(self, action: Action) -> None:
+        pass
+
+    @abc.abstractmethod
+    def create_null_action(
+        self, observation: Observation, current_action_chunk: ActionChunk | None
+    ) -> Action:
+        """Create the environment-specific action used when no chunk is available."""
         pass
 
     @abc.abstractmethod

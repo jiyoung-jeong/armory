@@ -1,10 +1,11 @@
 import threading
+from collections.abc import Callable
 
 from typing_extensions import override
 
 from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent, AgentEpisodeData
 
 
@@ -16,9 +17,15 @@ class PolicyAgent(Agent):
     action per control step.
     """
 
-    def __init__(self, ws_client: BidirectionalWebsocket, broker: ActionChunkBroker) -> None:
+    def __init__(
+        self,
+        ws_client: BidirectionalWebsocket,
+        broker: ActionChunkBroker,
+        create_null_action: Callable[[Observation, ActionChunk | None], Action],
+    ) -> None:
         self._ws_client = ws_client
         self._broker = broker
+        self._create_null_action = create_null_action
         self._lock = threading.Lock()
         self._closed = False
         self.reset()
@@ -32,7 +39,9 @@ class PolicyAgent(Agent):
     @override
     def get_action(self, observation: Observation) -> Action:
         with self._lock:
-            action = self._broker.get_action(observation.step, observation)
+            action = self._broker.get_action(observation.step)
+            if action is None:
+                action = self._create_null_action(observation, self._broker.current_action_chunk)
             self._ws_client.send(
                 observation,
                 self._broker.next_action_step,

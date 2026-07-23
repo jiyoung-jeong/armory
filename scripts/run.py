@@ -76,11 +76,11 @@ def create_environment(
     raise ValueError(f"Unsupported environment: {config.environment}")
 
 
-def create_agent(args: Args, robot_idx: int) -> Agent:
+def create_agent(args: Args, robot_idx: int, environment: _environment.Environment) -> Agent:
     """Build robot ``robot_idx``'s agent plus the resources the worker must later
     close/snapshot. A MOCK agent needs no server, so it opens no websocket."""
     if args.agent == AgentType.MOCK:
-        return MockAgent()
+        return MockAgent(environment.create_null_action)
 
     robot = args.experiment_config.robots[robot_idx]
     ws_client = BidirectionalWebsocket(
@@ -95,7 +95,11 @@ def create_agent(args: Args, robot_idx: int) -> Agent:
         min_execution_horizon=robot.execution_horizon.min,
         max_execution_horizon=robot.execution_horizon.max,
     )
-    return PolicyAgent(ws_client=ws_client, broker=broker)
+    return PolicyAgent(
+        ws_client=ws_client,
+        broker=broker,
+        create_null_action=environment.create_null_action,
+    )
 
 
 def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> None:
@@ -109,7 +113,7 @@ def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> 
     seed_everything(config.seed + robot_idx)
 
     environment = create_environment(config, robot_idx, libero_spec)
-    agent = create_agent(args, robot_idx)
+    agent = create_agent(args, robot_idx, environment)
 
     meta = SaveMeta(
         out_dir=args.output_dir,

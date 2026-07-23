@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 from typing_extensions import override
 
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.envs.base import Environment
 
 IMAGE_SIZE = 224
@@ -56,6 +56,17 @@ class MockEnvironment(Environment):
         self._step += 1
         if self._step >= self._max_episode_steps:
             self._done = True
+
+    @override
+    def create_null_action(
+        self, observation: Observation, current_action_chunk: ActionChunk | None
+    ) -> Action:
+        return Action(
+            step=observation.step,
+            action=np.zeros(7, dtype=np.float32),
+            action_chunk_index=None,
+            index_in_chunk=None,
+        )
 
     @override
     def close(self) -> None:

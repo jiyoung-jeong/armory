@@ -10,6 +10,7 @@ import pytest
 from armory.scheduling.mirror import ActionChunk
 from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.messages import InferResponse
+from armory_client.schemas import Action
 from evaluation.agents.policy_agent import PolicyAgent
 from tests.scheduling._cases import ALL_SCENARIOS, Scenario
 
@@ -62,7 +63,11 @@ def test_broker(scenario: Scenario) -> None:
             received = broker.receive_response(infer_response)
             assert _with_arrival_time(received, arrival_time) == expected_chunk
         action = broker.get_action(control_step.observation_step)
-        assert action.step == control_step.action_step
+        if control_step.action_step is None:
+            assert action is None
+        else:
+            assert action is not None
+            assert action.step == control_step.action_step
 
 
 def test_broker_preserves_min_execution_horizon_from_response() -> None:
@@ -109,7 +114,16 @@ def test_action_chunk_broker_sends_configured_min_execution_horizon() -> None:
         min_execution_horizon=3,
         max_execution_horizon=5,
     )
-    agent = PolicyAgent(ws_client=ws, broker=broker)
+    agent = PolicyAgent(
+        ws_client=ws,
+        broker=broker,
+        create_null_action=lambda observation, _: Action(
+            step=observation.step,
+            action=np.zeros(7),
+            action_chunk_index=None,
+            index_in_chunk=None,
+        ),
+    )
 
     agent.get_action(SimpleNamespace(step=0))
     agent.close()
