@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     import run
     import serve
 
-    from evaluation.types import EnvironmentType, ExperimentConfig
+    from evaluation.types import ExperimentConfig
 
 APP_NAME = "armory-experiments"
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
@@ -83,8 +83,8 @@ class Case:
         return len(self.experiment_config.robots)
 
     @property
-    def client_env(self) -> EnvironmentType:
-        return self.experiment_config.env
+    def client_env(self) -> str:
+        return self.experiment_config.environment.kind
 
     @property
     def run_id(self) -> str:
@@ -116,8 +116,6 @@ class Case:
         """
         import serve
 
-        from evaluation.types import EnvironmentType
-
         return {
             "run_id": self.run_id,
             "run_dir": str(self.run_dir),
@@ -125,7 +123,7 @@ class Case:
             "client_args_json": self.client_args.model_dump_json(),
             "num_robots": self.num_robots,
             "mock_policy": isinstance(self.server_args.policy, serve.Mock),
-            "mock_env": self.client_env == EnvironmentType.MOCK,
+            "mock_env": self.client_env == "mock",
             "port": self.server_args.port,
             "stream_logs": self.stream_logs,
         }

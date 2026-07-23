@@ -18,16 +18,16 @@ from evaluation.agents.base import Agent
 from evaluation.agents.mock_agent import MockAgent
 from evaluation.agents.policy_agent import PolicyAgent
 from evaluation.envs import base as _environment
+from evaluation.envs.config import LiberoConfig, MockConfig
 from evaluation.envs.mock import MockEnvironment
 from evaluation.metrics import calculate_metrics, generate_all_plots
 from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
-from evaluation.types import EnvironmentType, ExperimentConfig
+from evaluation.types import ExperimentConfig
 from utils import JsonArgs, assert_egl_rendering, seed_everything
 
 logger = logging.getLogger(__name__)
-LIBERO_TASK_SUITE = "libero_10"
 
 
 class AgentType(Enum):
@@ -52,24 +52,27 @@ class Args(JsonArgs):
         return self
 
 
-def create_environment(config: ExperimentConfig, robot_idx: int) -> _environment.Environment:
-    """Build robot ``robot_idx``'s environment. Each robot runs its own task
-    (``task_id = robot_idx``) and gets an offset seed."""
-    if config.env == EnvironmentType.MOCK:
-        return MockEnvironment(max_episode_steps=config.max_steps_per_episode)
-    if config.env == EnvironmentType.LIBERO:
+def create_environment(
+    config: ExperimentConfig, robot_idx: int, libero_spec: object | None = None
+) -> _environment.Environment:
+    """Build robot ``robot_idx``'s environment from its pre-planned spec."""
+    if isinstance(config.environment, MockConfig):
+        return MockEnvironment(max_episode_steps=config.environment.max_steps_per_episode)
+    if isinstance(config.environment, LiberoConfig):
         # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
-        from evaluation.envs.libero import LiberoSimEnvironment
+        from evaluation.envs.libero import LiberoRobotSpec, LiberoSimEnvironment
 
         # not using EGL will slow down step times
         assert_egl_rendering()
+        if not isinstance(libero_spec, LiberoRobotSpec):
+            raise ValueError("A LIBERO robot spec is required for a LIBERO environment")
 
         return LiberoSimEnvironment(
-            task_id=robot_idx,
-            max_episode_steps=config.max_steps_per_episode,
+            spec=libero_spec,
+            max_episode_steps=config.environment.max_steps_per_episode,
             seed=config.seed + robot_idx,
         )
-    raise ValueError(f"Unsupported env: {config.env}")
+    raise ValueError(f"Unsupported environment: {config.environment}")
 
 
 def create_agent(args: Args, robot_idx: int) -> Agent:
@@ -98,7 +101,7 @@ def create_agent(args: Args, robot_idx: int) -> Agent:
     return PolicyAgent(broker)
 
 
-def run_robot(args: Args, robot_idx: int) -> None:
+def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> None:
     """One robot's whole life: seed, build env/agent, roll out, tear down.
 
     Called inline for a single-robot fleet and inside a worker process for a
@@ -108,18 +111,18 @@ def run_robot(args: Args, robot_idx: int) -> None:
     config = args.experiment_config
     seed_everything(config.seed + robot_idx)
 
-    environment = create_environment(config, robot_idx)
+    environment = create_environment(config, robot_idx, libero_spec)
     agent = create_agent(args, robot_idx)
 
     meta = SaveMeta(
         out_dir=args.output_dir,
         robot_idx=robot_idx,
-        task_suite_name=LIBERO_TASK_SUITE if config.env == EnvironmentType.LIBERO else "mock",
-        task_id=robot_idx,
+        task_suite_name=libero_spec.task_suite_name if libero_spec is not None else "mock",
+        task_id=libero_spec.task_id if libero_spec is not None else 0,
         task_language=environment.task_language,
         control_hz=config.robots[robot_idx].control_hz,
         # Zero-image mock frames aren't worth encoding.
-        save_video=config.env != EnvironmentType.MOCK,
+        save_video=not isinstance(config.environment, MockConfig),
     )
 
     runtime = Runtime(environment, agent, control_hz=meta.control_hz)
@@ -140,15 +143,30 @@ def run_robot(args: Args, robot_idx: int) -> None:
 
 def run_fleet(args: Args) -> None:
     num_robots = len(args.experiment_config.robots)
+    libero_specs: list[object | None]
+    if isinstance(args.experiment_config.environment, LiberoConfig):
+        from evaluation.envs.libero import plan_robot_specs
+
+        libero_specs = plan_robot_specs(
+            args.experiment_config.environment,
+            num_robots=num_robots,
+            experiment_seed=args.experiment_config.seed,
+        )
+    else:
+        libero_specs = [None] * num_robots
     if num_robots == 1:
         # NOTE: runs inline for easy debugging
         logger.info("Running 1 robot inline")
-        run_robot(args, 0)
+        run_robot(args, 0, libero_specs[0])
         return
 
     logger.info("Launching %d robot process(es)", num_robots)
     processes = [
-        multiprocessing.Process(target=run_robot, args=(args, robot_idx), name=f"robot_{robot_idx}")
+        multiprocessing.Process(
+            target=run_robot,
+            args=(args, robot_idx, libero_specs[robot_idx]),
+            name=f"robot_{robot_idx}",
+        )
         for robot_idx in range(num_robots)
     ]
     for process in processes:

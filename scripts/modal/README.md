@@ -110,9 +110,9 @@ verbatim. Current shapes:
 // server config  ->  serve.Args  (scripts/serve.py)
 {"model": "pi05", "env": "libero", "max_batch_size": 1, "port": 8080}
 
-// sweep client config  ->  evaluation.types.ExperimentConfig (flat)
-//   env is "libero" or "mock". robots is a list (len = num_robots).
-{"env": "mock", "task_suite_name": "mock", "max_steps": 50, "seed": 7, "robots": [{}, {}]}
+// sweep client config  ->  evaluation.types.ExperimentConfig
+// robots is a list (len = num_robots); LIBERO assigns distinct tasks from its suite.
+{"environment": {"kind": "mock", "max_steps_per_episode": 50}, "seed": 7, "robots": [{}, {}]}
 ```
 
 `--server-policy mock` rewrites the server config's policy to a weightless `Mock`

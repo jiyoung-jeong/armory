@@ -1,19 +1,17 @@
 import math
 import pathlib
+import random
 from dataclasses import dataclass
 
 import numpy as np
-from libero.libero import get_libero_path
-from libero.libero.benchmark import Benchmark, Task, get_benchmark_dict
-from libero.libero.envs import OffScreenRenderEnv
 from typing_extensions import override
 
 from armory_client.schemas import Action, Observation
 from evaluation import image_tools
 from evaluation.envs.base import Environment
+from evaluation.envs.config import LiberoConfig
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
-LIBERO_TASK_SUITE = "libero_10"
 NUM_STEPS_WAIT = 10
 LIBERO_ENV_RESOLUTION = 256
 RESIZE_SIZE = 224
@@ -27,7 +25,52 @@ class LiberoObservation(Observation):
     prompt: str
 
 
-def get_libero_env(task, seed) -> OffScreenRenderEnv:
+@dataclass(frozen=True)
+class LiberoRobotSpec:
+    """The fixed LIBERO task assigned to one robot for an entire run."""
+
+    task_suite_name: str
+    task_id: int
+
+
+def plan_robot_specs(
+    config: LiberoConfig, *, num_robots: int, experiment_seed: int
+) -> list[LiberoRobotSpec]:
+    """Assign distinct, reproducible tasks to every robot in a fleet.
+
+    Planning happens once in the parent process.  Sampling within worker
+    processes would make a without-replacement guarantee impossible.
+    """
+    from libero.libero.benchmark import get_benchmark_dict
+
+    task_suite = get_benchmark_dict()[config.task_suite_name]()
+    if num_robots > task_suite.n_tasks:
+        raise ValueError(
+            f"LIBERO suite {config.task_suite_name!r} has {task_suite.n_tasks} tasks, "
+            f"but the experiment has {num_robots} robots; task assignment is without replacement."
+        )
+
+    seed = experiment_seed if config.task_seed is None else config.task_seed
+    task_ids = sample_task_ids(num_tasks=task_suite.n_tasks, num_robots=num_robots, seed=seed)
+    return [
+        LiberoRobotSpec(task_suite_name=config.task_suite_name, task_id=task_id)
+        for task_id in task_ids
+    ]
+
+
+def sample_task_ids(*, num_tasks: int, num_robots: int, seed: int) -> list[int]:
+    """Sample one distinct task ID for every robot, reproducibly."""
+    if num_robots > num_tasks:
+        raise ValueError(
+            f"Cannot assign {num_robots} robots to {num_tasks} tasks without replacement."
+        )
+    return random.Random(seed).sample(range(num_tasks), num_robots)
+
+
+def get_libero_env(task, seed):
+    from libero.libero import get_libero_path
+    from libero.libero.envs import OffScreenRenderEnv
+
     task_bddl_file = (
         pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
     )
@@ -72,19 +115,21 @@ class LiberoSimEnvironment(Environment):
 
     def __init__(
         self,
-        task_id: int,
+        spec: LiberoRobotSpec,
         *,
         max_episode_steps: int = 300,
         seed: int = 42,
     ) -> None:
-        benchmark_dict: dict[str, type[Benchmark]] = get_benchmark_dict()
-        task_suite = benchmark_dict[LIBERO_TASK_SUITE]()
+        from libero.libero.benchmark import get_benchmark_dict
 
-        task: Task = task_suite.get_task(task_id)
+        benchmark_dict = get_benchmark_dict()
+        task_suite = benchmark_dict[spec.task_suite_name]()
+
+        task = task_suite.get_task(spec.task_id)
         self._env = get_libero_env(task, seed=seed)
 
         self._task_description = task.language
-        self._initial_states = task_suite.get_task_init_states(task_id)
+        self._initial_states = task_suite.get_task_init_states(spec.task_id)
         self._max_episode_steps = max_episode_steps
 
         self._episode_idx = 0

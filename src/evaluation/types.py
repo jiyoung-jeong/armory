@@ -4,6 +4,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType
+from evaluation.envs.config import EnvironmentConfig, MockConfig
 from evaluation.recording import JSONBaseModel
 
 
@@ -42,8 +43,7 @@ class Robot(BaseModel):
 class ExperimentConfig(JSONBaseModel):
     model_config = ConfigDict(frozen=True)
 
-    env: EnvironmentType = EnvironmentType.MOCK
-    max_steps_per_episode: int = Field(gt=0, default=100)
+    environment: EnvironmentConfig = MockConfig()
 
     robots: list[Robot] = [Robot()]
     time_limit: float = Field(default=10.0, ge=0.0)

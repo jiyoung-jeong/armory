@@ -33,8 +33,6 @@ from scripts.modal.setups import (
 )
 from scripts.modal.utils import ARTIFACTS_VOLUME_NAME
 
-from evaluation.types import EnvironmentType
-
 PORT = 8080
 
 
@@ -54,8 +52,8 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "outputs")
         client_cfg = {"experiment_config": client_cfg}
     client_cfg["overwrite"] = True
     client_cfg["output_dir"] = str(REMOTE_ROOT / stamp)
-    env = EnvironmentType(client_cfg.get("env", EnvironmentType.MOCK))
-    client = {EnvironmentType.LIBERO: LiberoClient, EnvironmentType.MOCK: CpuMockClient}[env]()
+    environment = client_cfg["experiment_config"].get("environment", {"kind": "mock"})
+    client = {"libero": LiberoClient, "mock": CpuMockClient}[environment["kind"]]()
 
     with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
         if server == "none":
