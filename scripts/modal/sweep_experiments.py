@@ -46,7 +46,7 @@ sys.path.insert(0, str(_HERE.parent))  # serve
 sys.path.insert(0, str(_HERE.parent / "visualization"))  # plot_sweep
 
 import serve  # noqa: E402
-from scripts.modal.setups import Case, app, select_setup  # noqa: E402
+from scripts.modal.setups import Case, CaseRunner, app  # noqa: E402
 from scripts.modal.utils import download_artifacts, write_rows  # noqa: E402
 
 from evaluation.sims.libero import run as run_libero  # noqa: E402
@@ -256,19 +256,13 @@ def main(
     write_rows(run_root / f"cases_{stamp}.csv", case_rows)
 
     rows: list[dict[str, Any]] = []
-    grouped: dict[str, tuple[Any, list[Case]]] = {}
-    for case in cases:
-        worker = select_setup(case)
-        key = type(worker).__name__
-        grouped.setdefault(key, (worker, []))[1].append(case)
-    for setup_name, (worker, setup_cases) in grouped.items():
-        print(f"Running {len(setup_cases)} case(s) on setup={setup_name}")
-        for row in worker.run.map(setup_cases, order_outputs=False):
-            row = {**case_rows_by_run_id.get(row.get("run_id", ""), {}), **row}
-            rows.append(row)
-            sr = row.get("starvation_rate")
-            sr_str = f"{sr:.3f}" if isinstance(sr, (int, float)) else "n/a"
-            print(f"{row.get('status', '?')}: {row['run_id']} starvation={sr_str}")
+    print(f"Running {len(cases)} case(s)")
+    for row in CaseRunner().run.map(cases, order_outputs=False):
+        row = {**case_rows_by_run_id.get(row.get("run_id", ""), {}), **row}
+        rows.append(row)
+        sr = row.get("starvation_rate")
+        sr_str = f"{sr:.3f}" if isinstance(sr, (int, float)) else "n/a"
+        print(f"{row.get('status', '?')}: {row['run_id']} starvation={sr_str}")
 
     download_artifacts(stamp=stamp, out=run_root, rows=rows)
     results_csv = run_root / f"sweep_results_{stamp}.csv"

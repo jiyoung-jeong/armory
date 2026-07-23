@@ -1,22 +1,15 @@
-"""Shared Modal classes and setups for the experiment sweep scripts.
+"""Shared Modal workers for running a policy server + client on Modal.
 
-An experiment is a *policy server* talking to one or more *clients*. Combinations:
+A run is a *policy server* talking to a *client*, always on separate containers
+bridged by a ``modal.forward`` tunnel and a pair of ephemeral ``modal.Dict``s
+(one to publish the server's address, one for the client to signal completion).
+Either side is mock (CPU, no weights/rendering) or real (GPU): a real policy
+server needs a GPU, a LIBERO client needs a GPU for EGL rendering. Hence four
+image-pinned workers: ``GpuServer``/``CpuMockServer`` and ``LiberoClient``/
+``CpuMockClient``.
 
-    server policy    client env    image(s)                       containers
-    --------------   -----------   ----------------------------   ----------
-    mock             mock          cpu_mock_image (colocated)     1
-    mock             libero        cpu_mock_image + libero GPU    2 (split)
-    default/ckpt     mock          gpu_server + cpu_mock_image    2 (split)
-    default/ckpt     libero        gpu_server + libero GPU        2 (split)
-
-A *case* is a ``serve.Args`` plus a ``run_libero.Args``. The container serializes each
-into the run dir and execs the matching entry point. The sweep entrypoint inspects the
-server policy and client env to pick a setup; nothing else here needs that knowledge.
-
-The colocated mock setup runs server + client as two subprocesses in one container.
-Split setups put them on separate containers, bridged by ``modal.forward`` and a
-pair of ephemeral ``modal.Dict``s (one to publish the server's address, one for the
-client to signal completion).
+The sweep entrypoint (``sweep_experiments.py``) drives these per ``Case`` via
+``CaseRunner``; ``run.py`` drives the same workers directly for a single robot.
 """
 
 from __future__ import annotations
@@ -29,40 +22,39 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Any
+import urllib.request
+from typing import TYPE_CHECKING, Any
 
 import modal
-
-# Modal loads this module as /root/setups.py for class services, but the repo's
-# scripts/ tree is mounted at /app/scripts/. Add both: the parent (for local
-# runs) and /app/scripts/modal (for remote, where images.py + _utils.py live).
-import serve  # noqa: E402
-from scripts.modal.images import (  # noqa: E402
+from scripts.modal.images import (
     CHECKPOINT_VOLUME_PATH,
     REMOTE_ROOT,
     cpu_mock_image,
     gpu_libero_client_image,
     gpu_server_image,
 )
-from scripts.modal.utils import ARTIFACTS_VOLUME_NAME, summarize  # noqa: E402
+from scripts.modal.utils import ARTIFACTS_VOLUME_NAME, summarize
 
-from evaluation.sims.libero import run as run_libero  # noqa: E402
+if TYPE_CHECKING:
+    # Heavy, GPU/Linux-only imports; the annotations below never resolve them at
+    # runtime (thanks to `from __future__ import annotations`), so importing
+    # setups.py stays light enough to launch run.py from a macOS dev venv.
+    import serve
+
+    from evaluation.sims.libero import run as run_libero
 
 APP_NAME = "armory-experiments"
-
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
-
 CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
 REGION = "us-east"
 SERVER_GPU = "L40S"
-LIBERO_CLIENT_GPU = "L40S"
-
+LIBERO_GPU = "T4"
+TIMEOUT_S = 2 * 60 * 60
 # Safety net on the client subprocess; the container `timeout` is the real cap.
 CLIENT_TIMEOUT_S = 90 * 60
 
 app = modal.App(APP_NAME)
-
 artifacts_volume = modal.Volume.from_name(ARTIFACTS_VOLUME_NAME, create_if_missing=True)
 checkpoint_volume = modal.Volume.from_name(CHECKPOINT_VOLUME_NAME, create_if_missing=True)
 
@@ -80,10 +72,12 @@ class Case:
     def __post_init__(self) -> None:
         # serve.Args has no output_dir; only the client needs it for metrics.
         self.client_args.output_dir = self.run_dir / "outputs"
-        self.client_args.experiment_config = str(self.experiment_config_path)
+        self.client_args.experiment_config = str(self.run_dir / "experiment_config.json")
 
     @property
     def settings(self) -> run_libero.ExperimentConfig:
+        from evaluation.sims.libero import run as run_libero
+
         return run_libero.ExperimentConfig.from_json(self.experiment_config)
 
     @property
@@ -114,42 +108,27 @@ class Case:
     def run_dir(self) -> pathlib.Path:
         return REMOTE_ROOT / self.stamp / self.run_id
 
-    @property
-    def experiment_config_path(self) -> pathlib.Path:
-        return self.run_dir / "experiment_config.json"
-
-    @property
-    def artifact_dir(self) -> pathlib.Path:
-        return REMOTE_ARTIFACTS_ROOT / self.stamp / self.run_id
-
 
 # --------------------------------------------------------------------------
 # On-container helpers
 # --------------------------------------------------------------------------
 def _popen_logged(
-    cmd: list[str],
-    *,
-    cwd: str,
-    log_path: pathlib.Path,
-    tag: str,
-    stream_logs: bool,
+    cmd: list[str], *, log_path: pathlib.Path, tag: str, stream_logs: bool
 ) -> subprocess.Popen:
-    """Run ``cmd`` and always write its output to ``log_path``.
+    """Run ``cmd`` in the repo root, always writing its output to ``log_path``.
 
-    When ``stream_logs`` is true, also tag and tee each line to container stdout.
-    Modal surfaces container stdout in ``modal run`` and ``modal app logs``, so
-    keeping this off by default prevents high-volume server/client logs from
-    flooding the local terminal while preserving on-disk logs in artifacts.
+    With ``stream_logs``, also tag and tee each line to container stdout (which
+    Modal surfaces); off by default so high-volume logs don't flood the terminal.
     """
     if stream_logs:
-        # Use '#' as the sed delimiter because tags (e.g. "server/scheduler=...") contain '/'.
+        # '#' as the sed delimiter because tags (e.g. "server/scheduler=...") contain '/'.
         shell_cmd = (
             f"{shlex.join(cmd)} 2>&1 | sed -u 's#^#[{tag}] #' | tee {shlex.quote(str(log_path))}"
         )
-        return subprocess.Popen(shell_cmd, shell=True, cwd=cwd)
-
-    log_file = log_path.open("w")
-    return subprocess.Popen(cmd, cwd=cwd, stdout=log_file, stderr=subprocess.STDOUT)
+        return subprocess.Popen(shell_cmd, shell=True, cwd=str(REMOTE_ROOT))
+    return subprocess.Popen(
+        cmd, cwd=str(REMOTE_ROOT), stdout=log_path.open("w"), stderr=subprocess.STDOUT
+    )
 
 
 def _terminate(proc: subprocess.Popen | None) -> None:
@@ -163,23 +142,8 @@ def _terminate(proc: subprocess.Popen | None) -> None:
         proc.wait(timeout=30)
 
 
-def _write_experiment_config(case: Case) -> None:
-    case.experiment_config_path.write_text(json.dumps(case.experiment_config, indent=2) + "\n")
-
-
-def _ship(case: Case) -> str:
-    """Copy the case's run dir onto the artifacts volume; return the remote path."""
-    shutil.copytree(case.run_dir, case.artifact_dir)
-    artifacts_volume.commit()
-    return str(case.artifact_dir)
-
-
 def _write_command_manifest(run_dir: pathlib.Path, commands: dict[str, list[str]]) -> None:
-    """Write a human-readable + runnable record of the subprocess commands.
-
-    ``commands.json`` keeps the raw argv; ``commands.sh`` is a runnable script so a
-    case can be reproduced by hand from the run dir.
-    """
+    """Record the subprocess commands so a run can be reproduced by hand."""
     manifest = {
         "cwd": str(REMOTE_ROOT),
         "commands": {
@@ -193,100 +157,144 @@ def _write_command_manifest(run_dir: pathlib.Path, commands: dict[str, list[str]
     (run_dir / "commands.sh").write_text("\n".join(lines) + "\n")
 
 
-# --------------------------------------------------------------------------
-# On-container run bodies
-# --------------------------------------------------------------------------
-def _run_server(case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:
-    """Start the policy server, forward its port, hold until the client is done."""
-    case.run_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = case.run_dir / "logs"
+def _ship(run_dir: pathlib.Path) -> str:
+    """Copy a run dir onto the artifacts volume; return the remote path."""
+    artifact_dir = REMOTE_ARTIFACTS_ROOT / run_dir.relative_to(REMOTE_ROOT)
+    shutil.copytree(run_dir, artifact_dir, dirs_exist_ok=True)
+    artifacts_volume.commit()
+    return str(artifact_dir)
+
+
+def _server_cmd(run_dir: pathlib.Path) -> list[str]:
+    # `-m scripts.serve` (not the file path) so /app leads sys.path and the src
+    # `utils`/`logging_config` win over the shadowing scripts/utils.py.
+    return [sys.executable, "-m", "scripts.serve", "--json-path", str(run_dir / "server_args.json")]
+
+
+def _client_cmd(run_dir: pathlib.Path, module: str) -> list[str]:
+    return [sys.executable, "-m", module, "--json-path", str(run_dir / "client_args.json")]
+
+
+def _prepare(
+    run_dir: pathlib.Path, *, args_name: str, args_json: str, experiment_json: str | None
+) -> pathlib.Path:
+    log_dir = run_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    case.server_args.to_json(case.run_dir / "server_args.json")
-    _write_experiment_config(case)
-    server_cmd = [
-        sys.executable,
-        "scripts/serve.py",
-        "--json-path",
-        str(case.run_dir / "server_args.json"),
-    ]
-    _write_command_manifest(case.run_dir, {"server": server_cmd})
-    status, error = "ok", None
-    proc: subprocess.Popen | None = None
+    (run_dir / args_name).write_text(args_json)
+    if experiment_json is not None:
+        (run_dir / "experiment_config.json").write_text(experiment_json)
+    return log_dir
+
+
+def _await_server(urls: modal.Dict, run_id: str) -> tuple[str, int]:
+    """Block until the server publishes its tunnel and /metadata answers.
+
+    Returns ``("", 0)`` if the server posted the poison address after failing.
+    """
+    deadline = time.time() + 15 * 60
+    while run_id not in urls:
+        if time.time() > deadline:
+            raise RuntimeError(f"server never published tunnel for {run_id}")
+        time.sleep(2)
+    host, port = urls[run_id]
+    if not host:
+        return "", 0
+    ready = time.time() + 10 * 60
+    while True:
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/metadata", timeout=5):
+                return host, port
+        except Exception as exc:  # noqa: BLE001
+            if time.time() > ready:
+                raise RuntimeError(f"server /metadata never came up: {exc!r}") from exc
+            time.sleep(5)
+
+
+def _serve(
+    *,
+    run_dir: str,
+    args_json: str,
+    experiment_json: str | None,
+    port: int,
+    run_id: str,
+    stream_logs: bool,
+    urls: modal.Dict,
+    shutdown: modal.Dict,
+) -> dict[str, Any]:
+    """Start the policy server, forward its port, hold until the client is done."""
+    run_dir = pathlib.Path(run_dir)
+    log_dir = _prepare(
+        run_dir, args_name="server_args.json", args_json=args_json, experiment_json=experiment_json
+    )
+    cmd = _server_cmd(run_dir)
+    _write_command_manifest(run_dir, {"server": cmd})
+    status, error, proc = "ok", None, None
     try:
         proc = _popen_logged(
-            server_cmd,
-            cwd=str(REMOTE_ROOT),
-            log_path=log_dir / "server.log",
-            tag=f"server/{case.run_id}",
-            stream_logs=case.stream_logs,
+            cmd, log_path=log_dir / "server.log", tag=f"server/{run_id}", stream_logs=stream_logs
         )
-        with modal.forward(case.server_args.port, unencrypted=True) as tunnel:
-            urls[case.run_id] = tunnel.tcp_socket
-            print(f"[server/{case.run_id}] tunnel up at {tunnel.tcp_socket}", flush=True)
-            last_beat = 0.0
-            while case.run_id not in shutdown:
+        with modal.forward(port, unencrypted=True) as tunnel:
+            urls[run_id] = tunnel.tcp_socket
+            print(f"[server/{run_id}] tunnel up at {tunnel.tcp_socket}", flush=True)
+            while run_id not in shutdown:
                 if proc.poll() is not None:
                     status, error = "failed", f"server exited early (code={proc.returncode})"
                     break
-                now = time.time()
-                if now - last_beat > 30:
-                    print(f"[server/{case.run_id}] alive, waiting for client", flush=True)
-                    last_beat = now
                 time.sleep(2)
     except Exception as exc:  # noqa: BLE001
         status, error = "failed", repr(exc)
-        urls[case.run_id] = ("", 0)  # poison so the orchestrator doesn't hang
+        urls[run_id] = ("", 0)  # poison so the orchestrator doesn't hang
     finally:
         _terminate(proc)
-    _ship(case)
-    return {"run_id": case.run_id, "status": status, "error": error}
+    return {
+        "run_id": run_id,
+        "status": status,
+        "error": error,
+        "artifact_remote_path": _ship(run_dir),
+    }
 
 
-def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
-    """Run the client to completion, summarize, ship the run dir."""
-    case.run_dir.mkdir(parents=True, exist_ok=True)
-    log_dir = case.run_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    _write_experiment_config(case)
-    case.client_args.to_json(case.run_dir / "client_args.json")
-    client_cmd = [
-        sys.executable,
-        "-m",
-        "evaluation.sims.libero.run",
-        "--json-path",
-        str(case.run_dir / "client_args.json"),
-    ]
-    _write_command_manifest(case.run_dir, {"client": client_cmd})
-
-    result: dict[str, Any] = {"run_id": case.run_id}
+def _run(
+    *,
+    module: str,
+    run_dir: str,
+    args_json: str,
+    experiment_json: str | None,
+    run_id: str,
+    stream_logs: bool,
+    shutdown: modal.Dict,
+) -> dict[str, Any]:
+    """Run the client to completion, summarize its metrics, ship the run dir."""
+    run_dir = pathlib.Path(run_dir)
+    log_dir = _prepare(
+        run_dir, args_name="client_args.json", args_json=args_json, experiment_json=experiment_json
+    )
+    cmd = _client_cmd(run_dir, module)
+    _write_command_manifest(run_dir, {"client": cmd})
+    result: dict[str, Any] = {"run_id": run_id}
     try:
         proc = _popen_logged(
-            client_cmd,
-            cwd=str(REMOTE_ROOT),
-            log_path=log_dir / "client.log",
-            tag=f"client/{case.run_id}",
-            stream_logs=case.stream_logs,
+            cmd, log_path=log_dir / "client.log", tag=f"client/{run_id}", stream_logs=stream_logs
         )
         rc = proc.wait(timeout=CLIENT_TIMEOUT_S)
         if rc != 0:
             result.update(status="failed", error=f"client exited with code {rc}")
         else:
-            result.update(summarize(pathlib.Path(case.client_args.output_dir)))
-            result["status"] = "ok"
+            result.update(summarize(run_dir / "outputs"), status="ok")
     except Exception as exc:  # noqa: BLE001
         result.update(status="failed", error=repr(exc))
     finally:
-        shutdown[case.run_id] = True  # always release the server
-    result["artifact_remote_path"] = _ship(case)
+        shutdown[run_id] = True  # always release the server
+    result["artifact_remote_path"] = _ship(run_dir)
     return result
 
 
 # --------------------------------------------------------------------------
-# Modal classes (one per image; resources fixed per class)
+# Modal workers (one per image; resources fixed per class)
 # --------------------------------------------------------------------------
 @app.cls(
     image=gpu_server_image,
-    timeout=2 * 60 * 60,
+    timeout=TIMEOUT_S,
     cpu=4,
     memory=16384,
     gpu=SERVER_GPU,
@@ -298,16 +306,16 @@ def _run_client(case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:
     },
 )
 class GpuServer:
-    """Real PI05/GR00T policy server on a GPU; no sim code."""
+    """Real PI05/GR00T policy server on a GPU."""
 
     @modal.method()
-    def serve(self, case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
-        return _run_server(case, urls=urls, shutdown=shutdown)
+    def serve(self, **kwargs) -> dict[str, Any]:
+        return _serve(**kwargs)
 
 
 @app.cls(
     image=cpu_mock_image,
-    timeout=2 * 60 * 60,
+    timeout=TIMEOUT_S,
     cpu=2,
     memory=8192,
     region=REGION,
@@ -315,163 +323,84 @@ class GpuServer:
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class CpuMockServer:
-    """Mock policy server (no weights, no GPU); used when policy.type == 'mock'."""
+    """Mock policy server (no weights, no GPU)."""
 
     @modal.method()
-    def serve(self, case: Case, *, urls: modal.Dict, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
-        return _run_server(case, urls=urls, shutdown=shutdown)
+    def serve(self, **kwargs) -> dict[str, Any]:
+        return _serve(**kwargs)
 
 
+# Client cpu is set per call (1 per robot process) via `.with_options`; the base
+# here is the single-robot default used by run.py.
 @app.cls(
     image=gpu_libero_client_image,
-    timeout=2 * 60 * 60,
-    cpu=16,
+    timeout=TIMEOUT_S,
+    cpu=1,
     memory=16384,
-    gpu=LIBERO_CLIENT_GPU,
+    gpu=LIBERO_GPU,
     region=REGION,
     max_containers=5,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
-class GpuLiberoClient:
-    """LIBERO sim client with hardware EGL rendering on a small GPU."""
+class LiberoClient:
+    """LIBERO sim client with hardware EGL rendering on a T4."""
 
     @modal.method()
-    def run(self, case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
-        return _run_client(case, shutdown=shutdown)
+    def run(self, **kwargs) -> dict[str, Any]:
+        return _run(**kwargs)
 
 
 @app.cls(
     image=cpu_mock_image,
-    timeout=2 * 60 * 60,
-    cpu=4,
+    timeout=TIMEOUT_S,
+    cpu=1,
     memory=8192,
     region=REGION,
     max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class CpuMockClient:
-    """Mock-env client (no rendering, no GPU); used when client.env == 'mock'."""
+    """Mock-env client (no rendering, no GPU)."""
 
     @modal.method()
-    def run(self, case: Case, *, shutdown: modal.Dict) -> dict[str, Any]:  # noqa: ANN001
-        return _run_client(case, shutdown=shutdown)
+    def run(self, **kwargs) -> dict[str, Any]:
+        return _run(**kwargs)
 
 
 # --------------------------------------------------------------------------
-# Setups
+# Orchestrator (Case-based; used by the sweep)
 # --------------------------------------------------------------------------
 @app.cls(
-    image=cpu_mock_image,
-    cpu=16,
-    timeout=2 * 60 * 60,
-    memory=16384,
-    volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
-)
-class MockSetup:
-    """Server + client colocated in one CPU container (mock policy + mock env only)."""
-
-    @modal.method()
-    def run(self, case: Case) -> dict[str, Any]:
-        case.run_dir.mkdir(parents=True, exist_ok=True)
-        log_dir = case.run_dir / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        case.server_args.to_json(case.run_dir / "server_args.json")
-        _write_experiment_config(case)
-        case.client_args.to_json(case.run_dir / "client_args.json")
-        server_cmd = [
-            sys.executable,
-            "scripts/serve.py",
-            "--json-path",
-            str(case.run_dir / "server_args.json"),
-        ]
-        client_cmd = [
-            sys.executable,
-            "-m",
-            "evaluation.sims.libero.run",
-            "--json-path",
-            str(case.run_dir / "client_args.json"),
-        ]
-        _write_command_manifest(case.run_dir, {"server": server_cmd, "client": client_cmd})
-        result: dict[str, Any] = {"run_id": case.run_id}
-        server_proc = _popen_logged(
-            server_cmd,
-            cwd=str(REMOTE_ROOT),
-            log_path=log_dir / "server.log",
-            tag=f"server/{case.run_id}",
-            stream_logs=case.stream_logs,
-        )
-        try:
-            client_proc = _popen_logged(
-                client_cmd,
-                cwd=str(REMOTE_ROOT),
-                log_path=log_dir / "client.log",
-                tag=f"client/{case.run_id}",
-                stream_logs=case.stream_logs,
-            )
-            rc = client_proc.wait(timeout=CLIENT_TIMEOUT_S)
-            if rc != 0:
-                result.update(status="failed", error=f"client exited with code {rc}")
-            else:
-                result.update(summarize(pathlib.Path(case.client_args.output_dir)))
-                result["status"] = "ok"
-        except Exception as exc:  # noqa: BLE001
-            result.update(status="failed", error=repr(exc))
-        finally:
-            _terminate(server_proc)
-        result["artifact_remote_path"] = _ship(case)
-        return result
-
-
-@app.cls(
-    image=cpu_mock_image,  # orchestrator is lightweight; only spawns class instances
-    timeout=2 * 60 * 60,
+    image=cpu_mock_image,  # cheap: only spawns the server/client and hands off URLs
+    timeout=TIMEOUT_S,
     max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
-class SplitSetup:
-    """Server and client on separate containers, bridged by a forwarded tunnel.
-
-    The server class is picked from ``case.server_args.policy`` (mock -> CPU image,
-    real -> GPU image); the client class is picked from ``case.client_env``
-    (mock -> CPU image, libero -> GPU image). The orchestrator itself runs on the
-    cheap CPU mock image since it only does spawn + URL handoff + wait.
-    """
+class CaseRunner:
+    """Run one case: server and client on separate containers, bridged by a tunnel."""
 
     @modal.method()
     def run(self, case: Case) -> dict[str, Any]:
-        if isinstance(case.server_args.policy, serve.Mock):
-            server = CpuMockServer()
-            server_kind = "cpu-mock"
-        else:
-            server = GpuServer()
-            server_kind = f"gpu-{SERVER_GPU.lower()}"
-        if case.client_env == "mock":
-            client = CpuMockClient()
-            client_kind = "cpu-mock"
-        else:
-            client = GpuLiberoClient()
-            client_kind = f"gpu-{LIBERO_CLIENT_GPU.lower()}"
-        print(
-            f"[orch/{case.run_id}] server={server_kind} client={client_kind}",
-            flush=True,
-        )
+        import serve  # heavy import; only needed to pick the server image
 
+        server = CpuMockServer() if isinstance(case.server_args.policy, serve.Mock) else GpuServer()
+        client_cls = CpuMockClient if case.client_env == "mock" else LiberoClient
+        client = client_cls.with_options(cpu=case.num_robots)()  # 1 cpu per robot process
+        run_dir = str(case.run_dir)
+        experiment_json = json.dumps(case.experiment_config, indent=2)
         with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
-            server_handle = server.serve.spawn(case, urls=urls, shutdown=shutdown)
-            print(
-                f"[orch/{case.run_id}] server spawned (id={server_handle.object_id}); "
-                f"waiting for tunnel",
-                flush=True,
+            handle = server.serve.spawn(
+                run_dir=run_dir,
+                args_json=case.server_args.model_dump_json(),
+                experiment_json=experiment_json,
+                port=case.server_args.port,
+                run_id=case.run_id,
+                stream_logs=case.stream_logs,
+                urls=urls,
+                shutdown=shutdown,
             )
-            # Block until the server publishes its forwarded address, then point the
-            # client at it. ``urls`` may carry ("", 0) as a poison value if the server
-            # failed before forwarding — surface that as a clean failure.
-            deadline = time.time() + 15 * 60
-            while case.run_id not in urls:
-                if time.time() > deadline:
-                    raise RuntimeError(f"server never published tunnel for {case.run_id}")
-                time.sleep(2)
-            host, port = urls[case.run_id]
+            print(f"[orch/{case.run_id}] server spawned; waiting for tunnel", flush=True)
+            host, port = _await_server(urls, case.run_id)
             if not host:
                 return {
                     "run_id": case.run_id,
@@ -480,54 +409,23 @@ class SplitSetup:
                 }
             case.client_args.host = host
             case.client_args.port = port
-            # Wait for the server to finish loading weights so the client's per-worker
-            # barrier (60s in run_libero.py) isn't racing model load on cold start.
-            import urllib.request
-
-            metadata_url = f"http://{host}:{port}/metadata"
-            ready_deadline = time.time() + 10 * 60
-            while True:
-                try:
-                    with urllib.request.urlopen(metadata_url, timeout=5):
-                        break
-                except Exception as exc:  # noqa: BLE001
-                    if time.time() > ready_deadline:
-                        return {
-                            "run_id": case.run_id,
-                            "status": "failed",
-                            "error": f"server /metadata never came up: {exc!r}",
-                        }
-                    print(
-                        f"[orch/{case.run_id}] /metadata not ready ({exc.__class__.__name__})",
-                        flush=True,
-                    )
-                    time.sleep(5)
             print(
                 f"[orch/{case.run_id}] server ready at {host}:{port}; launching client", flush=True
             )
             try:
-                result = client.run.remote(case, shutdown=shutdown)
-                print(
-                    f"[orch/{case.run_id}] client returned status={result.get('status')}",
-                    flush=True,
+                return client.run.remote(
+                    module="evaluation.sims.libero.run",
+                    run_dir=run_dir,
+                    args_json=case.client_args.model_dump_json(),
+                    experiment_json=experiment_json,
+                    run_id=case.run_id,
+                    stream_logs=case.stream_logs,
+                    shutdown=shutdown,
                 )
-                return result
             finally:
-                # The client sets shutdown[run_id] before returning, so the server
-                # should already be winding down; cancel is a belt-and-braces net
-                # for the failure paths (client crashed before signaling, etc.).
+                # The client sets shutdown[run_id] before returning; cancel is a
+                # belt-and-braces net for the failure paths.
                 try:
-                    server_handle.cancel()
+                    handle.cancel()
                 except Exception:  # noqa: BLE001
                     pass
-
-
-def select_setup(case: Case) -> modal.Cls:
-    """Mock policy + mock env -> colocated CPU; everything else -> split."""
-    if isinstance(case.server_args.policy, serve.Mock) and case.client_env == "mock":
-        return MOCK
-    return SPLIT
-
-
-MOCK = MockSetup()
-SPLIT = SplitSetup()
