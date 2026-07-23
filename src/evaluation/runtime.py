@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents import base as _agent
 from evaluation.envs import base as _environment
 from evaluation.recording import Timestamp
@@ -23,15 +23,16 @@ class Rollout:
     """The product of running one episode: everything needed to log/save it.
 
     Per-step data is captured live (``observations`` and ``timestamps``); the
-    outcome is read from the env at episode end. Policy-internal data (action
-    chunks, queue depth) is *not* here — the driver snapshots that from the
-    broker, so the Runtime stays agnostic to how the agent decides.
+    outcome is read from the env at episode end. Agent diagnostics are captured
+    at the same boundary, before the next episode's reset clears them.
     """
 
     observations: list[Observation]
     timestamps: list[Timestamp]
     success: bool
     initial_state: np.ndarray | None
+    action_chunks: list[ActionChunk]
+    actions_left: list[int]
 
 
 class Runtime:
@@ -79,12 +80,15 @@ class Runtime:
             )
             last_step_time = self._pace(last_step_time, step_time)
 
+        episode_data = self._agent.snapshot_episode_data()
         logger.info("Episode completed.")
         return Rollout(
             observations=observations,
             timestamps=timestamps,
             success=self._environment.current_success,
             initial_state=self._environment.current_initial_state,
+            action_chunks=episode_data.action_chunks,
+            actions_left=episode_data.actions_left,
         )
 
     def close(self) -> None:

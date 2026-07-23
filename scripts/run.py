@@ -127,13 +127,7 @@ def run_robot(args: Args, robot_idx: int) -> None:
         while time.monotonic() < deadline:
             rollout = runtime.run_episode(deadline)
 
-            # Snapshot the broker's decision trace now, before the next episode's
-            # reset() clears it. Empty for brokerless agents.
-            broker = getattr(agent, "broker", None)
-            action_chunks = list(broker.action_chunks) if broker is not None else []
-            actions_left = list(broker.actions_left_history) if broker is not None else []
-
-            data = build_episode_save_data(rollout, action_chunks, actions_left)
+            data = build_episode_save_data(rollout)
             save_episode(data, meta)
             episode += 1
 

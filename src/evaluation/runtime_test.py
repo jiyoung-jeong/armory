@@ -1,5 +1,5 @@
 from armory_client.schemas import Action, Observation
-from evaluation.agents.base import Agent
+from evaluation.agents.base import Agent, AgentEpisodeData
 from evaluation.envs.base import Environment
 from evaluation.runtime import Runtime
 
@@ -36,6 +36,9 @@ class _Agent(Agent):
 
     def close(self) -> None:
         self.events.append("agent")
+
+    def snapshot_episode_data(self) -> AgentEpisodeData:
+        return AgentEpisodeData()
 
 
 def test_close_releases_environment_then_agent() -> None:

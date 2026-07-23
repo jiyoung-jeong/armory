@@ -2,7 +2,7 @@ import numpy as np
 from typing_extensions import override
 
 from armory_client.schemas import Action, Observation
-from evaluation.agents.base import Agent
+from evaluation.agents.base import Agent, AgentEpisodeData
 
 # 6-DoF arm + gripper.
 _ACTION_DIM = 7
@@ -36,3 +36,7 @@ class MockAgent(Agent):
     @override
     def close(self) -> None:
         pass
+
+    @override
+    def snapshot_episode_data(self) -> AgentEpisodeData:
+        return AgentEpisodeData()

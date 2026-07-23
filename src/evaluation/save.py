@@ -44,20 +44,17 @@ class SaveMeta:
     save_video: bool = True
 
 
-def build_episode_save_data(
-    rollout: Rollout, action_chunks: list[ActionChunk], actions_left: list[int]
-) -> EpisodeSaveData:
-    """Assemble the on-disk payload from a rollout plus a broker snapshot.
+def build_episode_save_data(rollout: Rollout) -> EpisodeSaveData:
+    """Assemble the on-disk payload from a completed rollout.
 
-    ``action_chunks`` / ``actions_left`` come from the broker (empty for agents
-    that don't use one). Per-step cost is derived here rather than recorded live.
+    Per-step cost is derived here rather than recorded live.
     """
     return EpisodeSaveData(
         timestamps=rollout.timestamps,
         observations_buffer={obs.step: obs for obs in rollout.observations},
-        action_chunks=action_chunks,
-        actions_left_snapshot=actions_left,
-        cost_history=_cost_history(rollout.timestamps, action_chunks),
+        action_chunks=rollout.action_chunks,
+        actions_left_snapshot=rollout.actions_left,
+        cost_history=_cost_history(rollout.timestamps, rollout.action_chunks),
         success=rollout.success,
         episode_idx=0,  # assigned from the on-disk folder index in save_episode
         initial_state=rollout.initial_state,

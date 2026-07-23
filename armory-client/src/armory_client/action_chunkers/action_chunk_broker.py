@@ -134,6 +134,11 @@ class ActionChunkBroker(ActionChunkBrokerBase):
         self._ws_client.close()
         self._background_thread.join(timeout=5)
 
+    def snapshot_episode_data(self) -> tuple[list[ActionChunk], list[int]]:
+        """Copy the current episode's diagnostics while excluding receive-thread writes."""
+        with self._lock:
+            return list(self._action_chunks), list(self._actions_left_history)
+
     def infer(self, obs: Observation) -> Action:
         """Client continuously streams observations to the server."""
         with self._lock:
