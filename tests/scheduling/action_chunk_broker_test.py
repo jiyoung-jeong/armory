@@ -8,11 +8,9 @@ import numpy as np
 import pytest
 
 from armory.scheduling.mirror import ActionChunk
-from armory_client.action_chunkers.action_chunk_broker import (
-    ActionChunkBroker,
-    ActionChunkBrokerBase,
-)
+from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.messages import InferResponse
+from evaluation.agents.policy_agent import PolicyAgent
 from tests.scheduling._cases import ALL_SCENARIOS, Scenario
 
 
@@ -56,7 +54,7 @@ def _with_arrival_time(action_chunk: ActionChunk, arrival_time: float) -> Action
 
 @pytest.mark.parametrize("scenario", ALL_SCENARIOS, ids=lambda s: s.name)
 def test_broker(scenario: Scenario) -> None:
-    broker = ActionChunkBrokerBase()
+    broker = ActionChunkBroker()
     pending = _make_responses(scenario.chunks)
     for control_step in scenario.control_steps():
         while pending and pending[0].arrival_time < control_step.time:
@@ -68,7 +66,7 @@ def test_broker(scenario: Scenario) -> None:
 
 
 def test_broker_preserves_min_execution_horizon_from_response() -> None:
-    broker = ActionChunkBrokerBase()
+    broker = ActionChunkBroker()
     response = InferResponse(
         robot_id="test",
         request_id=0,
@@ -96,21 +94,25 @@ class _FakeWebsocket:
 
     def receive(self):
         self._closed.wait()
+        raise RuntimeError("closed")
 
     def reset(self) -> None:
         pass
+
+    def close(self) -> None:
+        self._closed.set()
 
 
 def test_action_chunk_broker_sends_configured_min_execution_horizon() -> None:
     ws = _FakeWebsocket()
     broker = ActionChunkBroker(
-        ws,
-        control_hz=10,
         min_execution_horizon=3,
         max_execution_horizon=5,
     )
+    agent = PolicyAgent(ws_client=ws, broker=broker)
 
-    broker._infer(SimpleNamespace(step=0))
+    agent.get_action(SimpleNamespace(step=0))
+    agent.close()
 
     assert ws.sent[-1]["min_execution_horizon"] == 3
     assert ws.sent[-1]["max_execution_horizon"] == 5

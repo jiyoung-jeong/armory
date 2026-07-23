@@ -13,7 +13,7 @@ from scripts.utils import JsonArgs
 
 import logging_config
 from armory.serving.protocol import SchedulerConfig
-from armory_client.action_chunkers import BrokerConfig
+from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from evaluation.agents.base import Agent
 from evaluation.agents.mock_agent import MockAgent
@@ -91,15 +91,11 @@ def create_agent(args: Args, robot_idx: int) -> Agent:
     )
     ws_client.connect()
 
-    broker = robot.action_chunk_broker_type.create(
-        BrokerConfig(
-            ws_client=ws_client,
-            control_hz=robot.control_hz,
-            min_execution_horizon=robot.execution_horizon.min,
-            max_execution_horizon=robot.execution_horizon.max,
-        )
+    broker = ActionChunkBroker(
+        min_execution_horizon=robot.execution_horizon.min,
+        max_execution_horizon=robot.execution_horizon.max,
     )
-    return PolicyAgent(broker)
+    return PolicyAgent(ws_client=ws_client, broker=broker)
 
 
 def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> None:

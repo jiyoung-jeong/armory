@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from armory.backends.types import PolicyRequest, PolicyResult
-from armory_client.messages import InferRequest, InferType
+from armory_client.messages import InferRequest
 
 
 def _profile_path() -> Path:
@@ -55,7 +55,6 @@ class MockPolicy:
             deadline=now + 60.0,
             min_execution_horizon=0,
             max_execution_horizon=0,
-            infer_type=InferType.SYNC,
             params=None,
             noise=None,
         )

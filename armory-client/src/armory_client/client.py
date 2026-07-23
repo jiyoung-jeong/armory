@@ -124,7 +124,6 @@ class BidirectionalWebsocket:
         obs: Observation,
         deadline: float,
         action_index_start: int,
-        infer_type: messages.InferType = messages.InferType.SYNC,
         min_execution_horizon: int = 5,
         max_execution_horizon: int = 100,
         noise: np.ndarray | None = None,
@@ -143,7 +142,6 @@ class BidirectionalWebsocket:
                 deadline=deadline,
                 min_execution_horizon=min_execution_horizon,
                 max_execution_horizon=max_execution_horizon,
-                infer_type=infer_type,
                 noise=noise,
             )
         )

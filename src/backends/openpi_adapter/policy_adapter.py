@@ -18,8 +18,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from armory.backends.types import PolicyRequest, PolicyResult
+from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import InternalRequest
-from armory_client.messages import InferType, RTCParams
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
