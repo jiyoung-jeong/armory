@@ -22,9 +22,6 @@ from armory_client import msgpack_numpy
 from armory_client.messages import (
     ConnectRequest,
     ConnectResponse,
-    EpisodeEnd,
-    EpisodeStart,
-    EpisodeStep,
     InferRequest,
     InferResponse,
     ResetRequest,
@@ -137,7 +134,6 @@ async def _receive_loop(
                             robot_id,
                         )
                         continue
-                    state.metrics_store.record_response(robot_id, response, ack)
                     await state.scheduler_sock.send_pyobj(
                         AckNotification(
                             robot_id=robot_id,
@@ -153,15 +149,6 @@ async def _receive_loop(
                             server_send_time=response.server_send_time,
                         )
                     )
-                    continue
-                case "episode_start":
-                    state.metrics_store.record_episode_start(robot_id, EpisodeStart(**msg))
-                    continue
-                case "episode_step":
-                    state.metrics_store.record_episode_step(robot_id, EpisodeStep(**msg))
-                    continue
-                case "episode_end":
-                    state.metrics_store.record_episode_end(robot_id, EpisodeEnd(**msg))
                     continue
                 case "infer":
                     pass
@@ -212,7 +199,6 @@ async def _receive_loop(
                 control_hz=state.robot_metadata[robot_id].control_hz,
             )
             await state.scheduler_sock.send_pyobj(slot_req)
-            state.metrics_store.record_request(robot_id, slot_req)
     except WebSocketDisconnect:
         logger.debug("Robot %s disconnected", robot_id)
 

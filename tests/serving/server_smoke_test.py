@@ -196,7 +196,6 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             assert reset.status_code == 200
             assert reset.json()["status"] == "ok"
 
-            state = client.app.state.server
             with (
                 client.websocket_connect("/ws") as robot_a,
                 client.websocket_connect("/ws") as robot_b,
@@ -211,11 +210,6 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
 
                 assert response_a.request_id != response_b.request_id
                 assert response_a.chunk_id != response_b.chunk_id
-                assert len(state.metrics_store.batches) == 1
-                shared_batch = state.metrics_store.batches[0]
-                assert shared_batch.batch_size == 2
-                assert set(shared_batch.robot_ids) == {"robot-a", "robot-b"}
-
             assert client.get("/metadata").json()["scheduling_algorithm"] == TWO_ROBOT_ALGORITHM
 
             # Characterize a complete trial boundary: disconnected robots,

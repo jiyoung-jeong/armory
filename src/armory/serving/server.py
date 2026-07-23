@@ -29,7 +29,6 @@ from fastapi import FastAPI, WebSocket
 
 from armory.backends.types import PolicyFactory
 from armory.serving import runtime as _runtime
-from armory.serving.metrics import MetricsStore
 from armory.serving.protocol import ServerMetadata
 from armory.serving.routes import register_routes
 from armory.serving.session import serve_websocket_session
@@ -45,13 +44,11 @@ def create_app(
     log_queue: mp.Queue | None = None,
 ) -> FastAPI:
     """Compose the server runtime, WebSocket transport, and HTTP routes."""
-    metrics_store = MetricsStore()
     lifespan = _runtime.create_lifespan(
         metadata,
         policy_factory,
         scheduler_kwargs,
         log_queue,
-        metrics_store,
     )
     app = FastAPI(lifespan=lifespan)
 
@@ -67,7 +64,7 @@ def create_app(
             request_ids=_request_id_counter,
         )
 
-    register_routes(app, metadata, metrics_store)
+    register_routes(app, metadata)
     return app
 
 

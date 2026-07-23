@@ -1,5 +1,4 @@
 import datetime
-import json
 import logging
 import multiprocessing
 import pathlib
@@ -200,10 +199,6 @@ def main(args: Args) -> None:
     args.to_json(args.output_dir / "experiment_args.json")
 
     run_fleet(args)
-
-    if control_client is not None:
-        history = control_client.fetch_server_metrics()
-        (args.output_dir / "server_metrics_history.json").write_text(json.dumps(history, indent=2))
 
     calculate_metrics(args.output_dir)
     generate_all_plots(args.output_dir)

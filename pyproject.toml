@@ -17,9 +17,6 @@ dev-mode-dirs = ["src", "src/backends", "third_party/libero", "armory-client/src
 "src/backends/openpi_adapter" = "openpi_adapter"
 "src/backends/gr00t_adapter" = "gr00t_adapter"
 
-[tool.hatch.build.targets.wheel.force-include]
-"configs/inference_profiles.json" = "armory/backends/inference_profiles.json"
-
 [tool.uv]
 required-environments = ["sys_platform == 'linux'"]
 

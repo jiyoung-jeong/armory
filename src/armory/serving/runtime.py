@@ -11,7 +11,6 @@ import asyncio
 import logging
 import multiprocessing as mp
 import os
-import queue
 import signal
 import uuid
 from collections.abc import Callable
@@ -26,10 +25,9 @@ from fastapi.concurrency import asynccontextmanager
 
 from armory.backends.types import PolicyFactory
 from armory.serving.engine import GpuWorker
-from armory.serving.metrics import MetricsStore
 from armory.serving.protocol import ServerMetadata
 from armory.serving.scheduler import SchedulerWorker
-from armory.serving.schemas import BatchProfile, ResponseBatch, SchedulerDecision
+from armory.serving.schemas import BatchProfile, ResponseBatch
 from armory.serving.slots import RobotSlots
 from armory_client.messages import ConnectRequest
 
@@ -50,7 +48,6 @@ class ServerState:
     scheduler_sock: zmq.asyncio.Socket  # PUB to scheduler
     response_queues: dict[str, asyncio.Queue]
     slots: RobotSlots  # WS manages slot allocation
-    metrics_store: MetricsStore
     robot_metadata: dict[str, ConnectRequest]
     batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
     # Current effective scheduler config. Mutated by POST /reconfigure so
@@ -65,7 +62,6 @@ class ServerState:
 async def _router_task(
     response_sock: zmq.asyncio.Socket,
     response_queues: dict[str, asyncio.Queue],
-    metrics_store: MetricsStore,
 ) -> None:
     """Dispatch GPU response batches to their per-robot queues."""
     logger.info("Router task starting")
@@ -77,7 +73,6 @@ async def _router_task(
             assert isinstance(msg, ResponseBatch)
             logger.debug("Received response batch: %s", msg)
 
-            metrics_store.record_batch(msg)
             for response in msg.responses:
                 response_queue = response_queues.get(response.robot_id)
                 if response_queue is not None:
@@ -109,30 +104,12 @@ async def _watchdog_task(gpu_proc: mp.Process, scheduler_proc: mp.Process) -> No
                 return
 
 
-async def _scheduler_metrics_task(
-    scheduler_metrics_queue: mp.Queue,
-    metrics_store: MetricsStore,
-) -> None:
-    """Drain scheduler timing samples into the main-process metrics store."""
-    while True:
-        drained = False
-        while True:
-            try:
-                samples: list[SchedulerDecision] = scheduler_metrics_queue.get_nowait()
-            except queue.Empty:
-                break
-            metrics_store.record_scheduler_decisions(samples)
-            drained = True
-        await asyncio.sleep(0 if drained else 0.05)
-
-
 BackendResources: TypeAlias = tuple[
     mp.Process,
     mp.Process,
     RobotSlots,
     Event,
     Event,
-    mp.Queue,
     mp.Queue,
 ]
 
@@ -158,8 +135,6 @@ def _start_backend(
 ) -> BackendResources:
     slots = RobotSlots(max_robots=MAX_ROBOTS)
     batch_queue: mp.Queue = mp.Queue()
-    scheduler_metrics_queue: mp.Queue = mp.Queue()
-
     gpu_ready = mp.Event()
     sched_ready = mp.Event()
 
@@ -182,7 +157,7 @@ def _start_backend(
             socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
             batch_queue,
-            scheduler_metrics_queue,
+            None,
             metadata.max_batch_size,
             metadata.scheduling_algorithm,
             scheduler_kwargs,
@@ -203,7 +178,6 @@ def _start_backend(
         slots,
         sched_ready,
         gpu_ready,
-        scheduler_metrics_queue,
         batch_queue,
     )
 
@@ -213,7 +187,6 @@ def create_lifespan(
     policy_factory: PolicyFactory,
     scheduler_kwargs: dict[str, object] | None,
     log_queue: mp.Queue | None,
-    metrics_store: MetricsStore,
     *,
     start_backend: BackendStarter = _start_backend,
 ) -> Lifespan:
@@ -227,7 +200,6 @@ def create_lifespan(
             slots,
             sched_ready,
             gpu_ready,
-            scheduler_metrics_queue,
             batch_queue,
         ) = start_backend(
             metadata,
@@ -263,7 +235,6 @@ def create_lifespan(
             scheduler_sock=scheduler_sock,
             response_queues=response_queues,
             slots=slots,
-            metrics_store=metrics_store,
             robot_metadata={},
             batch_queue=batch_queue,
             current_algorithm=metadata.scheduling_algorithm,
@@ -272,16 +243,12 @@ def create_lifespan(
             boot_action_horizon_multipliers=boot_multipliers,
         )
 
-        router = asyncio.create_task(_router_task(response_sock, response_queues, metrics_store))
-        scheduler_metrics = asyncio.create_task(
-            _scheduler_metrics_task(scheduler_metrics_queue, metrics_store)
-        )
+        router = asyncio.create_task(_router_task(response_sock, response_queues))
         watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
 
         yield
 
         watchdog.cancel()
-        scheduler_metrics.cancel()
         router.cancel()
         gpu_proc.terminate()
         scheduler_proc.terminate()
@@ -296,7 +263,6 @@ def create_lifespan(
 
         scheduler_sock.close()
         response_sock.close()
-        scheduler_metrics_queue.close()
         zmq_ctx.term()
 
     return lifespan

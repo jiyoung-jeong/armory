@@ -7,10 +7,7 @@ import queue
 from dataclasses import asdict
 
 from fastapi import FastAPI, HTTPException, Request
-from starlette.middleware.wsgi import WSGIMiddleware
 
-from armory.serving.metrics import MetricsStore
-from armory.serving.metrics.dash_app import create_dash_app
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.runtime import ServerState
 from armory.serving.scheduler import SCHEDULER_REGISTRY
@@ -23,9 +20,8 @@ logger = logging.getLogger("armory.serving.server")
 def register_routes(
     app: FastAPI,
     metadata: ServerMetadata,
-    metrics_store: MetricsStore,
 ) -> None:
-    """Register HTTP APIs before mounting the dashboard at the root path."""
+    """Register server metadata and scheduler control APIs."""
 
     # can also be used for health check
     @app.get("/metadata")
@@ -94,20 +90,8 @@ def register_routes(
             "scheduler_kwargs": dict(kwargs),
         }
 
-    @app.get("/")
-    async def get_metrics(
-        request: Request, window_s: float | None = None, sla_pct: float = 10.0
-    ) -> dict:
-        return request.app.state.server.metrics_store.snapshot(window_s, sla_pct=sla_pct)
-
-    @app.get("/save-metrics")
-    async def save_metrics(request: Request) -> dict:
-        # TODO: server-side normalization may be needed if this endpoint becomes
-        # the source for Prometheus-style metric export.
-        return asdict(request.app.state.server.metrics_store)
-
     @app.post("/reset")
-    async def reset_metrics(request: Request) -> dict:
+    async def reset_server(request: Request) -> dict:
         state: ServerState = request.app.state.server
         # Drain queued GPU work before clearing scheduler in-flight state.
         drained = 0
@@ -120,8 +104,4 @@ def register_routes(
         if drained:
             logger.info("Reset: drained %d pending batches from queue", drained)
         await state.scheduler_sock.send_pyobj(ResetAll())
-        state.metrics_store.reset()
         return {"status": "ok", "drained_batches": drained}
-
-    dash_app = create_dash_app(metadata, metrics_store)
-    app.mount("/", WSGIMiddleware(dash_app.server))

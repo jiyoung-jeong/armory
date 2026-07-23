@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from starlette.routing import Mount
-
 import armory.serving.server as server
 from armory.serving.protocol import ServerMetadata
 
@@ -33,15 +31,11 @@ def test_create_app_only_composes_runtime_until_lifespan_starts() -> None:
     application_paths = [
         route.path
         for route in app.routes
-        if route.path in {"/ws", "/metadata", "/reconfigure", "/", "/save-metrics", "/reset"}
+        if route.path in {"/ws", "/metadata", "/reconfigure", "/reset"}
     ]
     assert application_paths == [
         "/ws",
         "/metadata",
         "/reconfigure",
-        "/",
-        "/save-metrics",
         "/reset",
     ]
-    assert isinstance(app.routes[-1], Mount)
-    assert app.routes[-1].path == ""

@@ -12,17 +12,7 @@ import numpy as np
 from armory.backends.types import PolicyRequest, PolicyResult
 from armory_client.messages import InferRequest, InferType
 
-
-def _profile_path() -> Path:
-    packaged = Path(__file__).with_name("inference_profiles.json")
-    if packaged.exists():
-        return packaged
-    # Editable source tree: Hatch places the root config beside this module in
-    # built wheels, while local development retains the existing configs path.
-    return Path(__file__).parents[3] / "configs" / "inference_profiles.json"
-
-
-with _profile_path().open() as f:
+with Path(__file__).with_name("inference_profiles.json").open() as f:
     INFERENCE_PROFILES = json.load(f)
 
 

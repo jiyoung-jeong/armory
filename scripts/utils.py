@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
 import subprocess
 import time
@@ -13,6 +12,7 @@ from typing import Any, NamedTuple, Self
 import numpy as np
 import tyro
 
+from armory.backends.mock import INFERENCE_PROFILES
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory.serving.protocol import ServerMetadata
 from armory_client.messages import InferRequest, InferType
@@ -24,9 +24,6 @@ from gr00t_adapter.serve_factory import (  # noqa: E501
     is_groot_model,
 )
 from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
-
-with open("configs/inference_profiles.json") as f:
-    INFERENCE_PROFILES = json.load(f)
 
 
 class JsonArgs(JSONBaseModel):
