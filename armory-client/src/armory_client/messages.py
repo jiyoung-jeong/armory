@@ -117,33 +117,6 @@ class ActionChunk:
 
 
 @dataclass(frozen=True)
-class EpisodeStart:
-    task_suite_name: str
-    task_id: int
-    episode_idx: int
-    max_episode_steps: int
-    task_language: str
-    type: Literal["episode_start"] = "episode_start"
-
-
-@dataclass(frozen=True)
-class EpisodeStep:
-    client_timestamp: float = 0.0
-    type: Literal["episode_step"] = "episode_step"
-
-
-@dataclass(frozen=True)
-class EpisodeEnd:
-    task_suite_name: str
-    task_id: int
-    episode_idx: int
-    success: bool
-    duration_s: float
-    steps_taken: int
-    type: Literal["episode_end"] = "episode_end"
-
-
-@dataclass(frozen=True)
 class ConnectRequest:
     robot_id: str
     control_hz: float
