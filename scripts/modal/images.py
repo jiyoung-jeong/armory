@@ -123,8 +123,24 @@ def _add_libero_data(image: modal.Image) -> modal.Image:
         image = image.add_local_dir(
             str(REPO_ROOT / "third_party/libero/libero/libero" / name),
             remote_path=f"/root/libero/libero/{name}",
+            # These simulator assets change rarely. Bake them into the image so
+            # Modal can reuse the content-addressed image layer instead of
+            # re-uploading a live mount on every app deployment.
+            copy=True,
         )
     return image
+
+
+def _add_libero_source(image: modal.Image) -> modal.Image:
+    """Bake LIBERO's Python source without duplicating its static data mounts."""
+    return image.add_local_dir(
+        str(REPO_ROOT / "third_party/libero/libero"),
+        remote_path="/root/libero",
+        # The three data trees are added by _add_libero_data above. Excluding
+        # them here avoids remounting them as part of the Python package.
+        ignore=["libero/assets/**", "libero/bddl_files/**", "libero/init_files/**"],
+        copy=True,
+    )
 
 
 def _add_server_third_party_sources(image: modal.Image) -> modal.Image:
@@ -180,24 +196,25 @@ gpu_server_image = _add_server_third_party_sources(
     )
 )
 
-gpu_libero_client_image = _add_libero_data(
-    _add_repo_sources(
-        _sync(
-            _bake_libero_config(
-                _add_nvidia_egl_icd(
-                    _cuda_runtime_base.apt_install(
-                        *_EGL_APT, "build-essential", "clang", "cmake"
-                    ).env(_LIBERO_CLIENT_ENV)
-                )
-            ).workdir(str(REMOTE_ROOT)),
-            "evaluation",
-            "libero",
-        ),
-        "armory",
-        "evaluation",
-        "armory_client",
-        "libero",
-    )
+gpu_libero_client_image = _add_repo_sources(
+    _add_libero_data(
+        _add_libero_source(
+            _sync(
+                _bake_libero_config(
+                    _add_nvidia_egl_icd(
+                        _cuda_runtime_base.apt_install(
+                            *_EGL_APT, "build-essential", "clang", "cmake"
+                        ).env(_LIBERO_CLIENT_ENV)
+                    )
+                ).workdir(str(REMOTE_ROOT)),
+                "evaluation",
+                "libero",
+            )
+        )
+    ),
+    "armory",
+    "evaluation",
+    "armory_client",
 )
 
 cpu_mock_image = _add_repo_sources(

@@ -137,6 +137,18 @@ def _build_actions_left_matrix(
             0.0,
         )
 
+    # Brokerless agents (the mock smoke test) save empty traces. Treat them
+    # exactly like absent actions_left data rather than attempting to derive a
+    # wall-clock origin from an empty timestamp array.
+    if not any(len(ts) > 0 for episodes in by_robot.values() for ts, _ in episodes):
+        return (
+            [],
+            np.empty((0, 0), dtype=float),
+            [],
+            float(control_hz or _load_control_hz(output_path)),
+            0.0,
+        )
+
     robots = sorted(by_robot.keys(), key=int, reverse=True)
 
     # Canvas rate: caller-supplied wins; otherwise derive from data so the

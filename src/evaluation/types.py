@@ -46,5 +46,5 @@ class ExperimentConfig(JSONBaseModel):
     max_steps_per_episode: int = Field(gt=0, default=100)
 
     robots: list[Robot] = [Robot()]
-    time_limit: float = Field(default=0.0, ge=0.0)
+    time_limit: float = Field(default=10.0, ge=0.0)
     seed: int = Field(default=7, ge=0)

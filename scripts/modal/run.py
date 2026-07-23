@@ -47,6 +47,11 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "outputs")
     run_dir = str(REMOTE_ROOT / stamp)
 
     client_cfg = json.loads(pathlib.Path(json_path).read_text()) if json_path else {}
+    # ``--json-path`` describes ExperimentConfig directly; scripts.run.Args
+    # nests it under ``experiment_config``. Also accept an already-wrapped
+    # Args payload for callers that use scripts.run's native schema.
+    if "experiment_config" not in client_cfg:
+        client_cfg = {"experiment_config": client_cfg}
     client_cfg["overwrite"] = True
     client_cfg["output_dir"] = str(REMOTE_ROOT / stamp)
     env = EnvironmentType(client_cfg.get("env", EnvironmentType.MOCK))

@@ -13,6 +13,7 @@ from evaluation import image_tools
 from evaluation.envs.base import Environment
 
 LIBERO_DUMMY_ACTION = [0.0] * 6 + [-1.0]
+LIBERO_TASK_SUITE = "libero_10"
 NUM_STEPS_WAIT = 10
 LIBERO_ENV_RESOLUTION = 256
 RESIZE_SIZE = 224
@@ -73,12 +74,11 @@ class LiberoSimEnvironment(Environment):
         self,
         task_id: int,
         *,
-        task_suite_name: str = "libero_10",
         max_episode_steps: int = 300,
         seed: int = 42,
     ) -> None:
         benchmark_dict: dict[str, type[Benchmark]] = get_benchmark_dict()
-        task_suite = benchmark_dict[task_suite_name]()
+        task_suite = benchmark_dict[LIBERO_TASK_SUITE]()
 
         task: Task = task_suite.get_task(task_id)
         self._env = get_libero_env(task, seed=seed)

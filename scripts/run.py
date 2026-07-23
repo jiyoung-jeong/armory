@@ -28,6 +28,7 @@ from evaluation.types import EnvironmentType, ExperimentConfig
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)
+LIBERO_TASK_SUITE = "libero_10"
 
 
 class AgentType(Enum):
@@ -56,15 +57,14 @@ def create_environment(config: ExperimentConfig, robot_idx: int) -> _environment
     """Build robot ``robot_idx``'s environment. Each robot runs its own task
     (``task_id = robot_idx``) and gets an offset seed."""
     if config.env == EnvironmentType.MOCK:
-        return MockEnvironment(max_episode_steps=config.max_steps)
+        return MockEnvironment(max_episode_steps=config.max_steps_per_episode)
     if config.env == EnvironmentType.LIBERO:
         # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
         from evaluation.envs.libero import LiberoSimEnvironment
 
         return LiberoSimEnvironment(
             task_id=robot_idx,
-            task_suite_name=config.task_suite_name,
-            max_episode_steps=config.max_steps,
+            max_episode_steps=config.max_steps_per_episode,
             seed=config.seed + robot_idx,
         )
     raise ValueError(f"Unsupported env: {config.env}")
@@ -112,7 +112,7 @@ def run_robot(args: Args, robot_idx: int) -> None:
     meta = SaveMeta(
         out_dir=args.output_dir,
         robot_idx=robot_idx,
-        task_suite_name=config.task_suite_name,
+        task_suite_name=LIBERO_TASK_SUITE if config.env == EnvironmentType.LIBERO else "mock",
         task_id=robot_idx,
         task_language=environment.task_language,
         control_hz=config.robots[robot_idx].control_hz,
@@ -129,10 +129,9 @@ def run_robot(args: Args, robot_idx: int) -> None:
 
             # Snapshot the broker's decision trace now, before the next episode's
             # reset() clears it. Empty for brokerless agents.
-            action_chunks = list(agent.broker.action_chunks) if agent.broker is not None else []
-            actions_left = (
-                list(agent.broker.actions_left_history) if agent.broker is not None else []
-            )
+            broker = getattr(agent, "broker", None)
+            action_chunks = list(broker.action_chunks) if broker is not None else []
+            actions_left = list(broker.actions_left_history) if broker is not None else []
 
             data = build_episode_save_data(rollout, action_chunks, actions_left)
             save_episode(data, meta)
@@ -141,7 +140,10 @@ def run_robot(args: Args, robot_idx: int) -> None:
         logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
 
     finally:
-        runtime.close()
+        environment.close()
+        broker = getattr(agent, "broker", None)
+        if broker is not None:
+            broker.close()
 
 
 def run_fleet(args: Args) -> None:
