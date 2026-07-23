@@ -35,11 +35,13 @@ class SaveMeta:
 
     out_dir: pathlib.Path
     robot_idx: int
+    control_hz: float
+    save_video: bool = True
+
+    # TODO: per task metadata typing
     task_suite_name: str
     task_id: int
     task_language: str
-    control_hz: float
-    save_video: bool = True
 
 
 def build_episode_save_data(

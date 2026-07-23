@@ -1,21 +1,3 @@
-"""Run one or more robots against a policy server, saving each robot's episodes.
-
-Merged single/multi-robot driver. The fleet is described by ``ExperimentConfig``
-(``configs/client/**``); robot ``i`` takes its per-robot settings from
-``experiment_config.robots[i]``, runs task ``i`` and gets an offset seed so the
-fleet isn't perfectly correlated.
-
-A **single** robot runs inline in this process (no subprocess, so it's easy to
-debug / profile / drop a breakpoint into). **Multiple** robots each run in their
-own OS process (``forkserver`` on Linux, ``spawn`` on macOS) so heavy env state
-and the websocket receive thread stay isolated per robot.
-
-``agent`` is independent of ``env``: a MOCK agent returns null actions and needs
-no server (offline loop test), while a POLICY agent talks to the remote policy
-server. So a cheap MOCK env can still drive a real POLICY client to smoke-test
-the server/client path, and a LIBERO env can run offline under a MOCK agent.
-"""
-
 import datetime
 import json
 import logging
@@ -23,6 +5,7 @@ import multiprocessing
 import pathlib
 import shutil
 import sys
+import time
 from enum import Enum
 
 from pydantic import model_validator
@@ -30,17 +13,16 @@ from pydantic import model_validator
 import logging_config
 from armory.serving.protocol import SchedulerConfig
 from armory_client.action_chunkers import BrokerConfig
-from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
-from evaluation.agents import base as _agent
+from evaluation.agents.base import Agent
 from evaluation.agents.mock_agent import MockAgent
 from evaluation.agents.policy_agent import PolicyAgent
 from evaluation.cli import JsonArgs
 from evaluation.envs import base as _environment
 from evaluation.envs.mock import MockEnvironment
 from evaluation.metrics import calculate_metrics, generate_all_plots
-from evaluation.run_robot import run_robot
-from evaluation.save import SaveMeta
+from evaluation.runtime import Runtime
+from evaluation.save import SaveMeta, build_episode_save_data, save_episode
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import EnvironmentType, ExperimentConfig
 from utils import seed_everything
@@ -60,7 +42,7 @@ class Args(JsonArgs):
 
     host: str = "0.0.0.0"
     port: int = 8080
-    output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
+    output_dir: pathlib.Path = pathlib.Path("output/run")
     overwrite: bool = False
 
     @model_validator(mode="after")
@@ -88,13 +70,11 @@ def create_environment(config: ExperimentConfig, robot_idx: int) -> _environment
     raise ValueError(f"Unsupported env: {config.env}")
 
 
-def create_agent(
-    args: Args, robot_idx: int
-) -> tuple[_agent.Agent, BidirectionalWebsocket | None, ActionChunkBroker | None]:
+def create_agent(args: Args, robot_idx: int) -> Agent:
     """Build robot ``robot_idx``'s agent plus the resources the worker must later
     close/snapshot. A MOCK agent needs no server, so it opens no websocket."""
     if args.agent == AgentType.MOCK:
-        return MockAgent(), None, None
+        return MockAgent()
 
     robot = args.experiment_config.robots[robot_idx]
     ws_client = BidirectionalWebsocket(
@@ -105,7 +85,7 @@ def create_agent(
     )
     ws_client.connect()
 
-    broker = args.experiment_config.action_chunk_broker_type.create(
+    broker = robot.action_chunk_broker_type.create(
         BrokerConfig(
             ws_client=ws_client,
             control_hz=robot.control_hz,
@@ -113,10 +93,10 @@ def create_agent(
             max_execution_horizon=robot.execution_horizon.max,
         )
     )
-    return PolicyAgent(broker), ws_client, broker
+    return PolicyAgent(broker)
 
 
-def run_one_robot(args: Args, robot_idx: int) -> None:
+def run_robot(args: Args, robot_idx: int) -> None:
     """One robot's whole life: seed, build env/agent, roll out, tear down.
 
     Called inline for a single-robot fleet and inside a worker process for a
@@ -127,7 +107,7 @@ def run_one_robot(args: Args, robot_idx: int) -> None:
     seed_everything(config.seed + robot_idx)
 
     environment = create_environment(config, robot_idx)
-    agent, ws_client, broker = create_agent(args, robot_idx)
+    agent = create_agent(args, robot_idx)
 
     meta = SaveMeta(
         out_dir=args.output_dir,
@@ -140,39 +120,41 @@ def run_one_robot(args: Args, robot_idx: int) -> None:
         save_video=config.env != EnvironmentType.MOCK,
     )
 
+    runtime = Runtime(environment, agent, control_hz=meta.control_hz)
+    deadline = time.monotonic() + args.experiment_config.time_limit
     try:
-        run_robot(
-            environment=environment,
-            agent=agent,
-            meta=meta,
-            broker=broker,
-            num_episodes=config.num_trials_per_task,
-            time_limit=config.wall_clock_time_limit_s,
-        )
+        episode = 0
+        while time.monotonic() < deadline:
+            rollout = runtime.run_episode(deadline)
+
+            # Snapshot the broker's decision trace now, before the next episode's
+            # reset() clears it. Empty for brokerless agents.
+            action_chunks = list(agent.broker.action_chunks) if agent.broker is not None else []
+            actions_left = (
+                list(agent.broker.actions_left_history) if agent.broker is not None else []
+            )
+
+            data = build_episode_save_data(rollout, action_chunks, actions_left)
+            save_episode(data, meta)
+            episode += 1
+
+        logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
+
     finally:
-        environment.close()
-        # close() stops the broker's background receive thread and the websocket;
-        # closing only ws_client would leave that daemon thread to be killed
-        # mid-I/O at interpreter exit (SIGABRT).
-        if broker is not None:
-            broker.close()
-        elif ws_client is not None:
-            ws_client.close()
+        runtime.close()
 
 
-def _run_fleet(args: Args) -> None:
-    """Roll out the fleet: inline for one robot, one process per robot otherwise."""
+def run_fleet(args: Args) -> None:
     num_robots = len(args.experiment_config.robots)
     if num_robots == 1:
+        # NOTE: runs inline for easy debugging
         logger.info("Running 1 robot inline")
-        run_one_robot(args, 0)
+        run_robot(args, 0)
         return
 
     logger.info("Launching %d robot process(es)", num_robots)
     processes = [
-        multiprocessing.Process(
-            target=run_one_robot, args=(args, robot_idx), name=f"robot_{robot_idx}"
-        )
+        multiprocessing.Process(target=run_robot, args=(args, robot_idx), name=f"robot_{robot_idx}")
         for robot_idx in range(num_robots)
     ]
     for process in processes:
@@ -204,7 +186,7 @@ def main(args: Args) -> None:
 
     args.to_json(args.output_dir / "experiment_args.json")
 
-    _run_fleet(args)
+    run_fleet(args)
 
     if control_client is not None:
         history = control_client.fetch_server_metrics()
@@ -215,9 +197,6 @@ def main(args: Args) -> None:
 
 
 def cli() -> None:
-    """Console-script entrypoint. Sets the multiprocessing start method (used only
-    when the fleet has more than one robot) before any worker is created, then
-    runs ``main``."""
     if sys.platform == "linux":
         # forkserver: workers fork from a server process that has already
         # imported the heavy libraries, so their read-only pages are shared

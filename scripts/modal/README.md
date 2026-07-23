@@ -44,11 +44,11 @@ uv run modal run scripts/modal/run.py --server mock
 uv run modal run scripts/modal/run.py --server sim
 
 # LIBERO env on a T4 (mock agent, no server): exercises the T4 LiberoClient + EGL.
-#   client.json: {"env": 1, "task_suite_name": "libero_10", "max_steps": 50}
+#   client.json: {"env": "libero", "task_suite_name": "libero_10", "max_steps": 50}
 uv run modal run scripts/modal/run.py --json-path client.json
 ```
 
-Client image is chosen from the run.py `env` field (`1`=LIBERO→T4, `2`=MOCK→CPU).
+Client image is chosen from the run.py `env` field (`"libero"`→T4, `"mock"`→CPU).
 Outputs download to `--output-dir` (default `modal_run_out/<stamp>/`).
 
 ## Scheduler sweep — `sweep_experiments.py`
@@ -87,8 +87,8 @@ verbatim. Current shapes:
 {"model": "pi05", "env": "libero", "max_batch_size": 1, "port": 8080}
 
 // sweep client config  ->  evaluation.types.ExperimentConfig (flat)
-//   env is an INT enum: 1 = LIBERO, 2 = MOCK.  robots is a list (len = num_robots).
-{"env": 2, "task_suite_name": "mock", "max_steps": 50, "seed": 7, "robots": [{}, {}]}
+//   env is "libero" or "mock". robots is a list (len = num_robots).
+{"env": "mock", "task_suite_name": "mock", "max_steps": 50, "seed": 7, "robots": [{}, {}]}
 ```
 
 `--server-policy mock` rewrites the server config's policy to a weightless `Mock`

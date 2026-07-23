@@ -10,8 +10,8 @@
     uv run modal run scripts/modal/run.py --json-path client.json --server mock
 
 The server/client workers and the tunnel handshake are shared with setups.py.
-The client image is picked from the run.py Args `env` (1=LIBERO -> GPU, 2=MOCK ->
-CPU). Outputs land on the artifacts volume and download to --output-dir.
+The client image is picked from the run.py Args `env` ("libero" -> GPU,
+"mock" -> CPU). Outputs land on the artifacts volume and download to --output-dir.
 """
 
 from __future__ import annotations
@@ -33,11 +33,13 @@ from scripts.modal.setups import (
 )
 from scripts.modal.utils import ARTIFACTS_VOLUME_NAME
 
+from evaluation.types import EnvironmentType
+
 PORT = 8080
 
 
 @app.local_entrypoint()
-def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run_out") -> None:
+def main(json_path: str = "", server: str = "none", output_dir: str = "outputs") -> None:
     if server not in {"none", "mock", "sim"}:
         raise SystemExit("--server must be 'none', 'mock', or 'sim'.")
 
@@ -46,9 +48,9 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "modal_run
 
     client_cfg = json.loads(pathlib.Path(json_path).read_text()) if json_path else {}
     client_cfg["overwrite"] = True
-    client_cfg["output_dir"] = str(REMOTE_ROOT / stamp / "outputs")
-    env = int(client_cfg.get("env", 2))  # 1=LIBERO, 2=MOCK
-    client = LiberoClient() if env == 1 else CpuMockClient()
+    client_cfg["output_dir"] = str(REMOTE_ROOT / stamp)
+    env = EnvironmentType(client_cfg.get("env", EnvironmentType.MOCK))
+    client = {EnvironmentType.LIBERO: LiberoClient, EnvironmentType.MOCK: CpuMockClient}[env]()
 
     with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
         if server == "none":
