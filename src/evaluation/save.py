@@ -9,20 +9,30 @@ from __future__ import annotations
 import dataclasses
 import logging
 import pathlib
+from dataclasses import dataclass
 
 import imageio
 import numpy as np
+import pandas as pd
 
+from armory_client.schemas import ActionChunk
+from evaluation.recording import JSONDataclass, Timestamp
 from evaluation.runtime import Rollout
-from evaluation.saver_utils import (
-    Result,
-    save_action_chunks,
-    save_actions_left,
-    save_cost_history_npy,
-    save_timestamps,
-)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Result(JSONDataclass):
+    """Per-episode metadata persisted to ``metadata.json``."""
+
+    robot_idx: int
+    success: bool
+    steps_taken: int
+    task_suite_name: str
+    task_id: int
+    task_language: str
+    episode_idx: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -45,14 +55,51 @@ def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
     out_folder, episode_idx = _next_out_folder(meta, success=rollout.success)
 
     _save_metadata(out_folder, rollout, meta, episode_idx)
-    save_timestamps(rollout.timestamps, out_folder)
+    Timestamp.to_csv(rollout.timestamps, out_folder / "timestamps.csv")
     save_action_chunks(rollout.action_chunks, out_folder)
     if meta.save_video:
         _save_video(out_folder, rollout, meta.control_hz)
     _save_debug_data(out_folder, rollout)
-    save_actions_left(rollout.actions_left, out_folder)
-    _save_cost_history(out_folder, rollout, meta)
+    np.save(
+        out_folder / "actions_left.npy",
+        np.array(rollout.actions_left, dtype=np.int32),
+    )
+
+    np.save(out_folder / "cost_history.npy", cost_history(rollout))
     logger.info("Saved episode %d to %s", episode_idx, out_folder)
+
+
+def save_action_chunks(action_chunks: tuple[ActionChunk, ...], out_folder: pathlib.Path) -> None:
+    if not action_chunks:
+        return
+    data: dict[str, list] = {
+        "chunk_id": [],
+        "observation_step": [],
+        "action_index_start": [],
+        "execution_start_step": [],
+        "actions": [],
+        "min_execution_horizon": [],
+        "max_execution_horizon": [],
+        "request_timestamp": [],
+        "response_timestamp": [],
+        "request_id": [],
+        "noise": [],
+    }
+    for chunk in action_chunks:
+        data["chunk_id"].append(chunk.chunk_id)
+        data["observation_step"].append(chunk.observation_step)
+        data["action_index_start"].append(chunk.action_index_start)
+        data["execution_start_step"].append(chunk.execution_start_step)
+        data["actions"].append(chunk.actions.tolist())
+        data["min_execution_horizon"].append(chunk.min_execution_horizon)
+        data["max_execution_horizon"].append(chunk.max_execution_horizon)
+        data["request_timestamp"].append(chunk.request_timestamp)
+        data["response_timestamp"].append(chunk.response_timestamp)
+        data["request_id"].append(chunk.request_id)
+        data["noise"].append(chunk.noise.tolist() if chunk.noise is not None else None)
+    pd.DataFrame(data).to_parquet(
+        out_folder / "action_chunks.parquet", engine="pyarrow", index=False
+    )
 
 
 def cost_history(rollout: Rollout) -> list[float]:
@@ -131,7 +178,3 @@ def _save_debug_data(out_folder: pathlib.Path, rollout: Rollout) -> None:
     debug_file = out_folder / "debug_data.npz"
     np.savez_compressed(debug_file, **to_save)
     logger.info("Saved %d chunks to %s", len(rollout.action_chunks), debug_file)
-
-
-def _save_cost_history(out_folder: pathlib.Path, rollout: Rollout, meta: SaveMeta) -> None:
-    save_cost_history_npy(cost_history(rollout), out_folder)

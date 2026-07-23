@@ -15,7 +15,7 @@ from matplotlib.patches import Patch
 from rich.console import Console
 from rich.table import Table
 
-from evaluation.saver_utils import Result
+from evaluation.save import Result
 
 logger = logging.getLogger(__name__)
 
