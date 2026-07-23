@@ -1,5 +1,5 @@
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from armory_client.schemas import Action, ActionChunk, Observation
 
@@ -8,8 +8,8 @@ from armory_client.schemas import Action, ActionChunk, Observation
 class AgentEpisodeData:
     """Agent-owned diagnostics captured with a completed episode."""
 
-    action_chunks: list[ActionChunk] = field(default_factory=list)
-    actions_left: list[int] = field(default_factory=list)
+    action_chunks: tuple[ActionChunk, ...] = ()
+    actions_left: tuple[int, ...] = ()
 
 
 class Agent(abc.ABC):

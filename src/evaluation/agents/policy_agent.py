@@ -34,4 +34,6 @@ class PolicyAgent(Agent):
     @override
     def snapshot_episode_data(self) -> AgentEpisodeData:
         action_chunks, actions_left = self._broker.snapshot_episode_data()
-        return AgentEpisodeData(action_chunks=action_chunks, actions_left=actions_left)
+        return AgentEpisodeData(
+            action_chunks=tuple(action_chunks), actions_left=tuple(actions_left)
+        )

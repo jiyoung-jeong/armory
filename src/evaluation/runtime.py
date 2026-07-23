@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _SPIN_WINDOW_S = 0.002
 
 
-@dataclass
+@dataclass(frozen=True)
 class Rollout:
     """The product of running one episode: everything needed to log/save it.
 
@@ -27,12 +27,12 @@ class Rollout:
     at the same boundary, before the next episode's reset clears them.
     """
 
-    observations: list[Observation]
-    timestamps: list[Timestamp]
+    observations: tuple[Observation, ...]
+    timestamps: tuple[Timestamp, ...]
     success: bool
     initial_state: np.ndarray | None
-    action_chunks: list[ActionChunk]
-    actions_left: list[int]
+    action_chunks: tuple[ActionChunk, ...]
+    actions_left: tuple[int, ...]
 
 
 class Runtime:
@@ -83,12 +83,12 @@ class Runtime:
         episode_data = self._agent.snapshot_episode_data()
         logger.info("Episode completed.")
         return Rollout(
-            observations=observations,
-            timestamps=timestamps,
+            observations=tuple(observations),
+            timestamps=tuple(timestamps),
             success=self._environment.current_success,
             initial_state=self._environment.current_initial_state,
-            action_chunks=episode_data.action_chunks,
-            actions_left=episode_data.actions_left,
+            action_chunks=tuple(episode_data.action_chunks),
+            actions_left=tuple(episode_data.actions_left),
         )
 
     def close(self) -> None:

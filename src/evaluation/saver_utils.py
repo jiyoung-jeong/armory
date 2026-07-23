@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from armory_client.schemas import ActionChunk, Observation
+from armory_client.schemas import ActionChunk
 from evaluation.recording import JSONDataclass, Timestamp
 
 
@@ -34,25 +34,11 @@ class Result(JSONDataclass):
     episode_idx: int
 
 
-@dataclass
-class EpisodeSaveData:
-    """Snapshot of one episode's data, safe to hand off to a background thread."""
-
-    timestamps: list[Timestamp]
-    observations_buffer: dict[int, Observation]
-    action_chunks: list[ActionChunk]
-    actions_left_snapshot: list[int]
-    cost_history: list[float]
-    success: bool
-    episode_idx: int
-    initial_state: np.ndarray | None
-
-
-def save_timestamps(timestamps: list[Timestamp], out_folder: pathlib.Path) -> None:
+def save_timestamps(timestamps: tuple[Timestamp, ...], out_folder: pathlib.Path) -> None:
     Timestamp.to_csv(timestamps, out_folder / "timestamps.csv")
 
 
-def save_action_chunks(action_chunks: list[ActionChunk], out_folder: pathlib.Path) -> None:
+def save_action_chunks(action_chunks: tuple[ActionChunk, ...], out_folder: pathlib.Path) -> None:
     if not action_chunks:
         return
     data: dict[str, list] = {
@@ -85,7 +71,7 @@ def save_action_chunks(action_chunks: list[ActionChunk], out_folder: pathlib.Pat
     )
 
 
-def save_actions_left(actions_left_snapshot: list[int], out_folder: pathlib.Path) -> None:
+def save_actions_left(actions_left_snapshot: tuple[int, ...], out_folder: pathlib.Path) -> None:
     np.save(
         out_folder / "actions_left.npy",
         np.array(actions_left_snapshot, dtype=np.int32),

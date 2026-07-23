@@ -30,9 +30,9 @@ from typing_extensions import override
 from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.schemas import Action, Observation
 from evaluation.recording import Timestamp
-from evaluation.runtime import subscriber as _subscriber
-from evaluation.save import (
-    EpisodeSaveData,
+from evaluation.runtime import Rollout
+from evaluation.save import cost_history
+from evaluation.saver_utils import (
     Result,
     plot_cost_history,
     save_action_chunks,
@@ -79,7 +79,7 @@ def _robot_idx_from_id(robot_id: str) -> int:
     return int(match.group(1)) if match else 0
 
 
-class RealSaver(_subscriber.Subscriber):
+class RealSaver(Subscriber):
     """Saves real-robot trajectory data; on-disk layout matches the sim Saver."""
 
     def __init__(
@@ -111,9 +111,7 @@ class RealSaver(_subscriber.Subscriber):
 
         # Per-episode buffers (initialized in on_episode_start).
         self._timestamps: list[Timestamp] = []
-        self._observations_buffer: dict[int, Observation] = {}
-        self._actions_left_snapshot: list[int] = []
-        self._cost_history: list[float] = []
+        self._observations: list[Observation] = []
         self._initial_state: np.ndarray | None = None
 
     # ── lifecycle ────────────────────────────────────────────────
@@ -121,9 +119,7 @@ class RealSaver(_subscriber.Subscriber):
     @override
     def on_episode_start(self) -> None:
         self._timestamps = []
-        self._observations_buffer = {}
-        self._actions_left_snapshot = []
-        self._cost_history = []
+        self._observations = []
         self._initial_state = None
 
     @override
@@ -133,7 +129,7 @@ class RealSaver(_subscriber.Subscriber):
             # current_initial_state.
             self._initial_state = np.asarray(observation.state).copy()
 
-        self._observations_buffer[observation.step] = observation
+        self._observations.append(observation)
 
         self._timestamps.append(
             Timestamp(
@@ -148,34 +144,20 @@ class RealSaver(_subscriber.Subscriber):
             )
         )
 
-        # Mirror sim Saver: snapshot the broker's queue depth after consuming
-        # this step's action.
-        history = self._action_chunk_broker.actions_left_history
-        self._actions_left_snapshot.append(history[-1] if history else 0)
-
-        # Cost = wall time from when the chunk's observation was sent for
-        # inference to when this step actually executed an action from it.
-        if action.action_chunk_index is not None:
-            chunk = self._action_chunk_broker.action_chunks[action.action_chunk_index]
-            cost = time.time() - chunk.request_timestamp
-        else:
-            cost = float("nan")
-        self._cost_history.append(cost)
-
     @override
     def on_episode_end(self) -> None:
-        data = EpisodeSaveData(
-            timestamps=self._timestamps,
-            observations_buffer=self._observations_buffer,
-            action_chunks=list(self._action_chunk_broker.action_chunks),
-            actions_left_snapshot=self._actions_left_snapshot,
-            cost_history=self._cost_history,
+        action_chunks, actions_left = self._action_chunk_broker.snapshot_episode_data()
+        rollout = Rollout(
+            observations=tuple(self._observations),
+            timestamps=tuple(self._timestamps),
             success=self._success_default,
-            episode_idx=self._episode_counter,
             initial_state=self._initial_state,
+            action_chunks=tuple(action_chunks),
+            actions_left=tuple(actions_left),
         )
+        episode_idx = self._episode_counter
         self._episode_counter += 1
-        self._executor.submit(self._save_all, data)
+        self._executor.submit(self._save_all, rollout, episode_idx)
 
     @override
     def close(self) -> None:
@@ -183,47 +165,46 @@ class RealSaver(_subscriber.Subscriber):
 
     # ── disk writes (same names + formats as sim Saver) ─────────
 
-    def _save_all(self, data: EpisodeSaveData) -> None:
-        out_folder = self._get_out_folder(data)
+    def _save_all(self, rollout: Rollout, episode_idx: int) -> None:
+        out_folder = self._get_out_folder(rollout, episode_idx)
         try:
-            self._save_metadata(out_folder, data)
-            save_timestamps(data.timestamps, out_folder)
-            save_action_chunks(data.action_chunks, out_folder)
+            self._save_metadata(out_folder, rollout, episode_idx)
+            save_timestamps(rollout.timestamps, out_folder)
+            save_action_chunks(rollout.action_chunks, out_folder)
             if self._save_video_enabled:
-                self._save_video(out_folder, data)
-            self._save_debug_data(out_folder, data)
-            save_actions_left(data.actions_left_snapshot, out_folder)
-            self._save_cost_history(out_folder, data)
+                self._save_video(out_folder, rollout)
+            self._save_debug_data(out_folder, rollout)
+            save_actions_left(rollout.actions_left, out_folder)
+            self._save_cost_history(out_folder, rollout)
         except Exception:
             logger.exception("RealSaver: error writing episode %s", out_folder)
 
-    def _get_out_folder(self, data: EpisodeSaveData) -> pathlib.Path:
+    def _get_out_folder(self, rollout: Rollout, episode_idx: int) -> pathlib.Path:
         # Use the snapshot's episode_idx (assigned at on_episode_end time) so
         # concurrent flushes don't collide on a disk-scan.
         robot_folder = self._out_dir / str(self._robot_idx)
         robot_folder.mkdir(parents=True, exist_ok=True)
-        success_str = "success" if data.success else "failure"
+        success_str = "success" if rollout.success else "failure"
         out_folder = (
-            robot_folder
-            / f"{data.episode_idx}_{self._task_suite_name}_{self._task_id}_{success_str}"
+            robot_folder / f"{episode_idx}_{self._task_suite_name}_{self._task_id}_{success_str}"
         )
         out_folder.mkdir(parents=True, exist_ok=True)
         return out_folder
 
-    def _save_metadata(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
+    def _save_metadata(self, out_folder: pathlib.Path, rollout: Rollout, episode_idx: int) -> None:
         result = Result(
-            success=data.success,
+            success=rollout.success,
             robot_idx=self._robot_idx,
-            steps_taken=len(data.timestamps),
+            steps_taken=len(rollout.timestamps),
             task_suite_name=self._task_suite_name,
             task_id=self._task_id,
             task_language=self._prompt,
-            episode_idx=data.episode_idx,
+            episode_idx=episode_idx,
         )
         result.to_json(out_folder / "metadata.json")
 
-    def _save_video(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
-        images = [obs.image for obs in data.observations_buffer.values() if obs.image is not None]
+    def _save_video(self, out_folder: pathlib.Path, rollout: Rollout) -> None:
+        images = [obs.image for obs in rollout.observations if obs.image is not None]
         if not images:
             return
         imageio.mimwrite(
@@ -232,20 +213,23 @@ class RealSaver(_subscriber.Subscriber):
             fps=self._control_hz,
         )
 
-    def _save_debug_data(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
-        has_noise = any(getattr(chunk, "noise", None) is not None for chunk in data.action_chunks)
+    def _save_debug_data(self, out_folder: pathlib.Path, rollout: Rollout) -> None:
+        has_noise = any(
+            getattr(chunk, "noise", None) is not None for chunk in rollout.action_chunks
+        )
         if not has_noise:
             return
 
         debug_data_file = out_folder / "debug_data.npz"
         data_to_save: dict[str, np.ndarray | str] = {}
 
-        if data.initial_state is not None:
-            data_to_save["initial_state"] = data.initial_state
+        if rollout.initial_state is not None:
+            data_to_save["initial_state"] = rollout.initial_state
 
-        for i, chunk in enumerate(data.action_chunks):
+        observations = {obs.step: obs for obs in rollout.observations}
+        for i, chunk in enumerate(rollout.action_chunks):
             prefix = f"chunk_{i:04d}"
-            obs = data.observations_buffer.get(chunk.observation_step)
+            obs = observations.get(chunk.observation_step)
             if obs is not None:
                 if obs.state is not None:
                     data_to_save[f"{prefix}/observation/state"] = obs.state
@@ -263,8 +247,8 @@ class RealSaver(_subscriber.Subscriber):
 
         np.savez_compressed(debug_data_file, **data_to_save)
 
-    def _save_cost_history(self, out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
-        costs = save_cost_history_npy(data.cost_history, out_folder)
+    def _save_cost_history(self, out_folder: pathlib.Path, rollout: Rollout) -> None:
+        costs = save_cost_history_npy(cost_history(rollout), out_folder)
         if costs.size == 0:
             return
         plot_cost_history(

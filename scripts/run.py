@@ -21,7 +21,7 @@ from evaluation.envs import base as _environment
 from evaluation.envs.mock import MockEnvironment
 from evaluation.metrics import calculate_metrics, generate_all_plots
 from evaluation.runtime import Runtime
-from evaluation.save import SaveMeta, build_episode_save_data, save_episode
+from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import EnvironmentType, ExperimentConfig, JsonArgs
 from utils import seed_everything
@@ -126,8 +126,7 @@ def run_robot(args: Args, robot_idx: int) -> None:
         while time.monotonic() < deadline:
             rollout = runtime.run_episode(deadline)
 
-            data = build_episode_save_data(rollout)
-            save_episode(data, meta)
+            save_episode(rollout, meta)
             episode += 1
 
         logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)

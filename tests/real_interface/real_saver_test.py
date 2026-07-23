@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import pytest
 
 from armory_client.schemas import Action, ActionChunk, Observation
-from evaluation.runtime.real_saver import RealSaver, Result, _robot_idx_from_id
+from evaluation.real_saver import RealSaver, Result, _robot_idx_from_id
 
 
 class _FakeBroker:
@@ -35,9 +36,19 @@ class _FakeBroker:
         self.action_chunks.append(chunk)
         self.actions_left_history.append(1)
 
+    def snapshot_episode_data(self) -> tuple[list[ActionChunk], list[int]]:
+        return list(self.action_chunks), list(self.actions_left_history)
 
-def _obs(step: int) -> Observation:
-    return Observation(
+
+@dataclass
+class _Observation(Observation):
+    state: np.ndarray
+    image: np.ndarray
+    wrist_image: np.ndarray
+
+
+def _obs(step: int) -> _Observation:
+    return _Observation(
         state=np.array([float(step)] * 7, dtype=np.float32),
         step=step,
         image=np.zeros((4, 4, 3), dtype=np.uint8),
