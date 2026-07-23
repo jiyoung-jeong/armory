@@ -26,3 +26,7 @@ class PolicyAgent(Agent):
     @override
     def reset(self) -> None:
         self._broker.reset()
+
+    @override
+    def close(self) -> None:
+        self._broker.close()

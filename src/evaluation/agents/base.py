@@ -11,3 +11,7 @@ class Agent(abc.ABC):
     @abc.abstractmethod
     def reset(self) -> None:
         pass
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        """Release resources owned by this agent."""

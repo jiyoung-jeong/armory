@@ -140,10 +140,7 @@ def run_robot(args: Args, robot_idx: int) -> None:
         logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
 
     finally:
-        environment.close()
-        broker = getattr(agent, "broker", None)
-        if broker is not None:
-            broker.close()
+        runtime.close()
 
 
 def run_fleet(args: Args) -> None:

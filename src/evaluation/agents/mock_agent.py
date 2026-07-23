@@ -32,3 +32,7 @@ class MockAgent(Agent):
     @override
     def reset(self) -> None:
         pass
+
+    @override
+    def close(self) -> None:
+        pass

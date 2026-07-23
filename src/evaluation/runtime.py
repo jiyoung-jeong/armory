@@ -87,6 +87,13 @@ class Runtime:
             initial_state=self._environment.current_initial_state,
         )
 
+    def close(self) -> None:
+        """Release the environment and agent resources owned by this runtime."""
+        try:
+            self._environment.close()
+        finally:
+            self._agent.close()
+
     def _step(self) -> tuple[Observation, Action]:
         observation = self._environment.get_observation()
         action = self._agent.get_action(observation)
