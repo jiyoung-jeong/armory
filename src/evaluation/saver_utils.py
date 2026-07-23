@@ -1,10 +1,3 @@
-"""Shared helpers for episode data persistence.
-
-Used by both the sim ``Saver`` (sims.libero.subscribers.saver) and the
-real-robot ``RealSaver`` (runtime.real_saver) so they emit the same on-disk
-layout for the offline metrics pipeline to consume.
-"""
-
 from __future__ import annotations
 
 import pathlib
