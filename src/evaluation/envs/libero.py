@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 from typing_extensions import override
 
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation import image_tools
 from evaluation.envs.base import Environment
 from evaluation.envs.config import LiberoConfig
@@ -209,6 +209,20 @@ class LiberoSimEnvironment(Environment):
             self._done = True
         elif self._env.env.done or self._step_counter >= self._max_episode_steps:
             self._done = True
+
+    @override
+    def create_null_action(
+        self, observation: Observation, current_action_chunk: ActionChunk | None
+    ) -> Action:
+        action = np.zeros(7, dtype=np.float32)
+        if current_action_chunk is not None:
+            action[-1] = current_action_chunk.get_action(-1)[-1]
+        return Action(
+            step=None,
+            action=action,
+            action_chunk_index=None,
+            index_in_chunk=None,
+        )
 
     @override
     def close(self) -> None:

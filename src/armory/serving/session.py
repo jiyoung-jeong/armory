@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
+from armory.serving.rtc import InferType
 from armory.serving.runtime import ServerState
 from armory.serving.schemas import AckNotification, RobotID, SlotRequest, WarmupSeed
 from armory.serving.slots import SlotData
@@ -175,8 +176,8 @@ async def _receive_loop(
                     deadline=req.deadline,
                     min_execution_horizon=req.min_execution_horizon,
                     max_execution_horizon=req.max_execution_horizon,
-                    infer_type=req.infer_type,
-                    params=req.params,
+                    infer_type=InferType.SYNC,
+                    params=None,
                     noise=req.noise,
                     control_hz=state.robot_metadata[robot_id].control_hz,
                 ),
@@ -193,8 +194,8 @@ async def _receive_loop(
                 deadline=req.deadline,
                 min_execution_horizon=req.min_execution_horizon,
                 max_execution_horizon=req.max_execution_horizon,
-                infer_type=req.infer_type,
-                params=req.params,
+                infer_type=InferType.SYNC,
+                params=None,
                 noise=req.noise,
                 control_hz=state.robot_metadata[robot_id].control_hz,
             )

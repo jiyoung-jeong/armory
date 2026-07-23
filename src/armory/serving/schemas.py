@@ -5,11 +5,8 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
 import numpy as np
 
-from armory_client.messages import (
-    InferResponse,
-    InferType,
-    RTCParams,
-)
+from armory.serving.rtc import InferType, RTCParams
+from armory_client.messages import InferResponse
 
 if TYPE_CHECKING:
     from armory.serving.slots import SlotData

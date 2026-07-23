@@ -3,7 +3,6 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from armory_client.action_chunkers import ActionChunkBrokerType
 from evaluation.envs.config import EnvironmentConfig, MockConfig
 from evaluation.recording import JSONBaseModel
 
@@ -30,7 +29,6 @@ class NetworkLatency(BaseModel):
 
 
 class Robot(BaseModel):
-    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
     execution_horizon: ExecutionHorizon = ExecutionHorizon()
     control_hz: int = Field(gt=0, default=20)
 

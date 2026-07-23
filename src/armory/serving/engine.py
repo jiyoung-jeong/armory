@@ -11,6 +11,7 @@ import zmq
 
 from armory.backends.types import PolicyFactory, PolicyResult, ServingPolicy
 from armory.scheduling.latency import EMALatencyTracker
+from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -26,9 +27,7 @@ from armory.serving.slots import RobotSlots, SlotData
 from armory.utils import logging_config
 from armory_client.messages import (
     InferResponse,
-    InferType,
     ResetRequest,
-    RTCParams,
 )
 
 logger = logging.getLogger(__name__)

@@ -1,35 +1,7 @@
 from dataclasses import dataclass
-from enum import Enum
 from typing import Literal
 
 import numpy as np
-
-
-# TODO: merge with broker types
-class InferType(Enum):
-    SYNC = "sync"
-    INFERENCE_TIME_RTC = "inference_time_rtc"
-    TRAIN_TIME_RTC = "train_time_rtc"
-    VLASH = "vlash"
-
-
-@dataclass
-class RTCParams:
-    prev_action: np.ndarray  # action_horizon action_dim
-    s_param: int
-    d_param: int
-
-
-@dataclass
-class VlashParams:
-    # TODO:
-    pass
-
-
-@dataclass
-class TrainTimeRTCParams:
-    # TODO:
-    pass
 
 
 # message types shared between client and server
@@ -43,18 +15,8 @@ class InferRequest:
     deadline: float
     min_execution_horizon: int
     max_execution_horizon: int
-    infer_type: InferType
-    params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
     noise: np.ndarray | None = None  # action_horizon noise_dim
     type: Literal["infer"] = "infer"
-
-    def __post_init__(self) -> None:
-        if isinstance(self.infer_type, str):
-            object.__setattr__(self, "infer_type", InferType(self.infer_type))
-
-        if isinstance(self.params, dict):
-            if self.infer_type == InferType.INFERENCE_TIME_RTC:
-                object.__setattr__(self, "params", RTCParams(**self.params))
 
 
 @dataclass(frozen=True)
@@ -114,6 +76,7 @@ class ActionChunk:
     #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
     #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
     origin: str = "queued"
+    # TODO: lifecycle does not belong on client
 
 
 @dataclass(frozen=True)

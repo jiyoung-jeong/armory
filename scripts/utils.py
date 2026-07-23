@@ -15,7 +15,7 @@ import tyro
 from armory.backends.mock import INFERENCE_PROFILES
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory.serving.protocol import ServerMetadata
-from armory_client.messages import InferRequest, InferType
+from armory_client.messages import InferRequest
 from evaluation.recording import JSONBaseModel
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
@@ -224,7 +224,6 @@ class _MockPolicy:
             deadline=now + 60.0,
             min_execution_horizon=0,
             max_execution_horizon=0,
-            infer_type=InferType.SYNC,
             params=None,
             noise=None,
         )

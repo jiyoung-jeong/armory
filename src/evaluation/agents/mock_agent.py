@@ -1,11 +1,9 @@
-import numpy as np
+from collections.abc import Callable
+
 from typing_extensions import override
 
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent, AgentEpisodeData
-
-# 6-DoF arm + gripper.
-_ACTION_DIM = 7
 
 
 class MockAgent(Agent):
@@ -17,17 +15,14 @@ class MockAgent(Agent):
     being baked into every agent.
     """
 
-    def __init__(self, action_dim: int = _ACTION_DIM) -> None:
-        self._action_dim = action_dim
+    def __init__(
+        self, create_null_action: Callable[[Observation, ActionChunk | None], Action]
+    ) -> None:
+        self._create_null_action = create_null_action
 
     @override
     def get_action(self, observation: Observation) -> Action:
-        return Action(
-            step=observation.step,
-            action=np.zeros(self._action_dim, dtype=np.float32),
-            action_chunk_index=None,
-            index_in_chunk=None,
-        )
+        return self._create_null_action(observation, None)
 
     @override
     def reset(self) -> None:

@@ -7,8 +7,9 @@ import pytest
 
 from armory.scheduling.latency import LatencyTracker
 from armory.scheduling.mirror import Batch, Mirror, Robot
+from armory.serving.rtc import InferType
 from armory.serving.schemas import AckNotification, ResponseBatch, SlotRequest
-from armory_client.messages import InferResponse, InferType
+from armory_client.messages import InferResponse
 from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Scenario
 
 ROBOT_ID = "test"

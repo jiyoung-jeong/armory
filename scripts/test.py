@@ -5,7 +5,7 @@ import modal
 import numpy as np
 from scripts.modal.images import gpu_libero_client_image
 
-from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
+from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from armory_client.schemas import Action, Observation
 from evaluation.agents.policy_agent import PolicyAgent
@@ -110,15 +110,11 @@ def run(server_url: str | None) -> bytes | None:
             control_hz=CONTROL_HZ,
         )
         ws_client.connect()
-        broker = ActionChunkBrokerType.NAIVE_ASYNC.create(
-            BrokerConfig(
-                ws_client=ws_client,
-                control_hz=CONTROL_HZ,
-                min_execution_horizon=MIN_EXECUTION_HORIZON,
-                max_execution_horizon=MAX_EXECUTION_HORIZON,
-            )
+        broker = ActionChunkBroker(
+            min_execution_horizon=MIN_EXECUTION_HORIZON,
+            max_execution_horizon=MAX_EXECUTION_HORIZON,
         )
-        agent = PolicyAgent(broker=broker)
+        agent = PolicyAgent(ws_client=ws_client, broker=broker)
         saver = Saver(
             out_dir=REMOTE_OUT_DIR,
             environment=env,

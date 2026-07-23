@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from armory.backends.types import PolicyRequest, PolicyResult
-from armory_client.messages import InferRequest, InferType
+from armory_client.messages import InferRequest
 
 with Path(__file__).with_name("inference_profiles.json").open() as f:
     INFERENCE_PROFILES = json.load(f)
@@ -45,7 +45,6 @@ class MockPolicy:
             deadline=now + 60.0,
             min_execution_horizon=0,
             max_execution_horizon=0,
-            infer_type=InferType.SYNC,
             params=None,
             noise=None,
         )
