@@ -1,8 +1,5 @@
-import json
 import logging
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 
 import numpy as np
@@ -23,22 +20,21 @@ NUM_WARMUP = 100
 WARMUP_OBS_BYTES = 3 * 224 * 224 * 3  # 3 channels, 224x224 pixels, 3 bytes per pixel
 
 
-# FIXME: need Tuple and not tuple to be backwards compatible with Python 3.8 (libero environment)
-def _parse_urls(host: str, port: int | None) -> tuple[str, str]:
-    """Parse host/port into (ws_uri, http_base) tuple."""
+def _parse_ws_url(host: str, port: int | None) -> str:
+    """Parse a direct websocket endpoint from host/port."""
     explicit_scheme = False
     if host.startswith("https://"):
-        ws_scheme, http_scheme = "wss", "https"
+        ws_scheme = "wss"
         host = host[len("https://") :]
         explicit_scheme = True
     elif host.startswith("http://"):
-        ws_scheme, http_scheme = "ws", "http"
+        ws_scheme = "ws"
         host = host[len("http://") :]
         explicit_scheme = True
     else:
-        ws_scheme, http_scheme = "ws", "http"
+        ws_scheme = "ws"
     base = host if (port is None or explicit_scheme) else f"{host}:{port}"
-    return f"{ws_scheme}://{base}/ws", f"{http_scheme}://{base}"
+    return f"{ws_scheme}://{base}/ws"
 
 
 class BidirectionalWebsocket:
@@ -57,38 +53,15 @@ class BidirectionalWebsocket:
         pre_send_hook: Callable[[], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
-        self._ws_uri, self._http_base = _parse_urls(host, port)
+        self._ws_uri = _parse_ws_url(host, port)
         self._api_key = api_key
         self._pre_send_hook = pre_send_hook
         self._control_hz = control_hz
 
     def connect(self):
-        # TODO: client probably doesn't need this server metadata
-        self._server_metadata = self._wait_for_server()
-        tunnel_url = self._server_metadata.get("tunnel_url")
-        if tunnel_url:
-            tunnel_host = tunnel_url.replace("https://", "", 1)
-            self._ws_uri = f"wss://{tunnel_host}/ws"
         self._ws = self._connect_ws()
         self._handshake(self._control_hz)
         self._warmup()
-
-    @property
-    def server_metadata(self) -> dict:
-        return self._server_metadata
-
-    def _wait_for_server(self) -> dict:
-        logging.info(f"Waiting for server at {self._http_base}...")
-        while True:
-            try:
-                req = urllib.request.Request(f"{self._http_base}/metadata")
-                if self._api_key:
-                    req.add_header("Authorization", f"Api-Key {self._api_key}")
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    return json.loads(resp.read())
-            except (urllib.error.URLError, OSError):
-                logging.info("Still waiting for server...")
-                time.sleep(5)
 
     def _handshake(self, control_hz: float) -> None:
         """Send ConnectRequest with robot_id, wait for server acknowledgment."""

@@ -125,9 +125,7 @@ class ModalPolicyServer:
 
         @stable.get("/metadata")
         def metadata():
-            meta = requests.get(f"http://localhost:{PORT}/metadata").json()
-            meta["tunnel_url"] = self._url
-            return meta
+            return requests.get(f"http://localhost:{PORT}/metadata").json()
 
         @stable.get("/")
         def dashboard():
