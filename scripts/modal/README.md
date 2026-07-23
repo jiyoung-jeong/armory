@@ -8,6 +8,30 @@ change to the serving/scheduling/eval plumbing before reaching for a real GPU ru
 Prereq: `modal profile current` should print a profile (auth is already set up on
 dev machines). Every run prints a `modal.com/apps/...` dashboard link.
 
+## LIBERO source modes
+
+The default image build clones the public LIBERO fork at the revision pinned in
+`scripts/modal/images.py`. A normal Modal user therefore does **not** need to
+initialize `third_party/libero`; a fresh Armory clone plus the usual lightweight
+Modal/dev dependencies is enough:
+
+```bash
+uv sync --extra dev
+uv run modal run scripts/modal/run.py --json-path client.json
+```
+
+The clone and its simulator assets are baked into a cached Modal image layer.
+To intentionally test edits to the local LIBERO submodule instead, initialize it
+and opt into the local image source:
+
+```bash
+git submodule update --init third_party/libero
+ARMORY_MODAL_LIBERO_SOURCE=local uv run modal run scripts/modal/run.py --json-path client.json
+```
+
+When advancing LIBERO, update both the `third_party/libero` gitlink and
+`LIBERO_REVISION` in `scripts/modal/images.py` to the same commit.
+
 ## What runs where
 
 A run is always a **policy server** talking to a **client**, each on its **own

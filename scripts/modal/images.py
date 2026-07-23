@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import modal
@@ -9,6 +10,17 @@ import modal
 REMOTE_ROOT = pathlib.Path("/app")
 CHECKPOINT_VOLUME_PATH = "/checkpoints"
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+LIBERO_ROOT = pathlib.Path("/root/libero")
+# Keep the cloud image reproducible and in lockstep with the checked-in
+# submodule. Updating this is an intentional image-cache invalidation.
+LIBERO_REPOSITORY = "https://github.com/rohan-bansal/LIBERO"
+LIBERO_REVISION = "65a492ad4019afb1c69372449e2600d3199bb93c"
+LIBERO_SOURCE_MODE = os.environ.get("ARMORY_MODAL_LIBERO_SOURCE", "remote")
+
+if LIBERO_SOURCE_MODE not in {"local", "remote"}:
+    raise ValueError(
+        f"ARMORY_MODAL_LIBERO_SOURCE must be 'local' or 'remote', not {LIBERO_SOURCE_MODE!r}"
+    )
 
 _EGL_APT = (
     "libgl1",
@@ -50,6 +62,10 @@ _LIBERO_CLIENT_ENV = {
     # it, causing EGL to silently fall back to Mesa's software llvmpipe
     # renderer with no error or warning.
     "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics",
+    # LIBERO is checked out during the default image build rather than being
+    # installed locally through uv. This also makes its package importable in
+    # the explicit local-development source mode below.
+    "PYTHONPATH": str(LIBERO_ROOT),
 }
 
 
@@ -143,6 +159,14 @@ def _add_libero_source(image: modal.Image) -> modal.Image:
     )
 
 
+def _clone_libero_source(image: modal.Image) -> modal.Image:
+    """Fetch the pinned LIBERO revision for the shareable default image."""
+    return image.run_commands(
+        f"git clone {LIBERO_REPOSITORY} {LIBERO_ROOT}",
+        f"git -C {LIBERO_ROOT} checkout --detach {LIBERO_REVISION}",
+    )
+
+
 def _add_server_third_party_sources(image: modal.Image) -> modal.Image:
     """Add openpi/openpi-client/gr00t source by explicit path instead of
     ``add_local_python_source``.
@@ -196,22 +220,29 @@ gpu_server_image = _add_server_third_party_sources(
     )
 )
 
-gpu_libero_client_image = _add_repo_sources(
-    _add_libero_data(
-        _add_libero_source(
-            _sync(
-                _bake_libero_config(
-                    _add_nvidia_egl_icd(
-                        _cuda_runtime_base.apt_install(
-                            *_EGL_APT, "build-essential", "clang", "cmake"
-                        ).env(_LIBERO_CLIENT_ENV)
-                    )
-                ).workdir(str(REMOTE_ROOT)),
-                "evaluation",
-                "libero",
-            )
+_libero_client_base = _sync(
+    _bake_libero_config(
+        _add_nvidia_egl_icd(
+            _cuda_runtime_base.apt_install(
+                *_EGL_APT, "git", "build-essential", "clang", "cmake"
+            ).env(_LIBERO_CLIENT_ENV)
         )
-    ),
+    ).workdir(str(REMOTE_ROOT)),
+    "evaluation",
+    "libero",
+)
+
+if LIBERO_SOURCE_MODE == "local":
+    # Opt-in path for contributors modifying third_party/libero. It retains
+    # the existing behavior, including baking the local assets into the image.
+    _libero_client_base = _add_libero_data(_add_libero_source(_libero_client_base))
+else:
+    # The default lets a fresh Armory checkout run Modal without initializing
+    # the LIBERO submodule. The revision is pinned above for reproducibility.
+    _libero_client_base = _clone_libero_source(_libero_client_base)
+
+gpu_libero_client_image = _add_repo_sources(
+    _libero_client_base,
     "armory",
     "evaluation",
     "armory_client",
