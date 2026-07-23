@@ -17,6 +17,9 @@ dev-mode-dirs = ["src", "src/backends", "third_party/libero", "armory-client/src
 "src/backends/openpi_adapter" = "openpi_adapter"
 "src/backends/gr00t_adapter" = "gr00t_adapter"
 
+[tool.hatch.build.targets.wheel.force-include]
+"configs/inference_profiles.json" = "armory/backends/inference_profiles.json"
+
 [tool.uv]
 required-environments = ["sys_platform == 'linux'"]
 
@@ -53,9 +56,11 @@ libero = [
     "cloudpickle>=2.1",
     "easydict==1.9",
     "future>=1.0",
-    "gym==0.25.2",
+    "gymnasium==0.29.1",
     "mujoco>=3.1",
     "opencv-python>=4.10",
+    "pyopengl==3.1.10",
+    "pyopengl-accelerate==3.1.10",
     "robomimic==0.2.0",
     "robosuite==1.4.1",
     "thop>=0.1.1",
@@ -69,14 +74,28 @@ serving-web = [
     "uvicorn>=0.34",
 ]
 server = [
-    "armory[serving-web]",
     "av>=17",
     "chex",
+    "dash>=4",
+    "fastapi>=0.115",
     "gr00t",
     "jax[cuda12]==0.5.3; sys_platform == 'linux'",
     "jax==0.5.3; sys_platform == 'darwin'",
     "openpi",
     "torch==2.7.1",
+    "uvicorn>=0.34",
+]
+groot = [
+    "albumentations>=2.0,<3",
+    "diffusers>=0.33,<0.34",
+    "dm-tree>=0.1.8",
+    "huggingface-hub>=0.34,<1",
+    "opencv-python-headless>=4.10,<4.13",
+    "pillow>=11",
+    "scipy>=1.15",
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "transformers==4.57.0",
 ]
 dev = [
     "modal>=1.4",

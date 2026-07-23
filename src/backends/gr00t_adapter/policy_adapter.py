@@ -23,10 +23,11 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from collections.abc import Sequence
 
 import numpy as np
 
+from armory.backends.types import PolicyRequest, PolicyResult
 from armory.serving.schemas import InternalRequest
 from armory_client.messages import InferType
 
@@ -49,7 +50,7 @@ _ACTION_KEYS = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
 LANGUAGE_KEY = "annotation.human.action.task_description"
 
 
-def _obs_to_groot(requests: list[InternalRequest]) -> dict:
+def _obs_to_groot(requests: Sequence[PolicyRequest]) -> dict:
     """Convert a list of armory InternalRequests into a single batched GR00T observation."""
     B = len(requests)
     images = [req.observation["image"] for req in requests]
@@ -95,9 +96,9 @@ def _convert_gripper(actions: np.ndarray) -> np.ndarray:
     return actions
 
 
-def _groot_action_to_armory(action_dict: dict, batch_size: int) -> list[dict[str, Any]]:
+def _groot_action_to_armory(action_dict: dict, batch_size: int) -> list[PolicyResult]:
     """Convert GR00T's batched action dict to a list of per-sample armory result dicts."""
-    results = []
+    results: list[PolicyResult] = []
     for i in range(batch_size):
         parts = []
         for key in _ACTION_KEYS:
@@ -137,7 +138,7 @@ class Gr00tPolicyAdapter:
     def __init__(self, policy):
         self._policy = policy
 
-    def infer_batch(self, requests: list[InternalRequest]) -> list[dict[str, Any]]:
+    def infer_batch(self, requests: Sequence[PolicyRequest]) -> list[PolicyResult]:
         if not requests:
             return []
         obs = _obs_to_groot(requests)

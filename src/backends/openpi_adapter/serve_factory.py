@@ -6,31 +6,13 @@ Everything else (models, training configs) is an openpi internal.
 
 from __future__ import annotations
 
-import enum
 import pathlib
 from typing import TYPE_CHECKING, Any
 
+from armory.backends.types import EnvMode
+
 if TYPE_CHECKING:
     from openpi_adapter.policy_adapter import OpenPiPolicyAdapter
-
-
-class EnvMode(str, enum.Enum):
-    ALOHA = "aloha"
-    ALOHA_SIM = "aloha_sim"
-    DROID = "droid"
-    LIBERO = "libero"
-    LIBERO_20 = "libero_20"
-    LIBERO_PI0 = "libero_pi0"
-    LIBERO_PYTORCH = "libero_pytorch"
-    LIBERO_REALTIME = "libero_realtime"
-    REAL_SORT_LEGOS = "real_sort_legos"
-    REAL_STACK_CUBES = "real_stack_cubes"
-    REAL_MULTITASK = "real_multitask"
-    REAL_ACT_20 = "real_act_20"
-    REAL_ACT_40 = "real_act_40"
-    REAL_ACT_60 = "real_act_60"
-    REAL_ACT_80 = "real_act_80"
-    REAL_ACT_100 = "real_act_100"
 
 
 def _make_real_example():

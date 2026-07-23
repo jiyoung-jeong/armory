@@ -4,3 +4,7 @@
 [submodule "third_party/openpi"]
 	path = third_party/openpi
 	url = https://github.com/DavidHe137/openpi.git
+[submodule "third_party/Isaac-GR00T"]
+	path = third_party/Isaac-GR00T
+	url = https://github.com/rohan-bansal/Isaac-GR00T_armory_compat.git
+	branch = armory-n1.7-py311

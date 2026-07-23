@@ -9,8 +9,6 @@ from armory_client.messages import (
     InferResponse,
     InferType,
     RTCParams,
-    TrainTimeRTCParams,
-    VlashParams,
 )
 
 if TYPE_CHECKING:
@@ -34,7 +32,7 @@ class SlotRequest:
     min_execution_horizon: int
     max_execution_horizon: int
     infer_type: InferType
-    params: RTCParams | VlashParams | TrainTimeRTCParams | None
+    params: RTCParams | None
     noise: np.ndarray | None
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
@@ -183,9 +181,7 @@ class SchedulerDecision:
     - outcome (`batch_id`, `scheduled`).
 
     `notes` is a free-form per-scheduler dict for algorithm-specific debug info
-    (e.g. search nodes visited, slack budget, score components). The legacy
-    `metric_name` defaults to "batch_scheduled" and is retained so older
-    dashboard code keeps working.
+    (e.g. search nodes visited, slack budget, score components).
     """
 
     scheduler_name: str
@@ -198,26 +194,6 @@ class SchedulerDecision:
     batch_id: int | None = None
     scheduled: list[RobotID] = field(default_factory=list)
     notes: dict[str, Any] = field(default_factory=dict)
-    metric_name: str = "batch_scheduled"
-
-    @property
-    def recorded_at(self) -> float:
-        """Backwards-compat alias used by older snapshot code."""
-        return self.started_at
-
-    @classmethod
-    def from_json(cls, data: SchedulerDecision | dict) -> SchedulerDecision:
-        if isinstance(data, cls):
-            return data
-        # Tolerate older payloads where `recorded_at` was the canonical name.
-        payload = dict(data)
-        if "recorded_at" in payload and "started_at" not in payload:
-            payload["started_at"] = payload.pop("recorded_at")
-        else:
-            payload.pop("recorded_at", None)
-        # Drop fields the new schema no longer carries.
-        payload.pop("requests", None)
-        return cls(**payload)
 
 
 # TODO: copied over InferRequest, fix later
@@ -232,22 +208,12 @@ class InternalRequest:
     min_execution_horizon: int
     max_execution_horizon: int
     infer_type: InferType
-    params: RTCParams | VlashParams | TrainTimeRTCParams | None = None
+    params: RTCParams | None = None
     noise: np.ndarray | None = None  # action_horizon noise_dim
     type: str = "infer"  # FIXME: should be literal
 
-    def __post_init__(self) -> None:
-        if isinstance(self.infer_type, str):
-            object.__setattr__(self, "infer_type", InferType(self.infer_type))
-
-        if isinstance(self.params, dict):
-            if self.infer_type == InferType.INFERENCE_TIME_RTC:
-                object.__setattr__(self, "params", RTCParams(**self.params))
-
     @classmethod
-    def from_slot_data(
-        cls, slot_data: SlotData, params: RTCParams | VlashParams | TrainTimeRTCParams | None
-    ) -> InternalRequest:
+    def from_slot_data(cls, slot_data: SlotData, params: RTCParams | None) -> InternalRequest:
         return cls(
             robot_id=slot_data.robot_id,
             observation=slot_data.obs,

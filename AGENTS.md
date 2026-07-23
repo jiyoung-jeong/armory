@@ -46,8 +46,12 @@ The codebase is a **uv workspace**: the root `armory` package (GPU-side serving)
   `sims/libero/` is the LIBERO simulation driver (entry point `run-libero`). `toxiproxy.py` injects
   network latency for network-ablation experiments.
 - **`src/armory`** — the GPU serving system + scheduling research (depends on JAX/CUDA).
+- **`src/armory/backends`** — backend-neutral model/environment types, the serving-policy
+  contract, policy resolution, stable picklable factories, and the lightweight mock policy.
 - **`src/backends`** — adapters that wrap external policy models behind a common interface
   (`openpi_adapter`, `gr00t_adapter`). `third_party/{openpi,libero,Isaac-GR00T}` are editable submodules.
+
+Backend launch code belongs in `armory.backends`.
 
 ### Serving system (`src/armory/serving/`)
 
@@ -59,6 +63,12 @@ docstring at the top of `server.py` before touching it, the topology is non-obvi
 3. **GPU** — loads weights, runs batched inference, sends responses straight back to WS main.
 
 The server accepts `POST /reconfigure` to swap scheduling algorithm / params at runtime without restart.
+
+Serving responsibilities are split without changing that topology:
+- `server.py` is the stable composition facade (`create_app`, `PolicyServer`).
+- `runtime.py` owns subprocess startup/shutdown, IPC endpoints, background tasks, and `ServerState`.
+- `session.py` owns one robot's WebSocket handshake, warmup, receive/send loops, and disconnect cleanup.
+- `routes.py` owns the HTTP control plane and dashboard mount.
 
 ### Scheduling (the research surface)
 

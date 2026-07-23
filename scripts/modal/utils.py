@@ -109,8 +109,6 @@ def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
         fairness = compute_fairness_metrics(output_dir)
         if fairness is not None:
             out["alpha_observed"] = fairness.get("alpha")
-            out["jain_freshness"] = fairness.get("jain_freshness")
-            out["jain_starvation"] = fairness.get("jain_starvation")
             rates = fairness.get("starvation_rate") or []
             if rates:
                 out["mean_starvation"] = float(sum(rates) / len(rates))

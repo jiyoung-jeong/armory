@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from armory_client.schemas import Action, ActionChunk, Observation
-from evaluation.agents import base as _agent
-from evaluation.envs import base as _environment
+from armory_client.schemas import Action, Observation
+from evaluation.agents.base import Agent
+from evaluation.envs.base import Environment
 from evaluation.recording import Timestamp
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,8 @@ class Runtime:
 
     def __init__(
         self,
-        environment: _environment.Environment,
-        agent: _agent.Agent,
+        environment: Environment,
+        agent: Agent,
         control_hz: float = 0.0,
     ) -> None:
         self._environment = environment

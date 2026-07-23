@@ -4,12 +4,12 @@ import logging
 import multiprocessing as mp
 import signal
 import time
-from collections.abc import Callable
 from multiprocessing.synchronize import Event
 
 import numpy as np
 import zmq
 
+from armory.backends.types import PolicyFactory, PolicyResult, ServingPolicy
 from armory.scheduling.latency import EMALatencyTracker
 from armory.serving.schemas import (
     AckNotification,
@@ -29,8 +29,6 @@ from armory_client.messages import (
     InferType,
     ResetRequest,
     RTCParams,
-    TrainTimeRTCParams,
-    VlashParams,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +46,7 @@ class GpuWorker:
 
     def __init__(
         self,
-        policy_factory: Callable,
+        policy_factory: PolicyFactory,
         max_batch_size: int,
         slots: RobotSlots,
         batch_queue: mp.Queue,
@@ -214,7 +212,7 @@ class GpuWorker:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _profile_and_send(self, policy, notify_sock: zmq.Socket) -> None:
+    def _profile_and_send(self, policy: ServingPolicy, notify_sock: zmq.Socket) -> None:
         logger.info("Profiling batch latency for sizes 1..%d", self.max_batch_size)
         profile: dict[int, float] = {}
         request = policy.make_infer_request()
@@ -269,9 +267,7 @@ class GpuWorker:
             else:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
 
-    def _make_params(
-        self, slot_data: SlotData, batch_size: int
-    ) -> RTCParams | VlashParams | TrainTimeRTCParams | None:
+    def _make_params(self, slot_data: SlotData, batch_size: int) -> RTCParams | None:
         if (
             slot_data.infer_type == InferType.INFERENCE_TIME_RTC
             and slot_data.robot_id in self._last_served_action_index
@@ -290,7 +286,7 @@ class GpuWorker:
         self,
         slot_reqs: list[SlotRequest],
         slot_datas: list[SlotData],
-        actions: list[dict],
+        actions: list[PolicyResult],
     ) -> None:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
             if not sr.is_padding:

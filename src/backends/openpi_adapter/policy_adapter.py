@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from armory.backends.types import PolicyRequest, PolicyResult
 from armory.serving.schemas import InternalRequest
 from armory_client.messages import InferType, RTCParams
 
@@ -169,8 +170,8 @@ class OpenPiPolicyAdapter:
         return _model.Observation.from_dict(batched)
 
     def _infer_batch_group(
-        self, requests: list[InternalRequest], *, use_rtc: bool
-    ) -> list[dict[str, Any]]:
+        self, requests: Sequence[PolicyRequest], *, use_rtc: bool
+    ) -> list[PolicyResult]:
         """Run a homogeneous sub-batch (all RTC or all non-RTC) in a single GPU call."""
         batch_size = len(requests)
 
@@ -260,12 +261,12 @@ class OpenPiPolicyAdapter:
     # Armory engine interface
     # ------------------------------------------------------------------
 
-    def infer_batch(self, requests: list[InternalRequest]) -> list[dict[str, Any]]:
+    def infer_batch(self, requests: Sequence[PolicyRequest]) -> list[PolicyResult]:
         """GPU-parallel batch inference, splitting RTC and non-RTC into sub-batches."""
         if not requests:
             return []
 
-        results: list[dict[str, Any] | None] = [None] * len(requests)
+        results: list[PolicyResult | None] = [None] * len(requests)
         grouped: dict[bool, list[int]] = {False: [], True: []}
 
         for i, req in enumerate(requests):
