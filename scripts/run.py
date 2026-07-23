@@ -17,14 +17,13 @@ from armory_client.client import BidirectionalWebsocket
 from evaluation.agents.base import Agent
 from evaluation.agents.mock_agent import MockAgent
 from evaluation.agents.policy_agent import PolicyAgent
-from evaluation.cli import JsonArgs
 from evaluation.envs import base as _environment
 from evaluation.envs.mock import MockEnvironment
 from evaluation.metrics import calculate_metrics, generate_all_plots
 from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, build_episode_save_data, save_episode
 from evaluation.server_control_client import ServerControlClient
-from evaluation.types import EnvironmentType, ExperimentConfig
+from evaluation.types import EnvironmentType, ExperimentConfig, JsonArgs
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)

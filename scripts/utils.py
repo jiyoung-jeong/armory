@@ -13,7 +13,7 @@ import numpy as np
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory.serving.protocol import ServerMetadata
 from armory_client.messages import InferRequest, InferType
-from evaluation.cli import JsonArgs  # noqa: F401  re-exported for scripts/serve.py
+from evaluation.types import JsonArgs  # noqa: F401  re-exported for scripts/serve.py
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,
