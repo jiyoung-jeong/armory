@@ -7,12 +7,14 @@ import socket
 from dataclasses import field
 from typing import Literal
 
+from scripts.utils import JsonArgs
+
 from armory.backends.registry import resolve_policy
 from armory.backends.types import EnvMode, ModelFamily
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
 from armory.utils.logging_config import setup_logging
-from utils import JsonArgs, seed_everything  # noqa: E402
+from utils import seed_everything  # noqa: E402
 
 
 @dataclasses.dataclass

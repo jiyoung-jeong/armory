@@ -9,6 +9,7 @@ import time
 from enum import Enum
 
 from pydantic import model_validator
+from scripts.utils import JsonArgs
 
 import logging_config
 from armory.serving.protocol import SchedulerConfig
@@ -25,7 +26,7 @@ from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import ExperimentConfig
-from utils import JsonArgs, assert_egl_rendering, seed_everything
+from utils import assert_egl_rendering, seed_everything
 
 logger = logging.getLogger(__name__)
 
