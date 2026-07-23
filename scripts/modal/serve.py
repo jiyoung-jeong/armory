@@ -59,7 +59,7 @@ class ModalPolicyServer:
 
         # serve.py's Args nests scheduler options under a SchedulerConfig submodel and
         # its policy field is a Checkpoint | Default | Mock union, both awkward to hit
-        # via plain CLI flags with tyro. --json-path (see evaluation.cli.JsonArgs)
+        # via plain CLI flags with tyro. --json-path (see evaluation.types.JsonArgs)
         # takes a plain JSON dict validated directly by pydantic, so enum fields need
         # their value (lowercase), not their member name.
         args_path = pathlib.Path("/tmp/serve_args.json")

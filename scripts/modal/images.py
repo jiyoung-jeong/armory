@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import modal
@@ -9,6 +10,17 @@ import modal
 REMOTE_ROOT = pathlib.Path("/app")
 CHECKPOINT_VOLUME_PATH = "/checkpoints"
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+LIBERO_ROOT = pathlib.Path("/root/libero")
+# Keep the cloud image reproducible and in lockstep with the checked-in
+# submodule. Updating this is an intentional image-cache invalidation.
+LIBERO_REPOSITORY = "https://github.com/rohan-bansal/LIBERO"
+LIBERO_REVISION = "65a492ad4019afb1c69372449e2600d3199bb93c"
+LIBERO_SOURCE_MODE = os.environ.get("ARMORY_MODAL_LIBERO_SOURCE", "remote")
+
+if LIBERO_SOURCE_MODE not in {"local", "remote"}:
+    raise ValueError(
+        f"ARMORY_MODAL_LIBERO_SOURCE must be 'local' or 'remote', not {LIBERO_SOURCE_MODE!r}"
+    )
 
 _EGL_APT = (
     "libgl1",
@@ -50,6 +62,10 @@ _LIBERO_CLIENT_ENV = {
     # it, causing EGL to silently fall back to Mesa's software llvmpipe
     # renderer with no error or warning.
     "NVIDIA_DRIVER_CAPABILITIES": "compute,utility,graphics",
+    # LIBERO is checked out during the default image build rather than being
+    # installed locally through uv. This also makes its package importable in
+    # the explicit local-development source mode below.
+    "PYTHONPATH": str(LIBERO_ROOT),
 }
 
 
@@ -75,10 +91,17 @@ def _sync(image: modal.Image, *extras: str) -> modal.Image:
 
 
 def _add_repo_sources(image: modal.Image, *modules: str) -> modal.Image:
+    # logging_config/utils are standalone modules under src/ that scripts/run.py
+    # and scripts/serve.py import by bare name. Mount them by explicit file path
+    # (not add_local_python_source): the bare name `utils` is ambiguous — the
+    # repo also has scripts/utils.py — and the resolver picks the wrong one, so
+    # pin the src/ copies onto /root (already on sys.path via the package mounts).
     return (
         image.add_local_python_source(*modules)
         .add_local_dir(str(REPO_ROOT / "configs"), remote_path=str(REMOTE_ROOT / "configs"))
         .add_local_dir(str(REPO_ROOT / "scripts"), remote_path=str(REMOTE_ROOT / "scripts"))
+        .add_local_file(str(REPO_ROOT / "src/utils.py"), "/root/utils.py")
+        .add_local_file(str(REPO_ROOT / "src/logging_config.py"), "/root/logging_config.py")
     )
 
 
@@ -116,8 +139,32 @@ def _add_libero_data(image: modal.Image) -> modal.Image:
         image = image.add_local_dir(
             str(REPO_ROOT / "third_party/libero/libero/libero" / name),
             remote_path=f"/root/libero/libero/{name}",
+            # These simulator assets change rarely. Bake them into the image so
+            # Modal can reuse the content-addressed image layer instead of
+            # re-uploading a live mount on every app deployment.
+            copy=True,
         )
     return image
+
+
+def _add_libero_source(image: modal.Image) -> modal.Image:
+    """Bake LIBERO's Python source without duplicating its static data mounts."""
+    return image.add_local_dir(
+        str(REPO_ROOT / "third_party/libero/libero"),
+        remote_path="/root/libero",
+        # The three data trees are added by _add_libero_data above. Excluding
+        # them here avoids remounting them as part of the Python package.
+        ignore=["libero/assets/**", "libero/bddl_files/**", "libero/init_files/**"],
+        copy=True,
+    )
+
+
+def _clone_libero_source(image: modal.Image) -> modal.Image:
+    """Fetch the pinned LIBERO revision for the shareable default image."""
+    return image.run_commands(
+        f"git clone {LIBERO_REPOSITORY} {LIBERO_ROOT}",
+        f"git -C {LIBERO_ROOT} checkout --detach {LIBERO_REVISION}",
+    )
 
 
 def _add_server_third_party_sources(image: modal.Image) -> modal.Image:
@@ -173,33 +220,45 @@ gpu_server_image = _add_server_third_party_sources(
     )
 )
 
-gpu_libero_client_image = _add_libero_data(
-    _add_repo_sources(
-        _sync(
-            _bake_libero_config(
-                _add_nvidia_egl_icd(
-                    _cuda_runtime_base.apt_install(
-                        *_EGL_APT, "build-essential", "clang", "cmake"
-                    ).env(_LIBERO_CLIENT_ENV)
-                )
-            ).workdir(str(REMOTE_ROOT)),
-            "evaluation",
-            "libero",
-        ),
-        "armory",
-        "evaluation",
-        "armory_client",
-        "libero",
-    )
+_libero_client_base = _sync(
+    _bake_libero_config(
+        _add_nvidia_egl_icd(
+            _cuda_runtime_base.apt_install(
+                *_EGL_APT, "git", "build-essential", "clang", "cmake"
+            ).env(_LIBERO_CLIENT_ENV)
+        )
+    ).workdir(str(REMOTE_ROOT)),
+    "evaluation",
+    "libero",
+)
+
+if LIBERO_SOURCE_MODE == "local":
+    # Opt-in path for contributors modifying third_party/libero. It retains
+    # the existing behavior, including baking the local assets into the image.
+    _libero_client_base = _add_libero_data(_add_libero_source(_libero_client_base))
+else:
+    # The default lets a fresh Armory checkout run Modal without initializing
+    # the LIBERO submodule. The revision is pinned above for reproducibility.
+    _libero_client_base = _clone_libero_source(_libero_client_base)
+
+gpu_libero_client_image = _add_repo_sources(
+    _libero_client_base,
+    "armory",
+    "evaluation",
+    "armory_client",
 )
 
 cpu_mock_image = _add_repo_sources(
+    # `serving-web` gives the mock policy server (armory.serving.server) its
+    # web-serving deps (fastapi/uvicorn/dash) without the GPU `server` stack,
+    # so a CPU-only mock server can run.
     _sync(
         modal.Image.debian_slim(python_version="3.11")
         .apt_install("git")
         .env({"MPLBACKEND": "Agg"})
         .workdir(str(REMOTE_ROOT)),
         "evaluation",
+        "serving-web",
     ),
     "armory",
     "evaluation",

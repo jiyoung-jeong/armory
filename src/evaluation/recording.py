@@ -136,6 +136,7 @@ class Timestamp(CSVDataclass):
 class RuntimeMetadata(JSONDataclass):
     """Metadata about the runtime/experiment configuration."""
 
+    # TODO: don't need these two fields, make it consistent with ExperimentConfig
     task_suite_name: str
     num_trials_per_task: int
     max_steps: int

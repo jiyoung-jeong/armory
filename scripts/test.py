@@ -8,8 +8,8 @@ from scripts.modal.images import gpu_libero_client_image
 from armory_client.action_chunkers import ActionChunkBrokerType, BrokerConfig
 from armory_client.client import BidirectionalWebsocket
 from armory_client.schemas import Action, Observation
-from evaluation.runtime.agents.policy_agent import PolicyAgent
-from evaluation.runtime.runtime import Runtime
+from evaluation.agents.policy_agent import PolicyAgent
+from evaluation.runtime import Runtime
 
 app = modal.App("libero-speed")
 

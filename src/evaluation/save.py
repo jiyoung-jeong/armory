@@ -9,12 +9,9 @@ from __future__ import annotations
 import dataclasses
 import logging
 import pathlib
+from dataclasses import dataclass
 
 import imageio
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -23,6 +20,19 @@ from evaluation.recording import JSONDataclass, Timestamp
 from evaluation.runtime import Rollout
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Result(JSONDataclass):
+    """Per-episode metadata persisted to ``metadata.json``."""
+
+    robot_idx: int
+    success: bool
+    steps_taken: int
+    task_suite_name: str
+    task_id: int
+    task_language: str
+    episode_idx: int
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,55 +139,56 @@ class SaveMeta:
 
     out_dir: pathlib.Path
     robot_idx: int
+    control_hz: float
+
+    # TODO: per task metadata typing
     task_suite_name: str
     task_id: int
     task_language: str
-    control_hz: float
     save_video: bool = True
 
 
-def build_episode_save_data(
-    rollout: Rollout, action_chunks: list[ActionChunk], actions_left: list[int]
-) -> EpisodeSaveData:
-    """Assemble the on-disk payload from a rollout plus a broker snapshot.
+def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
+    """Persist a completed rollout. The caller transfers ownership to this function."""
+    out_folder, episode_idx = _next_out_folder(meta, success=rollout.success)
 
-    ``action_chunks`` / ``actions_left`` come from the broker (empty for agents
-    that don't use one). Per-step cost is derived here rather than recorded live.
-    """
-    return EpisodeSaveData(
-        timestamps=rollout.timestamps,
-        observations_buffer={obs.step: obs for obs in rollout.observations},
-        action_chunks=action_chunks,
-        actions_left_snapshot=actions_left,
-        cost_history=_cost_history(rollout.timestamps, action_chunks),
-        success=rollout.success,
-        episode_idx=0,  # assigned from the on-disk folder index in save_episode
-        initial_state=rollout.initial_state,
+    _save_metadata(out_folder, rollout, meta, episode_idx)
+    Timestamp.to_csv(rollout.timestamps, out_folder / "timestamps.csv")
+    save_action_chunks(rollout.action_chunks, out_folder)
+    if meta.save_video:
+        _save_video(out_folder, rollout, meta.control_hz)
+    _save_debug_data(out_folder, rollout)
+    np.save(
+        out_folder / "actions_left.npy",
+        np.array(rollout.actions_left, dtype=np.int32),
     )
 
-
-def save_episode(data: EpisodeSaveData, meta: SaveMeta) -> None:
-    out_folder, episode_idx = _next_out_folder(meta, success=data.success)
-    data = dataclasses.replace(data, episode_idx=episode_idx)
-
-    _save_metadata(out_folder, data, meta)
-    save_timestamps(data.timestamps, out_folder)
-    save_action_chunks(data.action_chunks, out_folder)
-    if meta.save_video:
-        _save_video(out_folder, data, meta.control_hz)
-    _save_debug_data(out_folder, data)
-    save_actions_left(data.actions_left_snapshot, out_folder)
-    _save_cost_history(out_folder, data, meta)
+    np.save(out_folder / "cost_history.npy", cost_history(rollout))
     logger.info("Saved episode %d to %s", episode_idx, out_folder)
 
 
-def _cost_history(timestamps: list[Timestamp], action_chunks: list[ActionChunk]) -> list[float]:
+def save_action_chunks(action_chunks: tuple[ActionChunk, ...], out_folder: pathlib.Path) -> None:
+    if not action_chunks:
+        return
+    pd.DataFrame.from_records(_action_chunk_record(chunk) for chunk in action_chunks).to_parquet(
+        out_folder / "action_chunks.parquet", engine="pyarrow", index=False
+    )
+
+
+def _action_chunk_record(chunk: ActionChunk) -> dict[str, object]:
+    record = {field.name: getattr(chunk, field.name) for field in dataclasses.fields(chunk)}
+    record["actions"] = chunk.actions.tolist()
+    record["noise"] = chunk.noise.tolist() if chunk.noise is not None else None
+    return record
+
+
+def cost_history(rollout: Rollout) -> list[float]:
     """Elapsed time from a chunk's inference request to each step that executes it."""
     costs: list[float] = []
-    for ts in timestamps:
+    for ts in rollout.timestamps:
         idx = ts.action_chunk_index
-        if idx is not None and idx < len(action_chunks):
-            costs.append(ts.timestamp - action_chunks[idx].request_timestamp)
+        if idx is not None and idx < len(rollout.action_chunks):
+            costs.append(ts.timestamp - rollout.action_chunks[idx].request_timestamp)
         else:
             costs.append(float("nan"))
     return costs
@@ -195,38 +206,41 @@ def _next_out_folder(meta: SaveMeta, success: bool) -> tuple[pathlib.Path, int]:
     return out_folder, next_idx
 
 
-def _save_metadata(out_folder: pathlib.Path, data: EpisodeSaveData, meta: SaveMeta) -> None:
+def _save_metadata(
+    out_folder: pathlib.Path, rollout: Rollout, meta: SaveMeta, episode_idx: int
+) -> None:
     Result(
-        success=data.success,
+        success=rollout.success,
         robot_idx=meta.robot_idx,
-        steps_taken=len(data.timestamps),
+        steps_taken=len(rollout.timestamps),
         task_suite_name=meta.task_suite_name,
         task_id=meta.task_id,
         task_language=meta.task_language,
-        episode_idx=data.episode_idx,
+        episode_idx=episode_idx,
     ).to_json(out_folder / "metadata.json")
 
 
-def _save_video(out_folder: pathlib.Path, data: EpisodeSaveData, control_hz: float) -> None:
-    images = [np.asarray(obs.image) for obs in data.observations_buffer.values()]
+def _save_video(out_folder: pathlib.Path, rollout: Rollout, control_hz: float) -> None:
+    images = [np.asarray(obs.image) for obs in rollout.observations]
     if not images:
         return
     imageio.mimwrite(out_folder / "out.mp4", images, fps=control_hz)
 
 
-def _save_debug_data(out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
+def _save_debug_data(out_folder: pathlib.Path, rollout: Rollout) -> None:
     """Save observations, noise, and actions as a single .npz — only if noise is present."""
-    if not any(chunk.noise is not None for chunk in data.action_chunks):
+    if not any(chunk.noise is not None for chunk in rollout.action_chunks):
         logger.debug("No debug data to save (no noise present)")
         return
 
     to_save: dict[str, np.ndarray] = {}
-    if data.initial_state is not None:
-        to_save["initial_state"] = data.initial_state
+    if rollout.initial_state is not None:
+        to_save["initial_state"] = rollout.initial_state
 
-    for i, chunk in enumerate(data.action_chunks):
+    observations = {obs.step: obs for obs in rollout.observations}
+    for i, chunk in enumerate(rollout.action_chunks):
         prefix = f"chunk_{i:04d}"
-        obs = data.observations_buffer.get(chunk.observation_step)
+        obs = observations.get(chunk.observation_step)
         if obs is not None:
             to_save[f"{prefix}/observation/state"] = obs.state
             to_save[f"{prefix}/observation/image"] = obs.image
@@ -243,15 +257,4 @@ def _save_debug_data(out_folder: pathlib.Path, data: EpisodeSaveData) -> None:
 
     debug_file = out_folder / "debug_data.npz"
     np.savez_compressed(debug_file, **to_save)
-    logger.info("Saved %d chunks to %s", len(data.action_chunks), debug_file)
-
-
-def _save_cost_history(out_folder: pathlib.Path, data: EpisodeSaveData, meta: SaveMeta) -> None:
-    costs = save_cost_history_npy(data.cost_history, out_folder)
-    plot_cost_history(
-        costs,
-        out_folder,
-        robot_idx=meta.robot_idx,
-        task_suite_name=meta.task_suite_name,
-        task_id=meta.task_id,
-    )
+    logger.info("Saved %d chunks to %s", len(rollout.action_chunks), debug_file)

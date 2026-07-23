@@ -12,7 +12,7 @@ from armory.backends.types import EnvMode, ModelFamily
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.server import PolicyServer
 from armory.utils.logging_config import setup_logging
-from evaluation.cli import JsonArgs
+from evaluation.types import JsonArgs
 from utils import seed_everything  # noqa: E402
 
 

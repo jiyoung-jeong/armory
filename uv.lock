@@ -217,6 +217,11 @@ server = [
     { name = "torch" },
     { name = "uvicorn" },
 ]
+serving-web = [
+    { name = "dash" },
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -235,10 +240,12 @@ requires-dist = [
     { name = "chex", marker = "extra == 'server'" },
     { name = "cloudpickle", marker = "extra == 'libero'", specifier = ">=2.1" },
     { name = "dash", marker = "extra == 'server'", specifier = ">=4" },
+    { name = "dash", marker = "extra == 'serving-web'", specifier = ">=4" },
     { name = "diffusers", marker = "extra == 'groot'", specifier = ">=0.33,<0.34" },
     { name = "dm-tree", marker = "extra == 'groot'", specifier = ">=0.1.8" },
     { name = "easydict", marker = "extra == 'libero'", specifier = "==1.9" },
     { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'serving-web'", specifier = ">=0.115" },
     { name = "future", marker = "extra == 'libero'", specifier = ">=1.0" },
     { name = "gr00t", marker = "extra == 'server'", editable = "third_party/Isaac-GR00T" },
     { name = "gymnasium", marker = "extra == 'libero'", specifier = "==0.29.1" },
@@ -280,9 +287,10 @@ requires-dist = [
     { name = "tyro", specifier = ">=0.9.17" },
     { name = "tyro", marker = "extra == 'evaluation'", specifier = ">=0.9" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34" },
+    { name = "uvicorn", marker = "extra == 'serving-web'", specifier = ">=0.34" },
     { name = "websockets", marker = "extra == 'evaluation'", specifier = ">=13" },
 ]
-provides-extras = ["evaluation", "libero", "server", "groot", "dev"]
+provides-extras = ["evaluation", "libero", "serving-web", "server", "groot", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

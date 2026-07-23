@@ -66,6 +66,13 @@ libero = [
     "thop>=0.1.1",
     "libero",
 ]
+# Web-serving deps for armory.serving.server, split out so a mock policy server
+# can run CPU-only (see cpu_mock_image) without the GPU stack below.
+serving-web = [
+    "dash>=4",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+]
 server = [
     "av>=17",
     "chex",

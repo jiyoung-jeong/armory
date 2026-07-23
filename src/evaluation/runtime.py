@@ -18,20 +18,21 @@ logger = logging.getLogger(__name__)
 _SPIN_WINDOW_S = 0.002
 
 
-@dataclass
+@dataclass(frozen=True)
 class Rollout:
     """The product of running one episode: everything needed to log/save it.
 
     Per-step data is captured live (``observations`` and ``timestamps``); the
-    outcome is read from the env at episode end. Policy-internal data (action
-    chunks, queue depth) is *not* here — the driver snapshots that from the
-    broker, so the Runtime stays agnostic to how the agent decides.
+    outcome is read from the env at episode end. Agent diagnostics are captured
+    at the same boundary, before the next episode's reset clears them.
     """
 
-    observations: list[Observation]
-    timestamps: list[Timestamp]
+    observations: tuple[Observation, ...]
+    timestamps: tuple[Timestamp, ...]
     success: bool
     initial_state: np.ndarray | None
+    action_chunks: tuple[ActionChunk, ...]
+    actions_left: tuple[int, ...]
 
 
 class Runtime:
@@ -79,13 +80,23 @@ class Runtime:
             )
             last_step_time = self._pace(last_step_time, step_time)
 
+        episode_data = self._agent.snapshot_episode_data()
         logger.info("Episode completed.")
         return Rollout(
-            observations=observations,
-            timestamps=timestamps,
+            observations=tuple(observations),
+            timestamps=tuple(timestamps),
             success=self._environment.current_success,
             initial_state=self._environment.current_initial_state,
+            action_chunks=tuple(episode_data.action_chunks),
+            actions_left=tuple(episode_data.actions_left),
         )
+
+    def close(self) -> None:
+        """Release the environment and agent resources owned by this runtime."""
+        try:
+            self._environment.close()
+        finally:
+            self._agent.close()
 
     def _step(self) -> tuple[Observation, Action]:
         observation = self._environment.get_observation()

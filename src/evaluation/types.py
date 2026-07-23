@@ -1,15 +1,35 @@
+import argparse
+import pathlib
 from enum import Enum
-from typing import Self  # Any used for shared globals
+from typing import Self
 
+import tyro
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from armory_client.action_chunkers import ActionChunkBrokerType
 from evaluation.recording import JSONBaseModel
 
 
-class EnvironmentType(Enum):
-    LIBERO = 1
-    MOCK = 2
+class EnvironmentType(str, Enum):
+    LIBERO = "libero"
+    MOCK = "mock"
+
+
+class JsonArgs(JSONBaseModel):
+    """Pydantic args base that supports `--json-path` defaults overlaid by tyro CLI flags."""
+
+    json_path: pathlib.Path | None = None
+
+    @classmethod
+    def from_cli(cls) -> Self:
+        pre = argparse.ArgumentParser(add_help=False)
+        pre.add_argument("--json-path", type=pathlib.Path, default=None)
+        known, remaining = pre.parse_known_args()
+
+        if known.json_path is not None:
+            defaults = cls.from_json(known.json_path)
+            return tyro.cli(cls, args=remaining, default=defaults)
+        return tyro.cli(cls, args=remaining)
 
 
 class ExecutionHorizon(BaseModel):
@@ -29,10 +49,13 @@ class NetworkLatency(BaseModel):
 
 
 class Robot(BaseModel):
+    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
     execution_horizon: ExecutionHorizon = ExecutionHorizon()
+    control_hz: int = Field(gt=0, default=20)
+
     observation_latency: NetworkLatency = NetworkLatency()
     action_latency: NetworkLatency = NetworkLatency()
-    control_hz: int = Field(gt=0, default=20)
+
     weight: int = 1
 
 
@@ -40,34 +63,8 @@ class ExperimentConfig(JSONBaseModel):
     model_config = ConfigDict(frozen=True)
 
     env: EnvironmentType = EnvironmentType.MOCK
-    task_suite_name: str = "libero10"
-    num_trials_per_task: int = Field(ge=1, default=1)
-    max_steps: int = Field(gt=0, default=100)
-    action_chunk_broker_type: ActionChunkBrokerType = ActionChunkBrokerType.NAIVE_ASYNC
+    max_steps_per_episode: int = Field(gt=0, default=100)
+
     robots: list[Robot] = [Robot()]
-    # New "trial" mode: when wall_clock_time_limit_s > 0, the seed picks
-    # ``subset_size`` tasks from the suite (0 = all tasks), each robot is
-    # pinned to one of those tasks, and runs episodes back-to-back until
-    # its per-robot wall-clock budget is exhausted. ``max_steps`` still
-    # caps each individual episode.
-    subset_size: int = 0  # TODO: what is this, can we remove it?
-    wall_clock_time_limit_s: float = Field(default=0.0, ge=0.0)
+    time_limit: float = Field(default=10.0, ge=0.0)
     seed: int = Field(default=7, ge=0)
-
-    @property
-    def use_trial_mode(self) -> bool:
-        return self.wall_clock_time_limit_s > 0.0
-
-    def execution_horizon_for_robot(self, robot_idx: int) -> ExecutionHorizon:
-        return self.robots[robot_idx].execution_horizon
-
-    def max_execution_horizons(self) -> list[int]:
-        return [r.execution_horizon.max for r in self.robots]
-
-    @model_validator(mode="after")
-    def _validate(self) -> Self:
-        if self.use_trial_mode and self.wall_clock_time_limit_s <= 0.0:
-            raise ValueError("wall_clock_time_limit_s must be positive in trial mode")
-        if not self.use_trial_mode and self.num_trials_per_task <= 0:
-            raise ValueError("num_trials_per_task must be positive")
-        return self
