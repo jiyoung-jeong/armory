@@ -195,13 +195,6 @@ def _client_cmd(run_dir: pathlib.Path, module: str) -> list[str]:
     return [sys.executable, "-m", module, "--json-path", str(run_dir / "client_args.json")]
 
 
-def _prepare(run_dir: pathlib.Path, *, args_name: str, args_json: str) -> pathlib.Path:
-    log_dir = run_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / args_name).write_text(args_json)
-    return log_dir
-
-
 def _await_server(urls: modal.Dict, run_id: str) -> tuple[str, int]:
     """Block until the server publishes its tunnel and /metadata answers.
 
@@ -238,13 +231,13 @@ def _serve(
 ) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     run_dir = pathlib.Path(run_dir)
-    log_dir = _prepare(run_dir, args_name="server_args.json", args_json=args_json)
+    (run_dir / "server_args.json").write_text(args_json)
     cmd = _server_cmd(run_dir)
     _write_command_manifest(run_dir, {"server": cmd})
     status, error, proc = "ok", None, None
     try:
         proc = _popen_logged(
-            cmd, log_path=log_dir / "server.log", tag=f"server/{run_id}", stream_logs=stream_logs
+            cmd, log_path=run_dir / "server.log", tag=f"server/{run_id}", stream_logs=stream_logs
         )
         with modal.forward(port, unencrypted=True) as tunnel:
             urls[run_id] = tunnel.tcp_socket
@@ -278,13 +271,13 @@ def _run(
 ) -> dict[str, Any]:
     """Run the client to completion, summarize its metrics, ship the run dir."""
     run_dir = pathlib.Path(run_dir)
-    log_dir = _prepare(run_dir, args_name="client_args.json", args_json=args_json)
+    (run_dir / "client_args.json").write_text(args_json)
     cmd = _client_cmd(run_dir, module)
     _write_command_manifest(run_dir, {"client": cmd})
     result: dict[str, Any] = {"run_id": run_id}
     try:
         proc = _popen_logged(
-            cmd, log_path=log_dir / "client.log", tag=f"client/{run_id}", stream_logs=stream_logs
+            cmd, log_path=run_dir / "client.log", tag=f"client/{run_id}", stream_logs=stream_logs
         )
         rc = proc.wait(timeout=CLIENT_TIMEOUT_S)
         if rc != 0:
