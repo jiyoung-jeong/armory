@@ -1,4 +1,3 @@
-import datetime
 import logging
 import multiprocessing
 import pathlib
@@ -184,10 +183,7 @@ def main(args: Args) -> None:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path = (
-        args.output_dir
-        / f"run_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
-    )
+    log_path = args.output_dir / "run.log"
     logging_config.setup_logging(log_path=log_path, level=logging.INFO)
 
     control_client: ServerControlClient | None = None
