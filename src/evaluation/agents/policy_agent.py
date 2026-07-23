@@ -35,8 +35,8 @@ class PolicyAgent(Agent):
             action = self._broker.get_action(observation.step, observation)
             self._ws_client.send(
                 observation,
-                self._broker.deadline,
                 self._broker.next_action_step,
+                self._broker.num_actions_available,
                 min_execution_horizon=self._broker.min_execution_horizon,
                 max_execution_horizon=self._broker.max_execution_horizon,
             )

@@ -1,4 +1,3 @@
-import time
 from collections import deque
 
 from armory_client.messages import InferResponse
@@ -8,7 +7,6 @@ from armory_client.schemas import Action, ActionChunk, Observation
 class ActionChunkBroker:
     def __init__(
         self,
-        control_hz: int = 20,
         real: bool = False,
         min_execution_horizon: int = 0,
         max_execution_horizon: int = 0,
@@ -16,7 +14,6 @@ class ActionChunkBroker:
         self._real = real
         self.min_execution_horizon = min_execution_horizon
         self.max_execution_horizon = max_execution_horizon
-        self._step_duration = 1 / control_hz
         self._action_queue: deque[Action] = deque()
         self._action_chunks: list[ActionChunk] = []
         self._next_observation_step: int = 0  # next observation step to see
@@ -112,7 +109,3 @@ class ActionChunkBroker:
     @property
     def num_actions_available(self) -> int:
         return len(self._action_queue)
-
-    @property
-    def deadline(self) -> float:
-        return time.time() + len(self._action_queue) * self._step_duration

@@ -122,8 +122,8 @@ class BidirectionalWebsocket:
     def send(
         self,
         obs: Observation,
-        deadline: float,
         action_index_start: int,
+        actions_left: int,
         min_execution_horizon: int = 5,
         max_execution_horizon: int = 100,
         noise: np.ndarray | None = None,
@@ -132,6 +132,7 @@ class BidirectionalWebsocket:
             self._pre_send_hook()
 
         request_timestamp = time.time()
+        deadline = request_timestamp + actions_left / self._control_hz
         data = msgpack_numpy.packb(
             messages.InferRequest(
                 robot_id=self._robot_id,
