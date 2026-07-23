@@ -1,43 +1,41 @@
+"""Run many robots against a policy server, one OS process per robot.
+
+Multi-robot analogue of ``scripts/run.py``: each robot builds its own
+environment / agent / websocket *inside its own process* and drives a single
+rollout via ``run_robot``. The fleet is described by ``ExperimentConfig``
+(``configs/`` in ``evaluation``); robot ``i`` takes its per-robot settings from
+``experiment_config.robots[i]``.
+"""
+
 import datetime
 import json
 import logging
 import multiprocessing
 import pathlib
-import queue
 import shutil
 import sys
-import time
-from dataclasses import dataclass
-from typing import Any, Literal  # Any used for shared globals
 
-import numpy as np
 from pydantic import model_validator
 
-from armory.serving.protocol import SchedulerConfig, ServerMetadata
+import logging_config
+from armory.serving.protocol import SchedulerConfig
 from armory_client.action_chunkers import BrokerConfig
+from armory_client.action_chunkers.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
-from evaluation.agents import policy_agent as _policy_agent
+from evaluation.agents import base as _agent
+from evaluation.agents.mock_agent import MockAgent
+from evaluation.agents.policy_agent import PolicyAgent
 from evaluation.cli import JsonArgs
-from evaluation.envs.libero import logging_config
-from evaluation.envs.libero.episodes import Episode, create_episodes, create_mock_episodes
+from evaluation.envs import base as _environment
 from evaluation.envs.mock import MockEnvironment
 from evaluation.metrics import calculate_metrics, generate_all_plots
-from evaluation.runtime import runtime as _runtime
-from evaluation.runtime import subscriber as _subscriber
-from evaluation.runtime.progress_manager import get_progress_manager
-from evaluation.runtime.subscribers.progress_subscriber import ProgressSubscriber
-from evaluation.runtime.subscribers.saver import Saver
-from evaluation.toxiproxy import (
-    NetworkEmulationManager,
-    RobotNetworkHook,
-    WorkerNetworkContext,
-    experiment_requires_network_emulation,
-)
-from evaluation.types import ExperimentConfig
+from evaluation.run_robot import run_robot
+from evaluation.save import SaveMeta
+from evaluation.server_control_client import ServerControlClient
+from evaluation.types import EnvironmentType, ExperimentConfig
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)
-RESIZE_SIZE = 224
 
 
 class Args(JsonArgs):
@@ -48,8 +46,6 @@ class Args(JsonArgs):
     port: int = 8080
     output_dir: pathlib.Path = pathlib.Path("data/libero/multi_robot_videos")
     overwrite: bool = False
-    progress_type: Literal["verbose", "concise", "logging", None] = "verbose"
-    debug: bool = False
 
     @model_validator(mode="after")
     def _validate(self) -> "Args":
@@ -58,558 +54,154 @@ class Args(JsonArgs):
         return self
 
 
-# Shared worker state: set via pool initializer so these are inherited by spawned
-# processes rather than pickled as task arguments (multiprocessing.Queue and Barrier
-# cannot be pickled after spawning).
-_episode_queue: Any | None = None
-_progress_queue: Any | None = None
-_start_barrier: Any | None = None
-_network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
+def create_environment(config: ExperimentConfig, robot_idx: int) -> _environment.Environment:
+    """Build robot ``robot_idx``'s environment. Each robot runs its own task
+    (``task_id = robot_idx``) and gets an offset seed so the fleet isn't
+    perfectly correlated."""
+    if config.env == EnvironmentType.MOCK:
+        return MockEnvironment(max_episode_steps=config.max_steps)
+    if config.env == EnvironmentType.LIBERO:
+        # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
+        from evaluation.envs.libero import LiberoSimEnvironment
+
+        return LiberoSimEnvironment(
+            task_id=robot_idx,
+            task_suite_name=config.task_suite_name,
+            max_episode_steps=config.max_steps,
+            seed=config.seed + robot_idx,
+        )
+    raise ValueError(f"Unsupported env: {config.env}")
 
 
-def _init_worker_shared(
-    episode_queue,
-    progress_queue,
-    start_barrier,
-    network_worker_contexts: dict[str, WorkerNetworkContext] | None = None,
-) -> None:
-    global _episode_queue, _progress_queue, _start_barrier, _network_worker_contexts
-    _episode_queue = episode_queue
-    _progress_queue = progress_queue
-    _start_barrier = start_barrier
-    _network_worker_contexts = network_worker_contexts
+def create_agent(
+    args: Args, robot_idx: int
+) -> tuple[_agent.Agent, BidirectionalWebsocket | None, ActionChunkBroker | None]:
+    """Build robot ``robot_idx``'s agent plus the resources the worker must
+    later close/snapshot. A MOCK env needs no server, so it runs a MockAgent."""
+    config = args.experiment_config
+    if config.env == EnvironmentType.MOCK:
+        return MockAgent(), None, None
 
-
-@dataclass
-class _WorkerArgs:
-    args: Args
-    server_metadata: ServerMetadata
-    robot_idx: int
-    # In trial mode, the task this robot is pinned to. ``None`` outside trial mode.
-    assigned_task_id: int | None = None
-
-
-class _StartupSyncSubscriber(_subscriber.Subscriber):
-    """One-shot startup synchronization right before first episode steps."""
-
-    def __init__(self) -> None:
-        self._done = False
-
-    def on_episode_start(self) -> None:
-        if self._done:
-            return
-        if _start_barrier is not None:
-            _start_barrier.wait()
-        self._done = True
-        # Notify the progress manager that this worker has crossed the start barrier.
-        # The manager sets its start_time on the first such message it receives.
-        if _progress_queue is not None:
-            try:
-                _progress_queue.put_nowait({"type": "run_start"})
-            except Exception:
-                pass
-
-    def on_step(self, observation, action) -> None:
-        return
-
-    def on_episode_end(self) -> None:
-        return
-
-
-def _robot_worker(worker_args: _WorkerArgs) -> None:
-    """Worker process. Behaviour depends on ``settings.use_trial_mode``:
-
-    - **Trial mode** (wall_clock_time_limit_s > 0): the robot is pinned to a
-      single ``assigned_task_id`` for the entire wall-clock budget. The LIBERO
-      ``raw_env`` is created once and reused across episodes (skips the
-      expensive BDDL load) — only the per-episode ``LiberoSimEnvironment``
-      wrapper is rebuilt.
-    - **Legacy mode**: pull episodes from the shared queue until empty.
-    """
-    args = worker_args.args
-    settings = worker_args.args.experiment_config
-    robot_idx = worker_args.robot_idx
-    robot_id = f"robot_{robot_idx}"
-
-    ws_host = args.host
-    ws_port = args.port
-    pre_send_hook = None
-    network_hook = None
-    if _network_worker_contexts is not None:
-        context = _network_worker_contexts.get(robot_id)
-        if context is None:
-            raise RuntimeError(f"Missing network context for worker robot_id={robot_id}")
-        if bool(context.get("emulate_network", True)):
-            ws_host = str(context["proxy_host"])
-            ws_port = int(context["proxy_port"])
-            network_hook = RobotNetworkHook(context)
-            pre_send_hook = network_hook.before_send
-
+    robot = config.robots[robot_idx]
     ws_client = BidirectionalWebsocket(
-        robot_id=robot_id,
-        host=ws_host,
-        port=ws_port,
-        control_hz=float(settings.robots[robot_idx].control_hz),
-        pre_send_hook=pre_send_hook,
+        robot_id=f"robot_{robot_idx}",
+        host=args.host,
+        port=args.port,
+        control_hz=robot.control_hz,
     )
     ws_client.connect()
 
-    execution_horizon = settings.execution_horizon_for_robot(robot_idx)
-    config = BrokerConfig(
-        ws_client=ws_client,
-        control_hz=settings.robots[robot_idx].control_hz,
-        min_execution_horizon=execution_horizon.min,
-        max_execution_horizon=execution_horizon.max,
+    broker = config.action_chunk_broker_type.create(
+        BrokerConfig(
+            ws_client=ws_client,
+            control_hz=robot.control_hz,
+            min_execution_horizon=robot.execution_horizon.min,
+            max_execution_horizon=robot.execution_horizon.max,
+        )
     )
-    broker = settings.action_chunk_broker_type.create(config)
-    agent = _policy_agent.PolicyAgent(broker=broker)
+    return PolicyAgent(broker), ws_client, broker
 
-    LiberoSimEnvironment = None  # noqa: N806
-    libero_utils = None
-    task_suite = None
-    if settings.env == "libero":
-        from libero.libero import benchmark
 
-        from evaluation.envs.libero import LiberoSimEnvironment  # noqa: F811
+def _run_robot_worker(args: Args, robot_idx: int) -> None:
+    """One robot's whole life: seed, build env/agent, roll out, tear down.
 
-        benchmark_dict: dict[str, type[benchmark.Benchmark]] = benchmark.get_benchmark_dict()
-        task_suite = benchmark_dict[settings.task_suite_name]()
+    Runs in its own process so heavy env state and the websocket receive thread
+    stay isolated per robot.
+    """
+    config = args.experiment_config
+    seed_everything(config.seed + robot_idx)
 
-    # Single instance reused across episodes so _done persists across iterations.
-    startup_sync = _StartupSyncSubscriber()
+    environment = create_environment(config, robot_idx)
+    agent, ws_client, broker = create_agent(args, robot_idx)
 
-    # Shared across all Savers this worker builds: video encoding for episode N
-    # otherwise blocks the worker from starting episode N+1 (Saver.close() does
-    # executor.shutdown(wait=True)). With a shared pool, per-episode close() is
-    # a no-op and we drain once in the outer finally below. pending_slots caps
-    # the backlog at 2 episodes' worth of buffers; a third on_episode_end
-    # blocks the worker rather than growing memory unboundedly.
-    import threading  # noqa: PLC0415
-    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+    meta = SaveMeta(
+        out_dir=args.output_dir,
+        robot_idx=robot_idx,
+        task_suite_name=config.task_suite_name,
+        task_id=robot_idx,
+        task_language=environment.task_language,
+        control_hz=config.robots[robot_idx].control_hz,
+        # Zero-image mock frames aren't worth encoding.
+        save_video=config.env != EnvironmentType.MOCK,
+    )
 
-    saver_executor = ThreadPoolExecutor(max_workers=2)
-    saver_pending_slots = threading.BoundedSemaphore(2)
-
-    def _build_subscribers(episode: Episode, env: Any) -> list[_subscriber.Subscriber]:
-        subs: list[_subscriber.Subscriber] = [
-            startup_sync,
-            Saver(
-                out_dir=args.output_dir,
-                environment=env,
-                action_chunk_broker=broker,
-                task_suite_name=episode.task_suite_name,
-                task_id=episode.task_id,
-                task=episode.task,
-                robot_idx=robot_idx,
-                save_video=settings.env != "mock",
-                executor=saver_executor,
-                pending_slots=saver_pending_slots,
-                control_hz=settings.robot[robot_idx].control_hz,
-            ),
-        ]
-        if _progress_queue is not None:
-            subs.append(
-                ProgressSubscriber(
-                    queue=_progress_queue,
-                    robot_idx=robot_idx,
-                    episode=episode,
-                    environment=env,
-                    update_frequency=10,
-                )
-            )
-        return subs
-
-    def _run_one(env: Any, subscribers: list[_subscriber.Subscriber]) -> None:
-        runtime = _runtime.Runtime(
-            environment=env,
+    try:
+        run_robot(
+            environment=environment,
             agent=agent,
-            subscribers=subscribers,
-            max_hz=settings.robots[robot_idx].control_hz,
-            num_episodes=1,
-            max_episode_steps=env._max_episode_steps,  # type: ignore[attr-defined]
-        )
-        runtime.run()
-        runtime.close()
-
-    try:
-        if settings.use_trial_mode:
-            _trial_loop(
-                args=args,
-                settings=settings,
-                robot_idx=robot_idx,
-                worker_args=worker_args,
-                task_suite=task_suite,
-                libero_utils=libero_utils,
-                LiberoSimEnvironment=LiberoSimEnvironment,
-                build_subscribers=_build_subscribers,
-                run_one=_run_one,
-                startup_sync=startup_sync,
-            )
-        else:
-            while True:
-                try:
-                    episode = _episode_queue.get_nowait()
-                except queue.Empty:
-                    break
-
-                if settings.env == "libero":
-                    raw_env, _ = libero_utils._get_libero_env(
-                        task_suite.get_task(episode.task_id),
-                        seed=settings.seed + robot_idx,
-                    )
-                    env = LiberoSimEnvironment(
-                        env=raw_env,
-                        task_description=episode.task.language,
-                        initial_states=np.array([episode.initial_state]),
-                        resize_size=RESIZE_SIZE,
-                        max_episode_steps=settings.max_steps,
-                        control_hz=settings.robots[robot_idx].control_hz,
-                    )
-                elif settings.env == "mock":
-                    env = MockEnvironment(
-                        max_episode_steps=settings.max_steps,
-                        control_hz=settings.robots[robot_idx].control_hz,
-                        task_id=episode.task_id,
-                        episode_idx=episode.idx,
-                    )
-                else:
-                    raise ValueError(f"Invalid environment: {settings.env}")
-
-                _run_one(env, _build_subscribers(episode, env))
-    finally:
-        # Drain any in-flight per-episode video / metadata saves before this
-        # worker exits. This is the only place we wait — per-episode close()
-        # on individual Savers is a no-op when sharing this executor.
-        try:
-            saver_executor.shutdown(wait=True)
-        except Exception:  # noqa: BLE001
-            pass
-        if network_hook is not None:
-            network_hook.close()
-
-
-def _trial_loop(
-    *,
-    args: "Args",
-    settings: ExperimentConfig,
-    robot_idx: int,
-    worker_args: _WorkerArgs,
-    task_suite: Any,
-    libero_utils: Any,
-    LiberoSimEnvironment: Any,  # noqa: N803
-    build_subscribers,
-    run_one,
-    startup_sync: "_StartupSyncSubscriber",
-) -> None:
-    """Trial-mode loop: pinned task, env reuse, wall-clock budget."""
-    task_id = worker_args.assigned_task_id
-    if task_id is None:
-        raise RuntimeError(f"robot {robot_idx}: missing assigned_task_id in trial mode")
-
-    raw_env = None
-    initial_states: np.ndarray
-    if settings.env == "libero":
-        task = task_suite.get_task(task_id)
-        initial_states = task_suite.get_task_init_states(task_id)
-        raw_env, _ = libero_utils._get_libero_env(task, seed=settings.seed + robot_idx)
-
-        # No-op close so the shared raw_env survives across iterations.
-        class _ReusableLiberoEnv(LiberoSimEnvironment):  # type: ignore[misc, valid-type]
-            def close(self) -> None:  # noqa: D401
-                return None
-
-    else:
-        from evaluation.envs.libero.episodes import _MockTask
-
-        task = _MockTask(language=f"mock task {task_id}")
-        initial_states = np.zeros((1, 1), dtype=np.float32)
-
-    # Synchronize all workers right here, before anchoring the deadline.
-    # Without this, the startup barrier inside the first runtime.run() fires
-    # AFTER ``start_t`` is set, so early-arriving workers get their budget
-    # eaten by the wait for late-arriving peers. By draining the barrier here
-    # (and marking startup_sync done so it's a no-op when Runtime calls
-    # on_episode_start) every robot's wall-clock budget begins at the same
-    # post-sync instant.
-    if _start_barrier is not None:
-        try:
-            _start_barrier.wait()
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("robot_%d: startup barrier wait failed: %s", robot_idx, exc)
-    startup_sync._done = True
-    if _progress_queue is not None:
-        try:
-            _progress_queue.put_nowait({"type": "run_start"})
-        except Exception:  # noqa: BLE001
-            pass
-
-    try:
-        start_t = time.monotonic()
-        deadline = start_t + settings.wall_clock_time_limit_s
-        ep_idx = 0
-        while time.monotonic() < deadline:
-            state = initial_states[ep_idx % len(initial_states)]
-            episode = Episode(
-                idx=ep_idx + 1,
-                task_suite_name=settings.task_suite_name,
-                task_id=task_id,
-                task=task,
-                initial_state=state,
-            )
-            if settings.env == "libero":
-                env = _ReusableLiberoEnv(
-                    env=raw_env,
-                    task_description=task.language,
-                    initial_states=np.array([state]),
-                    resize_size=RESIZE_SIZE,
-                    max_episode_steps=settings.max_steps,
-                    control_hz=settings.robots[robot_idx].control_hz,
-                    deadline_monotonic=deadline,
-                )
-            else:
-                env = MockEnvironment(
-                    max_episode_steps=settings.max_steps,
-                    control_hz=settings.robots[robot_idx].control_hz,
-                    task_id=task_id,
-                    episode_idx=episode.idx,
-                    deadline_monotonic=deadline,
-                )
-            run_one(env, build_subscribers(episode, env))
-            ep_idx += 1
-        logging.info(
-            "robot_%d: completed %d episode(s) on task_id=%d within %.1fs budget",
-            robot_idx,
-            ep_idx,
-            task_id,
-            settings.wall_clock_time_limit_s,
+            meta=meta,
+            broker=broker,
+            num_episodes=config.num_trials_per_task,
+            time_limit=config.wall_clock_time_limit_s,
         )
     finally:
-        if raw_env is not None:
-            try:
-                raw_env.close()
-            except Exception:  # noqa: BLE001
-                pass
-
-
-def run_robots(
-    args: Args,
-    settings: ExperimentConfig,
-    episodes: list[Episode],
-    server_metadata: ServerMetadata,
-    network_worker_contexts: dict[str, WorkerNetworkContext] | None = None,
-    robot_task_assignment: list[int] | None = None,
-) -> None:
-    trial_mode = settings.use_trial_mode and robot_task_assignment is not None
-
-    if args.debug:
-        # Debug mode: single process for pdb compatibility, no progress manager.
-        ep_queue: queue.Queue = queue.Queue()
-        for ep in episodes:
-            ep_queue.put(ep)
-        _init_worker_shared(ep_queue, None, None, network_worker_contexts)
-        _robot_worker(
-            _WorkerArgs(
-                args=args,
-                server_metadata=server_metadata,
-                robot_idx=0,
-                assigned_task_id=(robot_task_assignment[0] if trial_mode else None),
-            )
-        )
-    else:
-        if trial_mode:
-            active_workers = len(settings.robots)
-            # In trial mode the unit of progress is "one robot finished its
-            # wall-clock budget" rather than "one episode in the queue".
-            total_episodes = active_workers
-        else:
-            total_episodes = len(episodes)
-            active_workers = min(len(settings.robots), total_episodes)
-        start_barrier = multiprocessing.Barrier(active_workers, timeout=60)
-        logging.info("Using one-time startup barrier across %d worker(s)", active_workers)
-
-        mp_episode_queue: multiprocessing.Queue = multiprocessing.Queue()
-        for ep in episodes:
-            mp_episode_queue.put(ep)
-
-        with get_progress_manager(
-            args.progress_type,
-            total_episodes=total_episodes,
-            max_steps=settings.max_steps,
-        ) as progress_manager:
-            worker_args = [
-                _WorkerArgs(
-                    args=args,
-                    server_metadata=server_metadata,
-                    robot_idx=i,
-                    assigned_task_id=(robot_task_assignment[i] if trial_mode else None),
-                )
-                for i in range(active_workers)
-            ]
-            with multiprocessing.Pool(
-                processes=active_workers,
-                initializer=_init_worker_shared,
-                initargs=(
-                    mp_episode_queue,
-                    progress_manager.queue,
-                    start_barrier,
-                    network_worker_contexts,
-                ),
-            ) as pool:
-                try:
-                    # use imap_unordered so that exceptions surface immediately
-                    for _ in pool.imap_unordered(_robot_worker, worker_args):
-                        pass
-                except Exception as e:
-                    logging.error(f"Error in robot worker: {e}")
-                    raise
-                finally:
-                    pool.close()
-                    pool.join()
+        environment.close()
+        # close() stops the broker's background receive thread and the websocket;
+        # closing only ws_client would leave that daemon thread to be killed
+        # mid-I/O at interpreter exit (SIGABRT).
+        if broker is not None:
+            broker.close()
+        elif ws_client is not None:
+            ws_client.close()
 
 
 def main(args: Args) -> None:
+    config = args.experiment_config
+
     if args.overwrite:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    log_dir = args.output_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file_path = (
-        log_dir / f"libero_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
+    log_path = (
+        args.output_dir
+        / f"run_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
     )
-    logging_config.setup_logging(log_path=log_file_path, level=logging.INFO)
+    logging_config.setup_logging(log_path=log_path, level=logging.INFO)
 
-    seed_everything(args.experiment_config.seed)
-
-    robot_task_assignment: list[int] | None = None
-    subset_task_ids: list[int] = []
-    settings = args.experiment_config  # NOTE: hack for now, change everything below later
-    if settings.use_trial_mode:
-        from evaluation.envs.libero.episodes import (
-            _MockTask,
-            assign_robots_to_tasks,
-            pick_subset_task_ids,
-        )
-
-        if settings.env == "libero":
-            subset_task_ids = pick_subset_task_ids(
-                settings.task_suite_name, settings.subset_size, settings.seed
-            )
-        else:
-            # For mock env, "task ids" are synthetic. Pick the first
-            # `subset_size or 1` ids deterministically.
-            n = max(1, settings.subset_size or 1)
-            subset_task_ids = list(range(n))
-
-        robot_task_assignment = assign_robots_to_tasks(len(settings.robots), subset_task_ids)
-        # Trial-mode workers generate episodes inline based on their assigned
-        # task. The list below is only used downstream for runtime_metadata.
-        episodes = [
-            Episode(
-                idx=robot_idx + 1,
-                task_suite_name=settings.task_suite_name,
-                task_id=task_id,
-                task=_MockTask(language=f"trial mode placeholder task_id={task_id}"),
-                initial_state=np.zeros(1, dtype=np.float32),
-            )
-            for robot_idx, task_id in enumerate(robot_task_assignment)
-        ]
-        logging.info(
-            "Trial mode: seed=%d subset_task_ids=%s assignment=%s budget=%.1fs",
-            settings.seed,
-            subset_task_ids,
-            robot_task_assignment,
-            settings.wall_clock_time_limit_s,
-        )
-    else:
-        if settings.env == "libero":
-            episodes = create_episodes(settings.task_suite_name, settings.num_trials_per_task)
-        else:
-            episodes = create_mock_episodes(settings.num_trials_per_task * len(settings.robots))
-
-    # Control-plane client: HTTP only, never connect()ed to the websocket.
-    control_client = BidirectionalWebsocket(
-        robot_id="__control__",
-        host=args.host,
-        port=args.port,
-    )
-    control_client.reconfigure_server(args.scheduler_config)
-    control_client.reset_server()
-    server_metadata = control_client.fetch_server_metadata()
-    if settings.use_trial_mode:
-        active_workers = 1 if args.debug else len(settings.robots)
-    else:
-        active_workers = 1 if args.debug else min(len(settings.robots), len(episodes))
-
-    network_manager = None
-    network_worker_contexts: dict[str, WorkerNetworkContext] | None = None
-    if experiment_requires_network_emulation(settings, worker_count=active_workers):
-        network_output_dir = args.output_dir / "network_emulation"
-        network_manager = NetworkEmulationManager(
-            settings,
-            upstream_host=args.host,
-            upstream_port=args.port,
-            worker_count=active_workers,
-            output_dir=network_output_dir,
-        )
-        try:
-            network_worker_contexts = network_manager.start()
-        except Exception:
-            network_manager.close()
-            raise
-        logging.info(
-            "Network emulation enabled for %d worker(s)",
-            sum(
-                1
-                for context in network_worker_contexts.values()
-                if bool(context.get("emulate_network", True))
-            ),
-        )
-    else:
-        logging.info(
-            "Network emulation disabled: all active robots have zero uplink/downlink medians and sigmas"
-        )
+    control_client: ServerControlClient | None = None
+    if config.env != EnvironmentType.MOCK:
+        control_client = ServerControlClient(host=args.host, port=args.port)
+        control_client.reconfigure_server(args.scheduler_config)
+        control_client.reset_server()
 
     args.to_json(args.output_dir / "experiment_args.json")
-    server_metadata.to_json(args.output_dir / "server_metadata.json")
 
-    try:
-        run_robots(
-            args,
-            settings,
-            episodes,
-            server_metadata,
-            network_worker_contexts=network_worker_contexts,
-            robot_task_assignment=robot_task_assignment,
+    num_robots = len(config.robots)
+    logger.info("Launching %d robot process(es)", num_robots)
+    processes = [
+        multiprocessing.Process(
+            target=_run_robot_worker, args=(args, robot_idx), name=f"robot_{robot_idx}"
         )
-    finally:
-        if network_manager is not None:
-            network_manager.close()
+        for robot_idx in range(num_robots)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join()
 
-    # TODO: does not match pattern above
-    history = control_client.fetch_server_metrics()
-    (args.output_dir / "server_metrics_history.json").write_text(json.dumps(history, indent=2))
+    failed = [p.name for p in processes if p.exitcode != 0]
+    if failed:
+        raise RuntimeError(f"Robot worker(s) exited non-zero: {failed}")
+
+    if control_client is not None:
+        history = control_client.fetch_server_metrics()
+        (args.output_dir / "server_metrics_history.json").write_text(json.dumps(history, indent=2))
 
     calculate_metrics(args.output_dir)
     generate_all_plots(args.output_dir)
 
 
 def cli() -> None:
-    """Console-script entrypoint (``run-libero``). Sets the multiprocessing
-    start method before any worker pool is created, then runs ``main``."""
+    """Console-script entrypoint. Sets the multiprocessing start method before
+    any worker process is created, then runs ``main``."""
     if sys.platform == "linux":
         # forkserver: workers fork from a server process that has already
-        # imported the heavy libraries below, so their read-only pages are
-        # shared copy-on-write across all robots instead of duplicated per
-        # process. Safe with sim envs because GL contexts are created
-        # per-worker after the fork.
+        # imported the heavy libraries, so their read-only pages are shared
+        # copy-on-write across robots instead of duplicated per process. Safe
+        # with sim envs because GL contexts are created per-worker after the fork.
         multiprocessing.set_start_method("forkserver")
-        multiprocessing.set_forkserver_preload(
-            ["numpy", "matplotlib", "robosuite", "evaluation.envs.libero.env"]
-        )
     else:
-        # macOS: forked processes can crash inside Apple frameworks; keep
-        # spawn (also allows multiple processes with envs).
+        # macOS: forked processes can crash inside Apple frameworks; keep spawn.
         multiprocessing.set_start_method("spawn")
 
     main(Args.from_cli())
@@ -617,5 +209,3 @@ def cli() -> None:
 
 if __name__ == "__main__":
     cli()
-
-# TODOs: check that rendering is egl

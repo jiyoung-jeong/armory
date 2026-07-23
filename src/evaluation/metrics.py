@@ -15,7 +15,7 @@ from matplotlib.patches import Patch
 from rich.console import Console
 from rich.table import Table
 
-from evaluation.sims.libero.subscribers.saver import Result
+from evaluation.saver_utils import Result
 
 logger = logging.getLogger(__name__)
 
