@@ -25,6 +25,7 @@ class LiberoObservation(Observation):
     prompt: str
 
 
+# TODO: think more about spec, this was vibed too much
 @dataclass(frozen=True)
 class LiberoRobotSpec:
     """The fixed LIBERO task assigned to one robot for an entire run."""

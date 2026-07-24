@@ -125,6 +125,7 @@ class ParquetDataclass:
         return instances
 
 
+# TODO: can get rid of CSVDataclass and just save data for each step as parquet
 @dataclass(frozen=True)
 class Timestamp(CSVDataclass):
     timestamp: float

@@ -185,10 +185,8 @@ def main(args: Args) -> None:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    log_path = args.output_dir / "run.log"
-    logging_config.setup_logging(log_path=log_path, level=logging.INFO)
+    logging_config.setup_logging(log_path=args.output_dir / "run.log", level=logging.INFO)
 
-    control_client: ServerControlClient | None = None
     if args.agent == AgentType.POLICY:
         control_client = ServerControlClient(host=args.host, port=args.port)
         control_client.reconfigure_server(args.scheduler_config)
@@ -202,7 +200,7 @@ def main(args: Args) -> None:
     generate_all_plots(args.output_dir)
 
 
-def cli() -> None:
+if __name__ == "__main__":
     if sys.platform == "linux":
         # forkserver: workers fork from a server process that has already
         # imported the heavy libraries, so their read-only pages are shared
@@ -214,7 +212,3 @@ def cli() -> None:
         multiprocessing.set_start_method("spawn")
 
     main(Args.from_cli())
-
-
-if __name__ == "__main__":
-    cli()
