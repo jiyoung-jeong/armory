@@ -8,7 +8,6 @@ from multiprocessing.synchronize import Event
 
 import zmq
 
-from armory.scheduling.action_deficit import ActionDeficitScheduler
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.baselines import (
     FixedMaxBatchScheduler,
@@ -19,9 +18,7 @@ from armory.scheduling.baselines import (
     StarvationScheduler,
 )
 from armory.scheduling.dynamic_action import DynamicActionScheduler
-from armory.scheduling.lookahead import LookaheadScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
-from armory.scheduling.starvation_fair import StarvationFairScheduler
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -41,9 +38,6 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
     "dynamic-action": DynamicActionScheduler,
-    "action-deficit": ActionDeficitScheduler,
-    "starvation-fair": StarvationFairScheduler,
-    "lookahead": LookaheadScheduler,
     "lookahead-actions": LookaheadActionsScheduler,
     "round-robin": RoundRobinScheduler,
     "random": RandomBatchScheduler,

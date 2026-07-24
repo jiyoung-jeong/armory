@@ -74,7 +74,7 @@ Serving responsibilities are split without changing that topology:
 
 Two related but distinct directories:
 - `src/armory/serving/scheduler.py` holds `SCHEDULER_REGISTRY` mapping string names
-  (`greedy-deadline`, `lookahead-actions`, `action-deficit`, `starvation-fair`, `round-robin`, …) to
+  (`greedy-deadline`, `lookahead-actions`, `dynamic-action`, `round-robin`, …) to
   scheduler classes. This name is what `SchedulerConfig.scheduling_algorithm` selects.
 - `src/armory/scheduling/` contains the algorithm implementations; all subclass
   `RequestScheduler` (`base.py`). When adding an algorithm, implement the class here and register it in
