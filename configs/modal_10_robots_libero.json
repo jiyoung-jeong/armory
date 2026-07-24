@@ -1,0 +1,9 @@
+{
+  "environment": {
+    "kind": "libero",
+    "task_suite_name": "libero_10",
+    "max_steps_per_episode": 500
+  },
+  "robots": [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}],
+  "time_limit": 60.0
+}

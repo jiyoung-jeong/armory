@@ -36,20 +36,15 @@ class LiberoRobotSpec:
 def plan_robot_specs(
     config: LiberoConfig, *, num_robots: int, experiment_seed: int
 ) -> list[LiberoRobotSpec]:
-    """Assign distinct, reproducible tasks to every robot in a fleet.
+    """Assign reproducible tasks to every robot in a fleet.
 
-    Planning happens once in the parent process.  Sampling within worker
-    processes would make a without-replacement guarantee impossible.
+    Planning happens once in the parent process. Tasks are sampled without
+    replacement within each pass through a suite; fleets larger than the suite
+    begin a freshly shuffled pass, so every task is covered before any repeat.
     """
     from libero.libero.benchmark import get_benchmark_dict
 
     task_suite = get_benchmark_dict()[config.task_suite_name]()
-    if num_robots > task_suite.n_tasks:
-        raise ValueError(
-            f"LIBERO suite {config.task_suite_name!r} has {task_suite.n_tasks} tasks, "
-            f"but the experiment has {num_robots} robots; task assignment is without replacement."
-        )
-
     seed = experiment_seed if config.task_seed is None else config.task_seed
     task_ids = sample_task_ids(num_tasks=task_suite.n_tasks, num_robots=num_robots, seed=seed)
     return [
@@ -59,12 +54,21 @@ def plan_robot_specs(
 
 
 def sample_task_ids(*, num_tasks: int, num_robots: int, seed: int) -> list[int]:
-    """Sample one distinct task ID for every robot, reproducibly."""
-    if num_robots > num_tasks:
-        raise ValueError(
-            f"Cannot assign {num_robots} robots to {num_tasks} tasks without replacement."
-        )
-    return random.Random(seed).sample(range(num_tasks), num_robots)
+    """Sample task IDs reproducibly, reshuffling after each complete pass.
+
+    Each contiguous group of up to ``num_tasks`` IDs is sampled without
+    replacement. This permits fleets larger than a task suite while retaining
+    balanced task coverage.
+    """
+    if num_tasks <= 0:
+        raise ValueError("Cannot assign robots from a suite with no tasks.")
+
+    rng = random.Random(seed)
+    task_ids: list[int] = []
+    while len(task_ids) < num_robots:
+        remaining = num_robots - len(task_ids)
+        task_ids.extend(rng.sample(range(num_tasks), min(remaining, num_tasks)))
+    return task_ids
 
 
 def get_libero_env(task, seed):

@@ -1,5 +1,3 @@
-import pytest
-
 from evaluation.envs.libero import sample_task_ids
 
 
@@ -10,6 +8,10 @@ def test_sample_task_ids_is_seeded_and_without_replacement() -> None:
     assert len(task_ids) == len(set(task_ids)) == 4
 
 
-def test_sample_task_ids_rejects_more_robots_than_tasks() -> None:
-    with pytest.raises(ValueError, match="without replacement"):
-        sample_task_ids(num_tasks=2, num_robots=3, seed=17)
+def test_sample_task_ids_reshuffles_after_each_complete_pass() -> None:
+    task_ids = sample_task_ids(num_tasks=2, num_robots=5, seed=17)
+
+    assert task_ids == sample_task_ids(num_tasks=2, num_robots=5, seed=17)
+    assert sorted(task_ids[:2]) == [0, 1]
+    assert sorted(task_ids[2:4]) == [0, 1]
+    assert task_ids[4] in {0, 1}

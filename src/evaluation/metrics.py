@@ -440,7 +440,11 @@ def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
         nan_mask = np.isnan(costs)
         starvation_steps = int(nan_mask.sum())
         total_steps = int(costs.shape[0])
-        assert total_steps > 0, "cost_history should contain at least one step"
+        if total_steps == 0:
+            # A fleet-level deadline can expire after an episode directory is
+            # created but before that robot gets its first control step.
+            logger.warning("No control steps in %s; skipping episode metrics", episode_dir)
+            continue
         assert control_hz is not None and control_hz > 0
 
         # Starvation excluding leading NaNs (before the robot's first action).

@@ -34,6 +34,9 @@ from scripts.modal.setups import (
 from scripts.modal.utils import ARTIFACTS_VOLUME_NAME
 
 PORT = 8080
+MAX_CLIENT_CPUS = 16
+MIN_LIBERO_CLIENT_MEMORY_MIB = 16 * 1024
+LIBERO_CLIENT_MEMORY_PER_CPU_MIB = 3 * 1024
 
 
 @app.local_entrypoint()
@@ -52,8 +55,24 @@ def main(json_path: str = "", server: str = "none", output_dir: str = "outputs")
         client_cfg = {"experiment_config": client_cfg}
     client_cfg["overwrite"] = True
     client_cfg["output_dir"] = str(REMOTE_ROOT / stamp)
-    environment = client_cfg["experiment_config"].get("environment", {"kind": "mock"})
-    client = {"libero": LiberoClient, "mock": CpuMockClient}[environment["kind"]]()
+    experiment_config = client_cfg["experiment_config"]
+    environment = experiment_config.get("environment", {"kind": "mock"})
+    # Match the sweep launcher: each simulator worker needs a CPU so a fleet
+    # does not contend for the single-robot default allocation. Modal caps a
+    # single function at 16 CPUs, so larger fleets share the capped allocation.
+    num_robots = len(experiment_config.get("robots", [{}]))
+    client_cpus = min(num_robots, MAX_CLIENT_CPUS)
+    client_cls = {"libero": LiberoClient, "mock": CpuMockClient}[environment["kind"]]
+    if environment["kind"] == "libero":
+        # A 20-robot run used ~44 GiB while retaining the 16 GiB single-robot
+        # reservation. Request 3 GiB per allocated CPU (48 GiB at the cap).
+        client_memory = max(
+            MIN_LIBERO_CLIENT_MEMORY_MIB,
+            client_cpus * LIBERO_CLIENT_MEMORY_PER_CPU_MIB,
+        )
+        client = client_cls.with_options(cpu=client_cpus, memory=client_memory)()
+    else:
+        client = client_cls.with_options(cpu=client_cpus)()
 
     with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
         if server == "none":
