@@ -9,7 +9,7 @@ from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent, AgentEpisodeData
 
 
-# TODO: create_null_action needs more thought
+# TODO manual: create_null_action needs more thought, it's weird to have the function signature like this
 class PolicyAgent(Agent):
     def __init__(
         self,
