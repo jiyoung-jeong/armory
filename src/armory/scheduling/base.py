@@ -7,11 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from armory.scheduling.latency import EMALatencyTracker
-
-# Swap between Mirror and SimpleMirror here while mirror.py is being fixed.
 from armory.scheduling.mirror import Mirror
-
-# from armory.scheduling.simple_mirror import SimpleMirror as Mirror
 from armory.serving.schemas import (
     AckNotification,
     Idle,
