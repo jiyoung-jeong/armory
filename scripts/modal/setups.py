@@ -71,7 +71,7 @@ class Case:
 
     def __post_init__(self) -> None:
         # serve.Args has no output_dir; only the client needs it for metrics.
-        self.client_args.output_dir = self.run_dir / "outputs"
+        self.client_args.output_dir = self.run_dir
         self.client_args.overwrite = True
 
     @property
@@ -285,7 +285,7 @@ def _run(
         if rc != 0:
             result.update(status="failed", error=f"client exited with code {rc}")
         else:
-            result.update(summarize(run_dir / "outputs"), status="ok")
+            result.update(summarize(run_dir), status="ok")
     except Exception as exc:  # noqa: BLE001
         result.update(status="failed", error=repr(exc))
     finally:

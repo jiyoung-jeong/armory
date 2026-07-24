@@ -26,7 +26,7 @@ def collect_case(
     case = _load_json(case_dir / "case.json")
     client_args = _load_json(case_dir / "client_args.json")
     server_args = _load_json(case_dir / "server_args.json")
-    output_dir = pathlib.Path(client_args.get("output_dir", case_dir / "outputs"))
+    output_dir = pathlib.Path(client_args.get("output_dir", case_dir))
 
     row: dict[str, Any] = {
         "run_id": case.get("run_id", case_dir.name),

@@ -40,7 +40,7 @@ LIBERO_CLIENT_MEMORY_PER_CPU_MIB = 3 * 1024
 
 
 @app.local_entrypoint()
-def main(json_path: str = "", server: str = "none", output_dir: str = "outputs") -> None:
+def main(json_path: str = "", server: str = "none", output_dir: str = "runs") -> None:
     if server not in {"none", "mock", "sim"}:
         raise SystemExit("--server must be 'none', 'mock', or 'sim'.")
 

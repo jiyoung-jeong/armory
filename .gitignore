@@ -188,6 +188,7 @@ plots/
 .ruff_cache/
 /experiments/
 video/
+runs/
 
 # AI
 .claude/

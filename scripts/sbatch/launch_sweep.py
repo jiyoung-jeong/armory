@@ -353,8 +353,8 @@ def _override_shortest_horizon(base: dict[str, Any] | None, multiplier: float) -
 
 def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
     case_dir = run_root / case.run_id
-    output_dir = case_dir / "outputs"
-    log_dir = case_dir / "logs"
+    output_dir = case_dir
+    log_dir = case_dir
     log_dir.mkdir(parents=True, exist_ok=True)
 
     _write_json(
