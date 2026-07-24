@@ -8,6 +8,7 @@ from armory.serving.protocol import SchedulerConfig, ServerMetadata
 logger = logging.getLogger(__name__)
 
 
+# TODO: see if this function is too complicated, can be simplified/removed. Same for ws version in client
 def _http_base_url(host: str, port: int | None) -> str:
     """Parse host/port into an HTTP base URL."""
     explicit_scheme = False

@@ -1,5 +1,3 @@
-"""Episode serialization helpers used by ``evaluation.runtime.Runtime`` sinks."""
-
 from __future__ import annotations
 
 import dataclasses

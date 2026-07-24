@@ -16,7 +16,6 @@ from evaluation.recording import Timestamp
 
 logger = logging.getLogger(__name__)
 
-# How long before the step deadline to switch from time.sleep to spinning.
 _SPIN_WINDOW_S = 0.002
 
 
@@ -37,9 +36,8 @@ class Rollout:
     actions_left: tuple[int, ...]
 
 
+# TODO: episode sink pattern is weird, just return rollout and send function call to ThreadPoolExecutor
 class Runtime:
-    """Runs the env<->agent control loop, optionally persisting episodes in the background."""
-
     def __init__(
         self,
         environment: Environment,
@@ -108,7 +106,6 @@ class Runtime:
         return rollout
 
     def close(self) -> None:
-        """Release the environment and agent resources owned by this runtime."""
         try:
             try:
                 self._environment.close()
@@ -129,11 +126,7 @@ class Runtime:
         return observation, action
 
     def _pace(self, last_step_time: float, step_time: float) -> float:
-        """Hold ``control_hz`` by sleeping then spinning the last ~1ms.
-
-        OS sleep granularity can overshoot by ~1ms, so we sleep only until
-        ``_SPIN_WINDOW_S`` before the target and spin the remainder.
-        """
+        """Hold ``control_hz`` by sleeping then spinning the last _SPIN_WINDOW_S."""
         if step_time <= 0:
             return time.perf_counter()
         next_step_time = last_step_time + step_time

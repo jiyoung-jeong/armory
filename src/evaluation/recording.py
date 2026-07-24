@@ -13,6 +13,7 @@ J = TypeVar("J", bound="JSONDataclass")
 P = TypeVar("P", bound="ParquetDataclass")
 
 
+# TODO: can probably delete this and move everything to parquet
 class CSVDataclass:
     """Mixin that adds CSV serialization to dataclasses."""
 

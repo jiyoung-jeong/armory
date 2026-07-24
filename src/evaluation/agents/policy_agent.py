@@ -9,14 +9,8 @@ from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent, AgentEpisodeData
 
 
+# TODO: create_null_action needs more thought
 class PolicyAgent(Agent):
-    """An agent that queries a remote policy server, mediated by an action-chunk broker.
-
-    This agent owns the websocket session.  The broker is a transport-free
-    state machine that turns the server's stream of action chunks into a single
-    action per control step.
-    """
-
     def __init__(
         self,
         ws_client: BidirectionalWebsocket,
@@ -63,6 +57,7 @@ class PolicyAgent(Agent):
         self._ws_client.close()
         self._background_thread.join(timeout=5)
 
+    # TODO: shouldn't need a crazy dataclass or special method for this?
     @override
     def snapshot_episode_data(self) -> AgentEpisodeData:
         with self._lock:
