@@ -83,6 +83,10 @@ def get_libero_env(task, seed):
         "bddl_file_name": task_bddl_file,
         "camera_heights": LIBERO_ENV_RESOLUTION,
         "camera_widths": LIBERO_ENV_RESOLUTION,
+        # Each evaluator is bound to one task and immediately restores a
+        # pre-collected MuJoCo state below. Avoid rebuilding the entire model
+        # and renderer at every episode boundary.
+        "hard_reset": False,
     }
     env = OffScreenRenderEnv(**env_args)
     env.seed(
