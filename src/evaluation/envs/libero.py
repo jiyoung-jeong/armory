@@ -148,6 +148,14 @@ class LiberoSimEnvironment(Environment):
         self._env.reset()
         obs = self._env.set_init_state(state)
 
+        # ``set_init_state`` renders the first offscreen camera frame, which
+        # creates the EGL context. Checking earlier reports no renderer even
+        # when the NVIDIA backend is correctly configured.
+        if self._episode_idx == 0:
+            from utils import assert_egl_rendering
+
+            assert_egl_rendering()
+
         # Let objects fall / settle.
         for _ in range(NUM_STEPS_WAIT):
             obs, _, _, _ = self._env.step(LIBERO_DUMMY_ACTION)

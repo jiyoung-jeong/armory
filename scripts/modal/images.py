@@ -24,6 +24,7 @@ if LIBERO_SOURCE_MODE not in {"local", "remote"}:
 
 _EGL_APT = (
     "libgl1",
+    "libopengl0",
     "libglib2.0-0",
     "libegl1",
 )
@@ -111,11 +112,11 @@ def _add_repo_sources(image: modal.Image, *modules: str) -> modal.Image:
 
 def _bake_libero_config(image: modal.Image) -> modal.Image:
     lines = [
-        "assets: /root/libero/libero/assets",
-        "bddl_files: /root/libero/libero/bddl_files",
-        "benchmark_root: /root/libero/libero",
+        "assets: /root/libero/libero/libero/assets",
+        "bddl_files: /root/libero/libero/libero/bddl_files",
+        "benchmark_root: /root/libero/libero/libero",
         "datasets: /root/libero/datasets",
-        "init_states: /root/libero/libero/init_files",
+        "init_states: /root/libero/libero/libero/init_files",
     ]
     args = " ".join(f"'{line}'" for line in lines)
     return image.run_commands(
@@ -142,7 +143,7 @@ def _add_libero_data(image: modal.Image) -> modal.Image:
     for name in ("bddl_files", "init_files", "assets"):
         image = image.add_local_dir(
             str(REPO_ROOT / "third_party/libero/libero/libero" / name),
-            remote_path=f"/root/libero/libero/{name}",
+            remote_path=f"/root/libero/libero/libero/{name}",
             # These simulator assets change rarely. Bake them into the image so
             # Modal can reuse the content-addressed image layer instead of
             # re-uploading a live mount on every app deployment.
@@ -154,17 +155,21 @@ def _add_libero_data(image: modal.Image) -> modal.Image:
 def _add_libero_source(image: modal.Image) -> modal.Image:
     """Bake LIBERO's Python source without duplicating its static data mounts."""
     return image.add_local_dir(
-        str(REPO_ROOT / "third_party/libero/libero"),
-        remote_path="/root/libero",
+        str(REPO_ROOT / "third_party/libero"),
+        remote_path=str(LIBERO_ROOT),
         # The three data trees are added by _add_libero_data above. Excluding
         # them here avoids remounting them as part of the Python package.
-        ignore=["libero/assets/**", "libero/bddl_files/**", "libero/init_files/**"],
+        ignore=[
+            "libero/libero/assets/**",
+            "libero/libero/bddl_files/**",
+            "libero/libero/init_files/**",
+        ],
         copy=True,
     )
 
 
 def _clone_libero_source(image: modal.Image) -> modal.Image:
-    """Fetch the pinned LIBERO revision for the shareable default image."""
+    """Fetch the pinned LIBERO revision with the same layout as local source mode."""
     return image.run_commands(
         f"git clone {LIBERO_REPOSITORY} {LIBERO_ROOT}",
         f"git -C {LIBERO_ROOT} checkout --detach {LIBERO_REVISION}",
@@ -250,6 +255,8 @@ gpu_libero_client_image = _add_repo_sources(
     "armory",
     "evaluation",
     "armory_client",
+    "openpi_adapter",
+    "gr00t_adapter",
 )
 
 cpu_mock_image = _add_repo_sources(

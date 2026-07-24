@@ -24,7 +24,7 @@ from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import ExperimentConfig
-from utils import assert_egl_rendering, seed_everything
+from utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +61,6 @@ def create_environment(
         # Imported lazily: LIBERO/robosuite are heavy and Linux/GL-only.
         from evaluation.envs.libero import LiberoRobotSpec, LiberoSimEnvironment
 
-        # not using EGL will slow down step times
-        assert_egl_rendering()
         if not isinstance(libero_spec, LiberoRobotSpec):
             raise ValueError("A LIBERO robot spec is required for a LIBERO environment")
 
