@@ -13,7 +13,7 @@ from armory.backends.mock import INFERENCE_PROFILES
 from armory.checkpoints import OPENPI_CHECKPOINT
 from armory.serving.protocol import ServerMetadata
 from armory_client.messages import InferRequest
-from evaluation.recording import JSONBaseModel
+from evaluation.types import JSONBaseModel
 from gr00t_adapter.serve_factory import (  # noqa: E501
     create_gr00t_policy,
     get_gr00t_checkpoint_label,

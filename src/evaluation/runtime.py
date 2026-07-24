@@ -12,7 +12,7 @@ import numpy as np
 from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent
 from evaluation.envs.base import Environment
-from evaluation.recording import Timestamp
+from evaluation.types import Timestamp
 
 logger = logging.getLogger(__name__)
 

@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 
 from armory_client.schemas import ActionChunk
-from evaluation.recording import JSONDataclass, Timestamp
 from evaluation.runtime import Rollout
+from evaluation.types import JSONDataclass, Timestamp
 
 logger = logging.getLogger(__name__)
 
