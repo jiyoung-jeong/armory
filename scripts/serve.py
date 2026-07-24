@@ -87,6 +87,7 @@ def main(args: Args) -> None:
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
     # TODO: don't need to turn into kwargs anymore, just pass the pydantic BaseModel
+    # Can delete to_scheduler_kwargs() function definition after too.
     scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
 

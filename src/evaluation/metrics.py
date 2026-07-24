@@ -1,4 +1,13 @@
 # TODO: this entire file needs to be overhauled, maybe made into a folder
+# there are some functions that relied on a server_metrics_history.json file
+# that the server used to return. We shouldn't throw all that code away, but
+# the new code will have the server generate these files so we can discuss how
+# to best approach. In general, the overhaul here should be to reduce code duplication
+# by building highly resuable data loading and plotting functions, but without
+# building excessive or cumbersome abstractions (i.e. minimal wrappers around existing
+# matplotlib functions). When refactoring, we can discuss a reasonable plan for
+# everything before you proceed with the refactor.). Also, make sure to refactor
+# the saving code before doing this, as that is upstream.
 
 import json
 import logging

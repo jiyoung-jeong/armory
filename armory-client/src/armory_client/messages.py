@@ -4,7 +4,6 @@ from typing import Literal
 import numpy as np
 
 
-# message types shared between client and server
 @dataclass(frozen=True)
 class InferRequest:
     robot_id: str
@@ -33,10 +32,14 @@ class InferResponse:
     observation_step: int  # from request
     action_index_start: int  # from request
     request_timestamp: float  # from request
-    actions: np.ndarray  # 1 action_horizon action_dim # TODO: check the type on this
+    actions: np.ndarray  # 1 action_horizon action_dim
     min_execution_horizon: int
     max_execution_horizon: int
     noise: np.ndarray | None = None  # action_horizon noise_dim
+
+    # TODO: these timestamps don't need to go to the client,
+    # if these timestamps are used for some client-side plots
+    # we can move the plots server-side.
     # Lifecycle timestamps (filled by server, all time.time()):
     server_arrival_time: float = 0.0  # WS: when observation arrived
     inference_start_time: float = 0.0  # GPU: before infer_batch
@@ -70,13 +73,16 @@ class ActionChunk:
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
+    # TODO: this lifecycle information definitely does not belong on client, if this is
+    # here because it's reused on the server for the mirror, we can discuss creating
+    # wrapper dataclasses just for the server
+
     # Provenance/lifecycle tag. Transitions:
     #   "queued"    -> queued by production scheduler (arrival_time predicted)
     #   "searched"  -> queued inside a lookahead search snapshot (never confirmed)
     #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
     #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
     origin: str = "queued"
-    # TODO: lifecycle does not belong on client
 
 
 @dataclass(frozen=True)

@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 PROFILE_ITERATIONS = 5
 
 
-# TODO: clean up padding pattern
+# TODO manual: need to think about if we need to keep the functionality
+# of padding a batch with dummy responses. This baseline never made it into
+# the main paper so I'm leaning no.
 class GpuWorker:
     """Subprocess worker: loads model, loops recv batch -> infer -> send results.
 
@@ -167,7 +169,10 @@ class GpuWorker:
             t1 = time.time()
             inference_duration = t1 - t0
 
-            # TODO: eventually make this a class method on InferResponse or whatever
+            # TODO: This big block of code is a bit scary to read. Would be nice to
+            # have a simple function to construct an infer response from the args.
+            # but shouldn't be an InferResponse method itself, since the class
+            # lives inside the client.
             responses = [
                 InferResponse(
                     robot_id=sd.robot_id,

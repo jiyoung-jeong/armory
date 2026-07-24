@@ -37,7 +37,11 @@ class SaveMeta:
     robot_idx: int
     control_hz: float
 
-    # TODO: per task metadata typing
+    # TODO: there is some data is useful for all kinds of runs, and then some data
+    # that is very specific to the evaluation suite/simulation backend. Discuss
+    # with me how to extract out the specific stuff to be very flexible. I was thinking
+    # about having each evaluation suite define some custom saving methods, but
+    # passing those felt kind of weird.
     task_suite_name: str
     task_id: int
     task_language: str

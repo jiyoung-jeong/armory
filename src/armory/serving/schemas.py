@@ -100,7 +100,8 @@ class Reconfigure:
     scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
-# TODO: rename as ActionChunkMetadata
+# TODO: this is the server-side version of ActionChunk that I think is used
+# for the mirror. Remind me to discuss and also mention where it is used.
 @dataclass(frozen=True, slots=True)
 class ActionChunk:
     chunk_id: int
@@ -193,7 +194,8 @@ class SchedulerDecision:
     notes: dict[str, Any] = field(default_factory=dict)
 
 
-# TODO: copied over InferRequest, fix later
+# TODO manual: think about how to name/define server-side dataclasses
+# without being overly repetitive.
 @dataclass(frozen=True, slots=True)
 class InternalRequest:
     robot_id: str

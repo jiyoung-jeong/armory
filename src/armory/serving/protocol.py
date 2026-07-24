@@ -18,7 +18,6 @@ class SchedulerConfig(BaseModel):
     alpha: float = 1.0
     action_horizon_multipliers: dict[int, float] = {}
 
-    # TODO: nuke these functions
     def to_scheduler_kwargs(self) -> dict | None:
         if self.scheduling_algorithm == "dynamic-action":
             return {"alpha": self.alpha}

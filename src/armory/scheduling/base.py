@@ -28,7 +28,10 @@ class RequestScheduler(ABC):
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)
-        self._latest_requests: dict[RobotID, SlotRequest] = {}  # TODO: clean up later
+        # TODO manual: It is weird to store the SlotRequests here.
+        # Look at what data is needed to see if we don't have to
+        # store full SlotRequests..
+        self._latest_requests: dict[RobotID, SlotRequest] = {}
 
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0

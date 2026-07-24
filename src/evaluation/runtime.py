@@ -37,6 +37,8 @@ class Rollout:
 
 
 # TODO: episode sink pattern is weird, just return rollout and send function call to ThreadPoolExecutor
+# also don't have runtime own threadpoolexecutor, since close might be called before. when it comes time
+# we can discuss how to manage lifecycle. Maybe the caller should make sure ThreadPoolExecutor finishes.
 class Runtime:
     def __init__(
         self,
