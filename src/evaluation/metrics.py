@@ -744,6 +744,77 @@ def plot_task_breakdown(
 # =============================================================================
 
 
+def generate_client_step_intervals_plot(output_path: pathlib.Path) -> None:
+    """Plot saved client control-loop intervals, with episodes concatenated per robot."""
+    intervals_by_robot: dict[str, list[np.ndarray]] = {}
+    for timestamp_file in sorted(output_path.glob("**/timestamps.csv")):
+        timestamps = pd.read_csv(timestamp_file)["timestamp"].to_numpy(dtype=float)
+        if len(timestamps) < 2:
+            continue
+        # Output layout is <output>/<robot_idx>/<episode>/timestamps.csv.
+        robot = timestamp_file.parent.parent.name
+        intervals_by_robot.setdefault(robot, []).append(np.diff(timestamps) * 1000.0)
+
+    if not intervals_by_robot:
+        logger.warning("No client timestamp intervals; skipping client step interval plot")
+        return
+
+    robot_intervals = {
+        robot: np.concatenate(episodes)
+        for robot, episodes in sorted(intervals_by_robot.items(), key=lambda item: int(item[0]))
+    }
+    intervals = np.concatenate(list(robot_intervals.values()))
+    fig, (ax_time, ax_hist) = plt.subplots(1, 2, figsize=(14, 5))
+    cmap = matplotlib.colormaps["tab20" if len(robot_intervals) > 10 else "tab10"]
+
+    for color_idx, (robot, robot_samples) in enumerate(robot_intervals.items()):
+        color = cmap(color_idx % cmap.N)
+        ax_time.scatter(
+            np.arange(1, len(robot_samples) + 1),
+            robot_samples,
+            s=7,
+            alpha=0.65,
+            color=color,
+            label=f"robot {robot}",
+            linewidths=0,
+        )
+        ax_hist.hist(
+            np.clip(robot_samples, None, np.percentile(robot_samples, 99.5)),
+            bins=80,
+            histtype="step",
+            linewidth=1.2,
+            color=color,
+            label=f"robot {robot}",
+        )
+    ax_time.set_xlabel("client step index (episodes concatenated)")
+    ax_time.set_ylabel("client step interval (ms)")
+    ax_time.grid(True, alpha=0.3)
+    if len(robot_intervals) > 1:
+        ax_time.legend(fontsize=7)
+
+    ax_hist.set_xlabel("client step interval (ms)")
+    ax_hist.set_ylabel("count")
+    ax_hist.set_title(
+        f"n={len(intervals)}  p50={np.percentile(intervals, 50):.1f}  "
+        f"p95={np.percentile(intervals, 95):.1f}  p99={np.percentile(intervals, 99):.1f}  "
+        f"max={intervals.max():.1f}",
+        fontsize=9,
+    )
+    for percentile, color in [(50, "green"), (95, "orange"), (99, "red")]:
+        ax_hist.axvline(
+            np.percentile(intervals, percentile), color=color, linestyle="--", linewidth=1
+        )
+    if len(robot_intervals) > 1:
+        ax_hist.legend(fontsize=7)
+
+    fig.tight_layout()
+    out = output_path / "plots" / "client_step_intervals.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    logger.info("Saved client step interval plot to %s", out)
+
+
 def generate_latency_plot(output_path: pathlib.Path) -> None:
     """Latency distribution: overall + per-task (in milliseconds)."""
     df = load_action_chunks(output_path)
@@ -2069,6 +2140,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
     """Generate all plots; one failure doesn't kill the rest."""
     logger.info("Generating plots...")
     plotters = [
+        generate_client_step_intervals_plot,
         generate_latency_plot,
         generate_success_rate_plot,
         generate_steps_plot,
