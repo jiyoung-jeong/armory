@@ -55,7 +55,6 @@ def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
     save_action_chunks(rollout.action_chunks, out_folder)
     if meta.save_video:
         _save_video(out_folder, rollout, meta.control_hz)
-    # _save_debug_data(out_folder, rollout)
     np.save(
         out_folder / "actions_left.npy",
         np.array(rollout.actions_left, dtype=np.int32),
@@ -123,36 +122,3 @@ def _save_video(out_folder: pathlib.Path, rollout: Rollout, control_hz: float) -
     if not images:
         return
     imageio.mimwrite(out_folder / "out.mp4", images, fps=control_hz)
-
-
-def _save_debug_data(out_folder: pathlib.Path, rollout: Rollout) -> None:
-    """Save observations, noise, and actions as a single .npz — only if noise is present."""
-    if not any(chunk.noise is not None for chunk in rollout.action_chunks):
-        logger.debug("No debug data to save (no noise present)")
-        return
-
-    to_save: dict[str, np.ndarray] = {}
-    if rollout.initial_state is not None:
-        to_save["initial_state"] = rollout.initial_state
-
-    observations = {obs.step: obs for obs in rollout.observations}
-    for i, chunk in enumerate(rollout.action_chunks):
-        prefix = f"chunk_{i:04d}"
-        obs = observations.get(chunk.observation_step)
-        if obs is not None:
-            to_save[f"{prefix}/observation/state"] = obs.state
-            to_save[f"{prefix}/observation/image"] = obs.image
-            to_save[f"{prefix}/observation/wrist_image"] = obs.wrist_image
-            if hasattr(obs, "prompt"):
-                to_save[f"{prefix}/observation/prompt"] = obs.prompt
-        else:
-            logger.warning("No observation for chunk %d at step %d", i, chunk.observation_step)
-        if chunk.noise is not None:
-            to_save[f"{prefix}/noise"] = chunk.noise
-        to_save[f"{prefix}/actions"] = chunk.actions
-        to_save[f"{prefix}/start_step"] = chunk.observation_step
-        to_save[f"{prefix}/max_execution_horizon"] = chunk.max_execution_horizon
-
-    debug_file = out_folder / "debug_data.npz"
-    np.savez_compressed(debug_file, **to_save)
-    logger.info("Saved %d chunks to %s", len(rollout.action_chunks), debug_file)
