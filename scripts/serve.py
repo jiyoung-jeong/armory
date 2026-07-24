@@ -57,7 +57,7 @@ class Args(JsonArgs):
 
 def main(args: Args) -> None:
     seed_everything(args.seed)
-    # TODO: unify log setup
+    # TODO: there are two logging_config files. Let's unify them into one file and prefer concise implementations
     log_path = (
         pathlib.Path(args.log_dir)
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
@@ -86,7 +86,7 @@ def main(args: Args) -> None:
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    # TODO: maybe don't need kwargs
+    # TODO: don't need to turn into kwargs anymore, just pass the pydantic BaseModel
     scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
     resolved.metadata.scheduler_kwargs = scheduler_kwargs
 
@@ -103,6 +103,6 @@ def main(args: Args) -> None:
 
 
 if __name__ == "__main__":
-    # TODO: check this thoroughly, decide, and document
+    # TODO manual: check this thoroughly, decide, and document
     mp.set_start_method("fork", force=True)
     main(Args.from_cli())

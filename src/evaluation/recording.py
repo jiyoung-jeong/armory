@@ -13,7 +13,6 @@ J = TypeVar("J", bound="JSONDataclass")
 P = TypeVar("P", bound="ParquetDataclass")
 
 
-# TODO: can probably delete this and move everything to parquet
 class CSVDataclass:
     """Mixin that adds CSV serialization to dataclasses."""
 
@@ -125,7 +124,7 @@ class ParquetDataclass:
         return instances
 
 
-# TODO: can get rid of CSVDataclass and just save data for each step as parquet
+# TODO: Turn this into a ParqueDataclass and save additional per-step data like actions_left along with. we can also delete CSVDataclass then.
 @dataclass(frozen=True)
 class Timestamp(CSVDataclass):
     timestamp: float

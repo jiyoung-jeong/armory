@@ -1,5 +1,3 @@
-"""Shared utilities for scripts."""
-
 from __future__ import annotations
 
 import argparse
@@ -45,6 +43,7 @@ class JsonArgs(JSONBaseModel):
 # ---------------------------------------------------------------------------
 # Policy resolution – single entry point for all model backends
 # ---------------------------------------------------------------------------
+# TODO manual: why is there so much heavy machinery for policy factories
 
 
 class ResolvedPolicy(NamedTuple):

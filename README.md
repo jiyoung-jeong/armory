@@ -34,6 +34,7 @@ If you are modifying `third_party/libero`, initialize that submodule and use the
 documented `ARMORY_MODAL_LIBERO_SOURCE=local` override instead.
 
 # TODOs
+document repo structure and packaging, for lightweight client + local development
 acknowledge that much of codebase was evolved from openpi
 we will simulate network conditions with toxiproxy on the sender for now but we should think about how to accurately model jitter
 prune unused references

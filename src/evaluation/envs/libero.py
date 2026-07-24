@@ -25,7 +25,7 @@ class LiberoObservation(Observation):
     prompt: str
 
 
-# TODO: think more about spec, this was vibed too much
+# TODO manual: think more about spec, this was vibed too much
 @dataclass(frozen=True)
 class LiberoRobotSpec:
     """The fixed LIBERO task assigned to one robot for an entire run."""
@@ -79,7 +79,7 @@ def get_libero_env(task, seed):
     task_bddl_file = (
         pathlib.Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
     )
-    # TODO: figure out why we don't pass RESIZE_SIZE directly here, and then comment
+    # TODO manual: figure out why we don't pass RESIZE_SIZE directly here, and then comment
     env_args = {
         "bddl_file_name": task_bddl_file,
         "camera_heights": LIBERO_ENV_RESOLUTION,
