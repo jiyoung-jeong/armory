@@ -1,8 +1,4 @@
-"""
-If a caller needs non-blocking saves (e.g. many robots encoding video back to
-back), it can submit ``save_episode`` to its own ``ThreadPoolExecutor`` — that
-concurrency concern lives at the call site, not baked in here.
-"""
+"""Episode serialization helpers used by ``evaluation.runtime.Runtime`` sinks."""
 
 from __future__ import annotations
 
@@ -59,7 +55,7 @@ def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
     save_action_chunks(rollout.action_chunks, out_folder)
     if meta.save_video:
         _save_video(out_folder, rollout, meta.control_hz)
-    _save_debug_data(out_folder, rollout)
+    # _save_debug_data(out_folder, rollout)
     np.save(
         out_folder / "actions_left.npy",
         np.array(rollout.actions_left, dtype=np.int32),

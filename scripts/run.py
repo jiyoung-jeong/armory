@@ -5,6 +5,7 @@ import shutil
 import sys
 import time
 from enum import Enum
+from functools import partial
 
 from pydantic import model_validator
 from scripts.utils import JsonArgs
@@ -122,14 +123,17 @@ def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> 
         save_video=not isinstance(config.environment, MockConfig),
     )
 
-    runtime = Runtime(environment, agent, control_hz=meta.control_hz)
+    runtime = Runtime(
+        environment,
+        agent,
+        control_hz=meta.control_hz,
+        episode_sink=partial(save_episode, meta=meta),
+    )
     deadline = time.monotonic() + args.experiment_config.time_limit
     try:
         episode = 0
         while time.monotonic() < deadline:
-            rollout = runtime.run_episode(deadline)
-
-            save_episode(rollout, meta)
+            runtime.run_episode(deadline)
             episode += 1
 
         logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)

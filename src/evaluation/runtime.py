@@ -3,11 +3,13 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
 
-from armory_client.schemas import Action, Observation
+from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent
 from evaluation.envs.base import Environment
 from evaluation.recording import Timestamp
@@ -36,17 +38,27 @@ class Rollout:
 
 
 class Runtime:
-    """Runs a single episode: the env<->agent control loop, paced to ``control_hz``."""
+    """Runs the env<->agent control loop, optionally persisting episodes in the background."""
 
     def __init__(
         self,
         environment: Environment,
         agent: Agent,
         control_hz: float = 0.0,
+        episode_sink: Callable[[Rollout], None] | None = None,
     ) -> None:
         self._environment = environment
         self._agent = agent
         self._control_hz = control_hz
+        self._episode_sink = episode_sink
+        # A single worker preserves episode order for sinks that allocate output
+        # names sequentially, while allowing the next rollout to begin during IO.
+        self._save_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="episode-save")
+            if episode_sink is not None
+            else None
+        )
+        self._save_futures: list[Future[None]] = []
 
     def run_episode(self, deadline: float = math.inf) -> Rollout:
         """Run one episode and return its Rollout.
@@ -82,7 +94,7 @@ class Runtime:
 
         episode_data = self._agent.snapshot_episode_data()
         logger.info("Episode completed.")
-        return Rollout(
+        rollout = Rollout(
             observations=tuple(observations),
             timestamps=tuple(timestamps),
             success=self._environment.current_success,
@@ -90,13 +102,25 @@ class Runtime:
             action_chunks=tuple(episode_data.action_chunks),
             actions_left=tuple(episode_data.actions_left),
         )
+        if self._episode_sink is not None:
+            assert self._save_executor is not None
+            self._save_futures.append(self._save_executor.submit(self._episode_sink, rollout))
+        return rollout
 
     def close(self) -> None:
         """Release the environment and agent resources owned by this runtime."""
         try:
-            self._environment.close()
+            try:
+                self._environment.close()
+            finally:
+                self._agent.close()
         finally:
-            self._agent.close()
+            if self._save_executor is not None:
+                # Do not return until every accepted rollout is durable.
+                self._save_executor.shutdown(wait=True)
+                # ``shutdown`` waits but does not re-raise worker exceptions.
+                for save_future in self._save_futures:
+                    save_future.result()
 
     def _step(self) -> tuple[Observation, Action]:
         observation = self._environment.get_observation()
