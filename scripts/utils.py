@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import pathlib
-import subprocess
 import time
 from collections.abc import Callable
 from typing import Any, NamedTuple, Self
@@ -41,26 +40,6 @@ class JsonArgs(JSONBaseModel):
             defaults = cls.from_json(known.json_path)
             return tyro.cli(cls, args=remaining, default=defaults)
         return tyro.cli(cls, args=remaining)
-
-
-def get_gpu_info() -> dict[str, Any]:
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=5,
-        )
-        gpu_info = result.stdout.strip().split(", ")
-        return {
-            "gpu_available": True,
-            "gpu_name": gpu_info[0],
-            "driver_version": gpu_info[1],
-            "memory_total": gpu_info[2],
-        }
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-        return {"gpu_available": False}
 
 
 # ---------------------------------------------------------------------------

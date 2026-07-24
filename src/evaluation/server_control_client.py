@@ -63,5 +63,3 @@ class ServerControlClient:
         )
         if not resp.ok:
             raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
-
-    # TODO: metric saving should be cleaner
