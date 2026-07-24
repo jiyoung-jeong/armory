@@ -10,7 +10,6 @@ import zmq
 
 from armory.scheduling.base import RequestScheduler
 from armory.scheduling.baselines import (
-    FixedMaxBatchScheduler,
     GreedyDeadlineScheduler,
     MaxBatchScheduler,
     RandomBatchScheduler,
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "max-batch": MaxBatchScheduler,
-    "fixed-max-batch": FixedMaxBatchScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
     "dynamic-action": DynamicActionScheduler,
     "lookahead-actions": LookaheadActionsScheduler,

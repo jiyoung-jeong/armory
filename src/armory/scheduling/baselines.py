@@ -1,4 +1,3 @@
-import dataclasses
 import logging
 import multiprocessing as mp
 import random
@@ -29,41 +28,6 @@ class MaxBatchScheduler(RequestScheduler):
             "rule": "edf_prefix",
             "max_batch_size": self._max_batch_size,
             "ordered": [r.robot_id for r in ordered],
-        }
-        return [batch], notes
-
-class FixedMaxBatchScheduler(RequestScheduler):
-    """Always dispatch max_batch_size rows, padding with artificial duplicate requests if needed."""
-
-    def get_next_batches(
-        self, candidates: list[SlotRequest]
-    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
-        if self.mirror.in_flight_batches_count > 0:
-            return [], {"reason": "server_busy"}
-        if not candidates:
-            return [], {"reason": "no_candidates"}
-
-        deadlines = self.mirror.deadlines()
-        ordered = sorted(candidates, key=lambda r: deadlines[r.robot_id])
-        batch = list(ordered[: self._max_batch_size])
-        real_size = len(batch)
-        if real_size == self._max_batch_size:
-            return [batch], {
-                "rule": "edf_prefix_fixed",
-                "max_batch_size": self._max_batch_size,
-                "padded": 0,
-            }
-
-        pad_sources = list(batch)
-        pad_index = 0
-        while len(batch) < self._max_batch_size:
-            source = pad_sources[pad_index % len(pad_sources)]
-            batch.append(dataclasses.replace(source, is_padding=True))
-            pad_index += 1
-        notes = {
-            "rule": "edf_prefix_fixed",
-            "max_batch_size": self._max_batch_size,
-            "padded": self._max_batch_size - real_size,
         }
         return [batch], notes
 

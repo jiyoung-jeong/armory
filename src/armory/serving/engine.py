@@ -35,9 +35,6 @@ logger = logging.getLogger(__name__)
 PROFILE_ITERATIONS = 5
 
 
-# TODO manual: need to think about if we need to keep the functionality
-# of padding a batch with dummy responses. This baseline never made it into
-# the main paper so I'm leaning no.
 class GpuWorker:
     """Subprocess worker: loads model, loops recv batch -> infer -> send results.
 
@@ -130,12 +127,8 @@ class GpuWorker:
             slot_requests = []
             for sr, chunk_id in zip(slot_reqs, batch.chunk_ids, strict=True):
                 sd = self.slots.read(sr.slot_index)
-                if (
-                    sr.is_padding
-                    or sr.robot_id not in self._last_served_action_index
-                    or sr.can_serve(
-                        self._last_served_action_index[sr.robot_id], sd.action_index_start
-                    )
+                if sr.robot_id not in self._last_served_action_index or sr.can_serve(
+                    self._last_served_action_index[sr.robot_id], sd.action_index_start
                 ):
                     slot_datas.append(sd)
                     chunk_ids.append(chunk_id)
@@ -199,11 +192,7 @@ class GpuWorker:
             # Send responses directly to WS — not via scheduler
             result_sock.send_pyobj(
                 ResponseBatch(
-                    responses=[
-                        response
-                        for slot_request, response in zip(slot_requests, responses, strict=True)
-                        if not slot_request.is_padding
-                    ],
+                    responses=responses,
                     batch_id=batch.batch_id,
                     batch_size=len(slot_requests),
                     inference_start_time=t0,
@@ -293,6 +282,5 @@ class GpuWorker:
         actions: list[PolicyResult],
     ) -> None:
         for sr, sd, action_dict in zip(slot_reqs, slot_datas, actions, strict=True):
-            if not sr.is_padding:
-                self._last_served_action_index[sr.robot_id] = sd.action_index_start
-                self._prev_actions[sr.robot_id] = action_dict["rtc_prev_actions"]
+            self._last_served_action_index[sr.robot_id] = sd.action_index_start
+            self._prev_actions[sr.robot_id] = action_dict["rtc_prev_actions"]

@@ -62,10 +62,7 @@ class DynamicActionScheduler(RequestScheduler):
 
         # update the service debt for the best batch
         for r in best_batch:
-            if not r.is_padding:
-                self._service_debt[r.robot_id] = max(
-                    0.0, self._service_debt.get(r.robot_id, 0.0) - 1.0
-                )
+            self._service_debt[r.robot_id] = max(0.0, self._service_debt.get(r.robot_id, 0.0) - 1.0)
         chosen = list(best_batch)
         notes = {
             "rule": "alpha_fair_dynamic_action",

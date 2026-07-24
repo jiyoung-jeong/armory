@@ -33,7 +33,6 @@ class SlotRequest:
     noise: np.ndarray | None
     control_hz: float
     estimated_d_param: int = 0  # filled by scheduler before batching
-    is_padding: bool = False  # true for artificial slots used only to pad GPU batch size
 
     def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
         return (

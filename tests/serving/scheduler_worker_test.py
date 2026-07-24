@@ -19,7 +19,6 @@ from armory_client.messages import InferType, ResetRequest
 
 EXPECTED_SCHEDULERS = {
     "max-batch": "MaxBatchScheduler",
-    "fixed-max-batch": "FixedMaxBatchScheduler",
     "greedy-deadline": "GreedyDeadlineScheduler",
     "dynamic-action": "DynamicActionScheduler",
     "starvation-fair": "StarvationFairScheduler",
