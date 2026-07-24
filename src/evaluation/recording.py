@@ -131,25 +131,3 @@ class Timestamp(CSVDataclass):
     env_step: int
     action_chunk_index: int | None
     action_index: int | None
-
-
-@dataclass
-class RuntimeMetadata(JSONDataclass):
-    """Metadata about the runtime/experiment configuration."""
-
-    # TODO: don't need these two fields, make it consistent with ExperimentConfig
-    task_suite_name: str
-    num_trials_per_task: int
-    max_steps: int
-    seed: int
-    num_robots: int
-    control_hz: int
-    broker_type: str
-    episodes: list[str] = None
-    max_execution_horizon: list[int] = None
-
-    def __post_init__(self) -> None:
-        if self.episodes is None:
-            self.episodes = []
-        if self.max_execution_horizon is None:
-            self.max_execution_horizon = []
