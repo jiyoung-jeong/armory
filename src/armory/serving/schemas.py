@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias
 
 import numpy as np
 
@@ -208,7 +208,7 @@ class InternalRequest:
     infer_type: InferType
     params: RTCParams | None = None
     noise: np.ndarray | None = None  # action_horizon noise_dim
-    type: str = "infer"  # FIXME: should be literal
+    type: Literal["infer"] = "infer"
 
     @classmethod
     def from_slot_data(cls, slot_data: SlotData, params: RTCParams | None) -> InternalRequest:
