@@ -25,10 +25,15 @@ class LatencyTracker(ABC):
     def _update_measurement(self, d: dict, key: object, value: float) -> None:
         pass
 
-    # NOTE: we lower bound latencies to 0 because timing seems to be slightly off
-    # FIXME: rename time and ts
-    def update_obs(self, robot_id: RobotID, arrival_ts: float, request_ts: float) -> None:
-        self._update_measurement(self._observation_latency, robot_id, max(0, arrival_ts - request_ts))
+    # NOTE: we lower bound latencies to 0 because timing seems to be slightly off.
+    def update_obs(
+        self, robot_id: RobotID, server_arrival_time: float, client_request_time: float
+    ) -> None:
+        self._update_measurement(
+            self._observation_latency,
+            robot_id,
+            max(0, server_arrival_time - client_request_time),
+        )
 
     def update_infer(self, batch_size: int, duration: float) -> None:
         self._update_measurement(self._infer_latency, batch_size, max(0, duration))
@@ -36,7 +41,9 @@ class LatencyTracker(ABC):
     def update_action_delivery(
         self, robot_id: RobotID, receive_time: float, server_send_time: float
     ) -> None:
-        self._update_measurement(self._action_latency, robot_id, max(0, receive_time - server_send_time))
+        self._update_measurement(
+            self._action_latency, robot_id, max(0, receive_time - server_send_time)
+        )
 
     # FIXME: how to make sure these are only called when these are available?
     def observation_latency(self, robot_id: RobotID) -> float:
