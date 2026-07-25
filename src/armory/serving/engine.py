@@ -162,27 +162,9 @@ class GpuWorker:
             t1 = time.time()
             inference_duration = t1 - t0
 
-            # TODO: This big block of code is a bit scary to read. Would be nice to
-            # have a simple function to construct an infer response from the args.
-            # but shouldn't be an InferResponse method itself, since the class
-            # lives inside the client.
             responses = [
-                InferResponse(
-                    robot_id=sd.robot_id,
-                    request_id=sd.request_id,
-                    chunk_id=chunk_id,
-                    observation_step=sd.observation_step,
-                    action_index_start=sd.action_index_start,
-                    request_timestamp=sd.request_timestamp,
-                    min_execution_horizon=sd.min_execution_horizon,
-                    max_execution_horizon=sd.max_execution_horizon,
-                    actions=action_dict["actions"],
-                    noise=action_dict["noise"],
-                    server_arrival_time=sd.arrival_timestamp,
-                    inference_start_time=t0,
-                    inference_end_time=t1,
-                )
-                for sd, action_dict, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
+                self._make_infer_response(slot_data, action, chunk_id, t0, t1)
+                for slot_data, action, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
             self._update_state(
@@ -204,6 +186,31 @@ class GpuWorker:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _make_infer_response(
+        slot_data: SlotData,
+        result: PolicyResult,
+        chunk_id: int,
+        inference_start_time: float,
+        inference_end_time: float,
+    ) -> InferResponse:
+        """Translate one internal policy result into the client wire response."""
+        return InferResponse(
+            robot_id=slot_data.robot_id,
+            request_id=slot_data.request_id,
+            chunk_id=chunk_id,
+            observation_step=slot_data.observation_step,
+            action_index_start=slot_data.action_index_start,
+            request_timestamp=slot_data.request_timestamp,
+            min_execution_horizon=slot_data.min_execution_horizon,
+            max_execution_horizon=slot_data.max_execution_horizon,
+            actions=result["actions"],
+            noise=result["noise"],
+            server_arrival_time=slot_data.arrival_timestamp,
+            inference_start_time=inference_start_time,
+            inference_end_time=inference_end_time,
+        )
 
     def _profile_and_send(self, policy: ServingPolicy, notify_sock: zmq.Socket) -> None:
         logger.info("Profiling batch latency for sizes 1..%d", self.max_batch_size)
