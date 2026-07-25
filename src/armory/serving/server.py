@@ -15,7 +15,7 @@ ZMQ topology (all ipc://, unique per server instance):
     Large numpy arrays (observations) cross zero process boundaries via ZMQ.
 
 This module is the stable composition facade. Per-connection protocol handling
-lives in ``session.py``; process/IPC lifecycle in ``runtime.py``; and HTTP
+lives in ``session.py``; process/IPC lifecycle in ``server_runtime.py``; and HTTP
 control-plane routes in ``routes.py``.
 """
 
@@ -28,7 +28,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket
 
 from armory.backends.types import PolicyFactory
-from armory.serving import runtime as _runtime
+from armory.serving import server_runtime as _runtime
 from armory.serving.protocol import ServerMetadata
 from armory.serving.routes import register_routes
 from armory.serving.session import serve_websocket_session

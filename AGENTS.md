@@ -66,7 +66,7 @@ The server accepts `POST /reconfigure` to swap scheduling algorithm / params at 
 
 Serving responsibilities are split without changing that topology:
 - `server.py` is the stable composition facade (`create_app`, `PolicyServer`).
-- `runtime.py` owns subprocess startup/shutdown, IPC endpoints, background tasks, and `ServerState`.
+- `server_runtime.py` owns subprocess startup/shutdown, IPC endpoints, background tasks, and `ServerState`.
 - `session.py` owns one robot's WebSocket handshake, warmup, receive/send loops, and disconnect cleanup.
 - `routes.py` owns the HTTP control plane and dashboard mount.
 

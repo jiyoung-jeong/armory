@@ -16,8 +16,8 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from armory.serving.rtc import InferType
-from armory.serving.runtime import ServerState
 from armory.serving.schemas import AckNotification, RobotID, SlotRequest, WarmupSeed
+from armory.serving.server_runtime import ServerState
 from armory.serving.slots import SlotData
 from armory_client import msgpack_numpy
 from armory_client.messages import (

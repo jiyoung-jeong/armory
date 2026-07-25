@@ -9,9 +9,9 @@ from dataclasses import asdict
 from fastapi import FastAPI, HTTPException, Request
 
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
-from armory.serving.runtime import ServerState
 from armory.serving.scheduler import SCHEDULER_REGISTRY
 from armory.serving.schemas import Reconfigure, ResetAll
+from armory.serving.server_runtime import ServerState
 
 # Keep existing log attribution while this code moves out of server.py.
 logger = logging.getLogger("armory.serving.server")

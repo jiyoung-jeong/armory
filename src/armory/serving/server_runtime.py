@@ -4,7 +4,6 @@ The order in this module is intentional: fork workers first, wait for the
 scheduler and GPU readiness events, and only then create main-process ZMQ
 state. ZMQ contexts are not fork-safe.
 """
-# TODO: rename this file. runtime is duplicated with evaluation.
 
 from __future__ import annotations
 
