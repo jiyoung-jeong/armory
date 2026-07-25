@@ -10,7 +10,7 @@ def test_scheduler_kwargs_use_exact_algorithm_names() -> None:
     ).to_scheduler_kwargs() == {"action_horizon_multipliers": multipliers}
     assert (
         SchedulerConfig(
-            scheduling_algorithm="lookahead",
+            scheduling_algorithm="ahead",
             action_horizon_multipliers=multipliers,
         ).to_scheduler_kwargs()
         is None

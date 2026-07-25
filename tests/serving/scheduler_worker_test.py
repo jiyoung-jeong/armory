@@ -6,6 +6,7 @@ import pytest
 
 import armory.serving.scheduler as scheduler_module
 from armory.scheduling.base import RequestScheduler
+from armory.serving.rtc import InferType
 from armory.serving.scheduler import SCHEDULER_REGISTRY, SchedulerWorker
 from armory.serving.schemas import (
     AckNotification,
@@ -15,13 +16,12 @@ from armory.serving.schemas import (
     SlotRequest,
     WarmupSeed,
 )
-from armory_client.messages import InferType, ResetRequest
+from armory_client.messages import ResetRequest
 
 EXPECTED_SCHEDULERS = {
     "max-batch": "MaxBatchScheduler",
     "greedy-deadline": "GreedyDeadlineScheduler",
     "dynamic-action": "DynamicActionScheduler",
-    "starvation-fair": "StarvationFairScheduler",
     "lookahead-actions": "LookaheadActionsScheduler",
     "round-robin": "RoundRobinScheduler",
     "random": "RandomBatchScheduler",

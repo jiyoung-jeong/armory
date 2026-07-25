@@ -59,7 +59,7 @@ from scripts.modal.utils import download_artifacts, write_rows  # noqa: E402
 
 from evaluation.types import ExperimentConfig  # noqa: E402
 
-ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "action-deficit", "lookahead-actions"}
+ALPHA_SWEEP_SCHEDULERS = {"dynamic-action", "lookahead-actions"}
 SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}
 
 
