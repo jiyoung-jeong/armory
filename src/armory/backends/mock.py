@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from armory.backends.types import PolicyRequest, PolicyResult
-from armory_client.messages import InferRequest
+from armory.serving.schemas import InferType, InternalRequest
 
 with Path(__file__).with_name("inference_profiles.json").open() as f:
     INFERENCE_PROFILES = json.load(f)
@@ -32,11 +32,10 @@ class MockPolicy:
         self._inference_latency = inference_latency
         self.metadata = {"env": env}
 
-    def make_infer_request(self) -> InferRequest:
-        # This is the legacy mock profiling request type. Live engine requests
-        # are InternalRequest objects; infer_batch intentionally ignores fields.
+    def make_infer_request(self) -> InternalRequest:
+        # Only ever fed to infer_batch, which ignores every field but the count.
         now = time.time()
-        return InferRequest(
+        return InternalRequest(
             robot_id="__warmup__",
             observation={},
             observation_step=0,
@@ -45,6 +44,7 @@ class MockPolicy:
             deadline=now + 60.0,
             min_execution_horizon=0,
             max_execution_horizon=0,
+            infer_type=InferType.SYNC,
             params=None,
             noise=None,
         )

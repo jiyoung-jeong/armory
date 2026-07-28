@@ -1,17 +1,17 @@
-"""Run a single robot (scripts/run.py) on Modal, optionally against a server.
+"""Run one case (one fleet, one scheduler) on Modal.
 
-    # mock agent + mock env, no server (one CPU container)
-    uv run modal run scripts/modal/run.py
+    # mock policy + mock envs, all CPU. The cheap smoke test.
+    uv run modal run scripts/modal/run.py --mode mock
 
-    # single robot vs a real policy in LIBERO sim (server GPU + libero client GPU)
-    uv run modal run scripts/modal/run.py --json-path client.json --server sim
+    # real policy on an L40S driving LIBERO sim on a T4.
+    uv run modal run scripts/modal/run.py --mode gpu --client-config configs/client/libero/short.json
 
-    # ...vs a lightweight mock policy server (for scheduling tests)
-    uv run modal run scripts/modal/run.py --json-path client.json --server mock
+    # LIBERO sim with no server at all, to debug the environment/agent loop.
+    uv run modal run scripts/modal/run.py --mode runtime
 
-The server/client workers and the tunnel handshake are shared with setups.py.
-The client image is picked from the run.py Args `env` ("libero" -> GPU,
-"mock" -> CPU). Outputs land on the artifacts volume and download to --output-dir.
+The mode fixes the workers, the agent, and the environment backend (see
+``app.py``); the config files supply everything else. Outputs land on the
+artifacts volume and are downloaded to ``--output-dir``.
 """
 
 from __future__ import annotations
@@ -21,103 +21,45 @@ import json
 import pathlib
 import subprocess
 
-import modal
+from scripts.modal.app import MODES, app, launch
 from scripts.modal.images import REMOTE_ROOT
-from scripts.modal.setups import (
-    CpuMockClient,
-    CpuMockServer,
-    GpuServer,
-    LiberoClient,
-    _await_server,
-    app,
-)
 from scripts.modal.utils import ARTIFACTS_VOLUME_NAME
 
-PORT = 8080
-MAX_CLIENT_CPUS = 16
-MIN_LIBERO_CLIENT_MEMORY_MIB = 16 * 1024
-LIBERO_CLIENT_MEMORY_PER_CPU_MIB = 3 * 1024
+DEFAULT_SERVER_CONFIG = {"model": "pi05", "env": "libero", "max_batch_size": 1, "port": 8080}
 
 
 @app.local_entrypoint()
-def main(json_path: str = "", server: str = "none", output_dir: str = "runs") -> None:
-    if server not in {"none", "mock", "sim"}:
-        raise SystemExit("--server must be 'none', 'mock', or 'sim'.")
+def main(
+    mode: str = "mock",
+    client_config: str = "",
+    server_config: str = "",
+    output_dir: str = "runs",
+    stream_logs: bool = True,
+) -> None:
+    if mode not in MODES:
+        raise SystemExit(f"--mode must be one of {', '.join(MODES)}.")
 
     stamp = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d_%H%M%S")
-    run_dir = str(REMOTE_ROOT / stamp)
+    server = (
+        json.loads(pathlib.Path(server_config).read_text())
+        if server_config
+        else dict(DEFAULT_SERVER_CONFIG)
+    )
+    # --client-config holds an ExperimentConfig; scripts.run.Args nests it under
+    # `experiment_config`. Accept an already-wrapped Args payload too.
+    client = json.loads(pathlib.Path(client_config).read_text()) if client_config else {}
+    if "experiment_config" not in client:
+        client = {"experiment_config": client}
 
-    client_cfg = json.loads(pathlib.Path(json_path).read_text()) if json_path else {}
-    # ``--json-path`` describes ExperimentConfig directly; scripts.run.Args
-    # nests it under ``experiment_config``. Also accept an already-wrapped
-    # Args payload for callers that use scripts.run's native schema.
-    if "experiment_config" not in client_cfg:
-        client_cfg = {"experiment_config": client_cfg}
-    client_cfg["overwrite"] = True
-    client_cfg["output_dir"] = str(REMOTE_ROOT / stamp)
-    experiment_config = client_cfg["experiment_config"]
-    environment = experiment_config.get("environment", {"kind": "mock"})
-    # Match the sweep launcher: each simulator worker needs a CPU so a fleet
-    # does not contend for the single-robot default allocation. Modal caps a
-    # single function at 16 CPUs, so larger fleets share the capped allocation.
-    num_robots = len(experiment_config.get("robots", [{}]))
-    client_cpus = min(num_robots, MAX_CLIENT_CPUS)
-    client_cls = {"libero": LiberoClient, "mock": CpuMockClient}[environment["kind"]]
-    if environment["kind"] == "libero":
-        # A 20-robot run used ~44 GiB while retaining the 16 GiB single-robot
-        # reservation. Request 3 GiB per allocated CPU (48 GiB at the cap).
-        client_memory = max(
-            MIN_LIBERO_CLIENT_MEMORY_MIB,
-            client_cpus * LIBERO_CLIENT_MEMORY_PER_CPU_MIB,
-        )
-        client = client_cls.with_options(cpu=client_cpus, memory=client_memory)()
-    else:
-        client = client_cls.with_options(cpu=client_cpus)()
-
-    with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
-        if server == "none":
-            # No server to talk to: only a mock agent can run standalone.
-            client_cfg["agent"] = "mock"
-            client.run.remote(
-                module="scripts.run",
-                run_dir=run_dir,
-                args_json=json.dumps(client_cfg),
-                run_id=stamp,
-                stream_logs=True,
-                shutdown=shutdown,
-            )
-        else:
-            client_cfg["agent"] = "policy"
-            server_cfg = {"model": "pi05", "env": "libero", "max_batch_size": 1, "port": PORT}
-            if server == "mock":
-                server_cfg["policy"] = {"action_horizon": 50, "action_dim": 14, "gpu": "l40s"}
-            server_worker = GpuServer() if server == "sim" else CpuMockServer()
-            handle = server_worker.serve.spawn(
-                run_dir=run_dir,
-                args_json=json.dumps(server_cfg),
-                port=PORT,
-                run_id=stamp,
-                stream_logs=True,
-                urls=urls,
-                shutdown=shutdown,
-            )
-            print(f"[{stamp}] server spawned; waiting for tunnel + /metadata")
-            host, port = _await_server(urls, stamp)
-            if not host:
-                raise RuntimeError("server failed before forwarding its port")
-            client_cfg["host"], client_cfg["port"] = host, port
-            print(f"[{stamp}] server ready at {host}:{port}")
-            try:
-                client.run.remote(
-                    module="scripts.run",
-                    run_dir=run_dir,
-                    args_json=json.dumps(client_cfg),
-                    run_id=stamp,
-                    stream_logs=True,
-                    shutdown=shutdown,
-                )
-            finally:
-                handle.cancel()
+    result = launch(
+        mode=mode,
+        run_id=stamp,
+        run_dir=str(REMOTE_ROOT / stamp),
+        server_config=server,
+        client_config=client,
+        stream_logs=stream_logs,
+    )
+    print(f"[{stamp}] {result.get('status', '?')}: {result.get('error') or 'done'}")
 
     dest = pathlib.Path(output_dir)
     dest.mkdir(parents=True, exist_ok=True)
