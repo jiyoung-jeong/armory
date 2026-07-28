@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 _SPIN_WINDOW_S = 0.002
 
 
+def _has_time_for_step(deadline: float, step_time: float) -> bool:
+    """Whether a step started now would land before ``deadline``.
+
+    Checked ahead of the step rather than trimmed after it: taking it would send
+    another inference request, changing the batch the server assembles for the
+    robots still inside the window.
+    """
+    return time.monotonic() + step_time < deadline
+
+
 @dataclass(frozen=True)
 class Rollout:
     """The product of running one episode: everything needed to log/save it.
@@ -31,6 +41,7 @@ class Rollout:
     observations: tuple[Observation, ...]
     timestamps: tuple[Timestamp, ...]
     success: bool
+    truncated: bool
     initial_state: np.ndarray | None
     action_chunks: tuple[ActionChunk, ...]
     actions_left: tuple[int, ...]
@@ -60,31 +71,49 @@ class Runtime:
         )
         self._save_futures: list[Future[None]] = []
 
-    def run_episode(self, deadline: float = math.inf) -> Rollout:
-        """Run one episode and return its Rollout.
+    def run_episode(self, deadline: float = math.inf) -> Rollout | None:
+        """Run one episode and return its Rollout, or None if time has run out.
+
+        No step is started or recorded past ``deadline``, so the trace only
+        covers the window in which the whole fleet was running: steps taken
+        after peers exit see a lighter load than the experiment is measuring.
 
         Args:
-            deadline: absolute ``time.monotonic()`` after which the loop stops
-                even if the episode has not finished. Defaults to no limit.
+            deadline: absolute ``time.monotonic()`` bounding the episode.
+
+        Returns:
+            The episode's Rollout, or ``None`` when the deadline left no room to
+            record a step — the caller should stop looping.
         """
+        step_time = 1 / self._control_hz if self._control_hz > 0 else 0.0
+        if not _has_time_for_step(deadline, step_time):
+            return None
+
         logger.info("Starting episode...")
         self._environment.reset()
         self._agent.reset()
 
+        if not _has_time_for_step(deadline, step_time):
+            return None
+
         observations: list[Observation] = []
         timestamps: list[Timestamp] = []
 
-        step_time = 1 / self._control_hz if self._control_hz > 0 else 0.0
         last_step_time = time.perf_counter()
 
-        while not self._environment.is_episode_complete() and time.monotonic() < deadline:
+        while not self._environment.is_episode_complete() and _has_time_for_step(
+            deadline, step_time
+        ):
             observation, action = self._step()
+            # Wall clock (not perf_counter) so it lines up with the broker's
+            # request_timestamp when deriving per-step cost.
+            step_timestamp = time.time()
+            if time.monotonic() > deadline:
+                break
             observations.append(observation)
             timestamps.append(
                 Timestamp(
-                    # Wall clock (not perf_counter) so it lines up with the
-                    # broker's request_timestamp when deriving per-step cost.
-                    timestamp=time.time(),
+                    timestamp=step_timestamp,
                     env_step=observation.step,
                     action_chunk_index=action.action_chunk_index,
                     action_index=action.index_in_chunk,
@@ -92,15 +121,22 @@ class Runtime:
             )
             last_step_time = self._pace(last_step_time, step_time)
 
+        if not timestamps:
+            return None
+
         episode_data = self._agent.snapshot_episode_data()
-        logger.info("Episode completed.")
+        truncated = not self._environment.is_episode_complete()
+        logger.info("Episode truncated by deadline." if truncated else "Episode completed.")
         rollout = Rollout(
             observations=tuple(observations),
             timestamps=tuple(timestamps),
             success=self._environment.current_success,
+            truncated=truncated,
             initial_state=self._environment.current_initial_state,
             action_chunks=tuple(episode_data.action_chunks),
-            actions_left=tuple(episode_data.actions_left),
+            # The agent records one entry per get_action call, including a step
+            # dropped above for landing past the deadline.
+            actions_left=tuple(episode_data.actions_left[: len(timestamps)]),
         )
         if self._episode_sink is not None:
             assert self._save_executor is not None

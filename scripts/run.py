@@ -6,6 +6,7 @@ import sys
 import time
 from enum import Enum
 from functools import partial
+from multiprocessing.synchronize import Barrier
 
 from pydantic import model_validator
 from scripts.utils import JsonArgs
@@ -28,6 +29,8 @@ from evaluation.types import ExperimentConfig
 from utils import seed_everything
 
 logger = logging.getLogger(__name__)
+
+_FLEET_START_TIMEOUT_S = 30.0
 
 
 class AgentType(Enum):
@@ -99,7 +102,12 @@ def create_agent(args: Args, robot_idx: int, environment: _environment.Environme
     )
 
 
-def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> None:
+def run_robot(
+    args: Args,
+    robot_idx: int,
+    start_barrier: Barrier,
+    libero_spec: object | None = None,
+) -> None:
     """One robot's whole life: seed, build env/agent, roll out, tear down.
 
     Called inline for a single-robot fleet and inside a worker process for a
@@ -129,11 +137,12 @@ def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> 
         control_hz=meta.control_hz,
         episode_sink=partial(save_episode, meta=meta),
     )
+    start_barrier.wait(timeout=_FLEET_START_TIMEOUT_S)
+
     deadline = time.monotonic() + args.experiment_config.time_limit
     try:
         episode = 0
-        while time.monotonic() < deadline:
-            runtime.run_episode(deadline)
+        while runtime.run_episode(deadline) is not None:
             episode += 1
 
         logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
@@ -144,6 +153,7 @@ def run_robot(args: Args, robot_idx: int, libero_spec: object | None = None) -> 
 
 def run_fleet(args: Args) -> None:
     num_robots = len(args.experiment_config.robots)
+    start_barrier = multiprocessing.Barrier(num_robots)
     libero_specs: list[object | None]
     if isinstance(args.experiment_config.environment, LiberoConfig):
         from evaluation.envs.libero import plan_robot_specs
@@ -158,14 +168,14 @@ def run_fleet(args: Args) -> None:
     if num_robots == 1:
         # NOTE: runs inline for easy debugging
         logger.info("Running 1 robot inline")
-        run_robot(args, 0, libero_specs[0])
+        run_robot(args, 0, start_barrier, libero_specs[0])
         return
 
     logger.info("Launching %d robot process(es)", num_robots)
     processes = [
         multiprocessing.Process(
             target=run_robot,
-            args=(args, robot_idx, libero_specs[robot_idx]),
+            args=(args, robot_idx, start_barrier, libero_specs[robot_idx]),
             name=f"robot_{robot_idx}",
         )
         for robot_idx in range(num_robots)

@@ -57,6 +57,15 @@ def load_episodes(output_path: pathlib.Path) -> pd.DataFrame:
     return pd.DataFrame([asdict(result) for result in results])
 
 
+def completed_episodes(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop episodes the run's deadline cut short.
+
+    Only for measuring outcomes. Their steps were taken under real contention,
+    so they still belong in every load and latency plot.
+    """
+    return df[~df["truncated"].astype(bool)]
+
+
 def load_actions_left(
     output_path: pathlib.Path,
 ) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
@@ -851,6 +860,11 @@ def generate_success_rate_plot(output_path: pathlib.Path) -> None:
         logger.warning("No episode data for success rate plot")
         return
 
+    df = completed_episodes(df)
+    if df.empty:
+        logger.warning("Every episode was truncated by the deadline; no success rate to plot")
+        return
+
     # Aggregate by task
     summary = (
         df.groupby(["task_suite_name", "task_id", "task_language"])["success"]
@@ -1075,6 +1089,11 @@ def generate_per_robot_success_rate_plot(output_path: pathlib.Path) -> None:
     df = load_episodes(output_path)
     if df.empty:
         logger.warning("No episode data for per-robot success rate plot")
+        return
+
+    df = completed_episodes(df)
+    if df.empty:
+        logger.warning("Every episode was truncated by the deadline; no success rate to plot")
         return
 
     robot_summary = df.groupby("robot_idx")["success"].agg(["mean", "count"]).reset_index()
@@ -2182,6 +2201,11 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
 # =============================================================================
 
 
+def _format_rate(rate: float) -> str:
+    """Percent, or "n/a" for a group with nothing to average (all truncated)."""
+    return "n/a" if pd.isna(rate) else f"{rate:.2%}"
+
+
 def calculate_metrics(output_path: pathlib.Path) -> None:
     """Aggregate results and display summary table."""
     df = load_episodes(output_path)
@@ -2199,7 +2223,12 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
 
     df.to_csv(output_path / "results.csv", index=False)
 
-    aggregation_spec: dict[str, str] = {"success": "mean"}
+    # Starvation and step counts aggregate over every episode; success rates
+    # below aggregate over `completed` only.
+    completed = completed_episodes(df)
+    group_keys = ["task_suite_name", "task_id"]
+
+    aggregation_spec: dict[str, str] = {"truncated": "sum"}
     assert "starvation_steps" in df.columns
     assert "observed_steps" in df.columns
     assert "planner_starvation_seconds" in df.columns
@@ -2209,7 +2238,8 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     aggregation_spec["post_first_starvation_steps"] = "sum"
     aggregation_spec["post_first_observed_steps"] = "sum"
 
-    summary = df.groupby(["task_suite_name", "task_id"]).agg(aggregation_spec)
+    summary = df.groupby(group_keys).agg(aggregation_spec)
+    summary["success"] = completed.groupby(group_keys)["success"].mean()
     summary["planner_starvation_rate"] = summary["starvation_steps"] / summary["observed_steps"]
     summary["post_first_starvation_rate"] = (
         summary["post_first_starvation_steps"] / summary["post_first_observed_steps"]
@@ -2222,6 +2252,7 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     table.add_column("Task Suite", style="cyan")
     table.add_column("Task ID", style="magenta")
     table.add_column("Success Rate", style="green")
+    table.add_column("Truncated", style="blue")
     table.add_column("Total Starvation Steps", style="yellow")
     table.add_column("Starvation Rate", style="yellow")
 
@@ -2229,7 +2260,8 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
         table.add_row(
             str(row["task_suite_name"]),
             str(row["task_id"]),
-            f"{row['success']:.2%}",
+            _format_rate(row["success"]),
+            str(int(row["truncated"])),
             str(int(row["starvation_steps"])),
             f"{row['planner_starvation_rate']:.2%}",
         )
@@ -2238,12 +2270,14 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
 
     # Per-robot success summary
     robot_agg_spec: dict[str, str] = {
-        "success": "mean",
         "episode_idx": "count",
+        "truncated": "sum",
         "starvation_steps": "sum",
         "observed_steps": "sum",
     }
-    robot_summary = df.groupby("robot_idx").agg(robot_agg_spec).reset_index()
+    robot_summary = df.groupby("robot_idx").agg(robot_agg_spec)
+    robot_summary["success"] = completed.groupby("robot_idx")["success"].mean()
+    robot_summary = robot_summary.reset_index()
     robot_summary.rename(columns={"episode_idx": "count"}, inplace=True)
     robot_summary["planner_starvation_rate"] = (
         robot_summary["starvation_steps"] / robot_summary["observed_steps"]
@@ -2253,13 +2287,15 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
     robot_table.add_column("Robot", style="cyan")
     robot_table.add_column("Success Rate", style="green")
     robot_table.add_column("Episodes", style="magenta")
+    robot_table.add_column("Truncated", style="blue")
     robot_table.add_column("Total Starvation Steps", style="yellow")
     robot_table.add_column("Starvation Rate", style="yellow")
     for _, row in robot_summary.sort_values("robot_idx").iterrows():
         robot_table.add_row(
             str(int(row["robot_idx"])),
-            f"{row['success']:.2%}",
+            _format_rate(row["success"]),
             str(int(row["count"])),
+            str(int(row["truncated"])),
             str(int(row["starvation_steps"])),
             f"{row['planner_starvation_rate']:.2%}",
         )
@@ -2275,7 +2311,9 @@ def calculate_metrics(output_path: pathlib.Path) -> None:
         if total_post_first_observed_steps > 0
         else 0.0
     )
-    console.print(f"\n[bold green]Total success rate: {summary['success'].mean():.2%}[/bold green]")
+    console.print(
+        f"\n[bold green]Total success rate: {_format_rate(summary['success'].mean())}[/bold green]"
+    )
     console.print(
         f"[bold yellow]Total starvation steps: {total_starvation_steps} control steps[/bold yellow]"
     )

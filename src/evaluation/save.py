@@ -27,6 +27,8 @@ class Result(JSONDataclass):
     task_id: int
     task_language: str
     episode_idx: int
+    # Defaulted so metadata.json written before this field still loads.
+    truncated: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,7 +52,7 @@ class SaveMeta:
 
 def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
     """Persist a completed rollout. The caller transfers ownership to this function."""
-    out_folder, episode_idx = _next_out_folder(meta, success=rollout.success)
+    out_folder, episode_idx = _next_out_folder(meta, outcome=_outcome(rollout))
 
     _save_metadata(out_folder, rollout, meta, episode_idx)
     Timestamp.to_csv(rollout.timestamps, out_folder / "timestamps.csv")
@@ -93,14 +95,20 @@ def cost_history(rollout: Rollout) -> list[float]:
     return costs
 
 
-def _next_out_folder(meta: SaveMeta, success: bool) -> tuple[pathlib.Path, int]:
+def _outcome(rollout: Rollout) -> str:
+    """Name an episode's outcome for its folder."""
+    if rollout.success:
+        return "success"
+    return "truncated" if rollout.truncated else "failure"
+
+
+def _next_out_folder(meta: SaveMeta, outcome: str) -> tuple[pathlib.Path, int]:
     robot_folder = meta.out_dir / str(meta.robot_idx)
     robot_folder.mkdir(parents=True, exist_ok=True)
 
     existing = [p for p in robot_folder.iterdir() if p.is_dir()]
     next_idx = max((int(p.name.split("_")[0]) for p in existing), default=-1) + 1
-    success_str = "success" if success else "failure"
-    out_folder = robot_folder / f"{next_idx}_{meta.task_suite_name}_{meta.task_id}_{success_str}"
+    out_folder = robot_folder / f"{next_idx}_{meta.task_suite_name}_{meta.task_id}_{outcome}"
     out_folder.mkdir(parents=True, exist_ok=True)
     return out_folder, next_idx
 
@@ -110,6 +118,7 @@ def _save_metadata(
 ) -> None:
     Result(
         success=rollout.success,
+        truncated=rollout.truncated,
         robot_idx=meta.robot_idx,
         steps_taken=len(rollout.timestamps),
         task_suite_name=meta.task_suite_name,
