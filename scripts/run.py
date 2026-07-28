@@ -137,6 +137,10 @@ def run_robot(
         control_hz=meta.control_hz,
         episode_sink=partial(save_episode, meta=meta),
     )
+    # Held with the first episode reset and every robot ready to step, so the
+    # fleet is whole for the entire deadline below rather than trickling in as
+    # each environment finishes resetting.
+    runtime.start_episode()
     start_barrier.wait(timeout=_FLEET_START_TIMEOUT_S)
 
     deadline = time.monotonic() + args.experiment_config.time_limit
@@ -144,6 +148,7 @@ def run_robot(
         episode = 0
         while runtime.run_episode(deadline) is not None:
             episode += 1
+            runtime.start_episode()
 
         logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
 

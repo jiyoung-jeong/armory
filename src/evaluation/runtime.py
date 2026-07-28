@@ -60,7 +60,7 @@ class Runtime:
     ) -> None:
         self._environment = environment
         self._agent = agent
-        self._control_hz = control_hz
+        self._step_time = 1 / control_hz if control_hz > 0 else 0.0
         self._episode_sink = episode_sink
         # A single worker preserves episode order for sinks that allocate output
         # names sequentially, while allowing the next rollout to begin during IO.
@@ -71,8 +71,28 @@ class Runtime:
         )
         self._save_futures: list[Future[None]] = []
 
+    def has_time_to_step(self, deadline: float) -> bool:
+        """Whether a step started now would land before ``deadline``.
+
+        Lets a caller skip preparing an episode it has no time to step, which
+        for a sim environment costs far more than the check.
+        """
+        return _has_time_for_step(deadline, self._step_time)
+
+    def start_episode(self) -> None:
+        """Prepare the next episode so ``run_episode`` can step immediately.
+
+        Split from the stepping so a fleet can hold every robot here, at the
+        point where the environments are reset but no requests have been sent.
+        Resets are uneven — a LIBERO one settles the scene over several sim
+        steps — so robots released before it start stepping seconds apart.
+        """
+        logger.info("Starting episode...")
+        self._environment.reset()
+        self._agent.reset()
+
     def run_episode(self, deadline: float = math.inf) -> Rollout | None:
-        """Run one episode and return its Rollout, or None if time has run out.
+        """Step the episode prepared by ``start_episode`` and return its Rollout.
 
         No step is started or recorded past ``deadline``, so the trace only
         covers the window in which the whole fleet was running: steps taken
@@ -85,25 +105,12 @@ class Runtime:
             The episode's Rollout, or ``None`` when the deadline left no room to
             record a step — the caller should stop looping.
         """
-        step_time = 1 / self._control_hz if self._control_hz > 0 else 0.0
-        if not _has_time_for_step(deadline, step_time):
-            return None
-
-        logger.info("Starting episode...")
-        self._environment.reset()
-        self._agent.reset()
-
-        if not _has_time_for_step(deadline, step_time):
-            return None
-
         observations: list[Observation] = []
         timestamps: list[Timestamp] = []
 
         last_step_time = time.perf_counter()
 
-        while not self._environment.is_episode_complete() and _has_time_for_step(
-            deadline, step_time
-        ):
+        while not self._environment.is_episode_complete() and self.has_time_to_step(deadline):
             observation, action = self._step()
             # Wall clock (not perf_counter) so it lines up with the broker's
             # request_timestamp when deriving per-step cost.
@@ -119,7 +126,7 @@ class Runtime:
                     action_index=action.index_in_chunk,
                 )
             )
-            last_step_time = self._pace(last_step_time, step_time)
+            last_step_time = self._pace(last_step_time, self._step_time)
 
         if not timestamps:
             return None
