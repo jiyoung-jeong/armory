@@ -28,8 +28,9 @@ Client CPUs scale with fleet size (1 per robot process, capped at Modal's 16); L
 
 Two entrypoints, same modes:
 - **`run.py`** — one case (one fleet, one scheduler).
-- **`sweep.py`** — fans a scheduler/seed/alpha grid out over `CaseRunner.run.map`.
-  `runtime` is rejected here: a sweep with no server has no scheduler to sweep.
+- **`sweep.py`** — takes the product of a server config dir and a client config dir
+  over `CaseRunner.run.map`. `runtime` is rejected here: a sweep with no server has
+  no scheduler to sweep.
 
 ## Single cases — `run.py`
 
@@ -57,27 +58,44 @@ deps once:
 uv sync --extra evaluation --extra serving-web
 ```
 
+A sweep is a **product of configs**, so it has no scheduler/alpha/batch flags —
+those axes are decided when the configs are generated. Generate a tree first:
+
+```bash
+uv run python scripts/gen_configs.py \
+  --output-dir configs/gen/smoke \
+  --env mock --server-env libero \
+  --schedulers greedy-deadline lookahead-actions \
+  --fleet-sizes 2 4 --shapes one_fast
+```
+
+then sweep it:
+
 ```bash
 uv run modal run scripts/modal/sweep.py \
   --mode mock \
-  --server-config <server.json> \
-  --client-config <experiment.json | dir/> \
-  --schedulers greedy-deadline,lookahead-actions \
+  --server-config configs/gen/smoke/server \
+  --client-config configs/gen/smoke/client \
   --seeds 7 \
   --output-dir experiments/sweeps/smoke \
   --stream-logs
 ```
 
-`--client-config` may be a directory, in which case every `.json`/`.jsonc` under it
-becomes a fleet shape. `--server-config` takes a comma-separated list; with several,
-config-sensitive schedulers (`lookahead-actions`) run once per config while ordinary
-baselines run only against the first. Writes `cases_<stamp>.csv`,
-`sweep_results_<stamp>.csv`, and plots under `--output-dir`.
+Both config flags take a single `.json` file or a directory of them (recursively);
+cases are `server × client × seeds`. Seed stays a sweep flag because it lands on
+both sides of the product. Writes `sweep_results_<stamp>.csv` and downloaded
+artifacts under `--output-dir`, then prints the `plot_sweep.py` command.
+
+`gen_configs.py` collapses variants a scheduler would ignore — `--alphas 0 0.5 1`
+yields three `dynamic-action` configs but only one `greedy-deadline`, because
+`SchedulerConfig.to_scheduler_kwargs` says `alpha` never reaches it. That is why
+the sweeper can stay a dumb product.
 
 ### Config schemas
 
-> **The files under `configs/` are still the pre-refactor schema and will fail
-> validation.** They need porting to the shapes below.
+> **The hand-written files under `configs/` are still the pre-refactor schema and
+> will fail validation.** Use `gen_configs.py` output (`configs/gen/…`) instead;
+> the generated shapes are below.
 
 ```jsonc
 // server config  ->  scripts/serve.py Args

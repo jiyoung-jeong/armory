@@ -83,9 +83,13 @@ Two related but distinct directories:
 ## Conventions & gotchas
 
 - The LIBERO eval driver lives in `evaluation.sims.libero.run` and is exposed as the `run-libero` console script.
-- **Experiment configs** live in `configs/client/**` (per-run robot fleet JSON) and `configs/server/`.
-  `experiments/` holds named experiment definitions/results for sweeps. Modal and sbatch launchers
-  (`scripts/modal/`, `scripts/sbatch/`) fan these out — see `scripts/sbatch/PHOENIX_NOTES.md`.
+- **Experiment configs** are generated, not hand-written: `scripts/gen_configs.py` writes a
+  `server/` + `client/` tree, and `scripts/modal/sweep.py` sweeps the product of the two
+  (`server × client × seeds`). Every scheduler/alpha/batch/fleet axis belongs in the generator,
+  so the sweeper never needs to know which scheduler reads which knob. The hand-written files
+  under `configs/client/**` and `configs/server/` predate the current schema and no longer
+  validate. `experiments/` holds named experiment definitions/results for sweeps; sbatch launchers
+  (`scripts/sbatch/`) still use the older inline-axis style — see `scripts/sbatch/PHOENIX_NOTES.md`.
 - **Don't edit `requirements-modal*.txt` by hand** — they are generated lockfiles for Modal images.
 - `jaxtyping` is kept as a dependency for later use but its runtime shape-checking is not currently
   used (ruff ignores `F722` for its string annotations).
