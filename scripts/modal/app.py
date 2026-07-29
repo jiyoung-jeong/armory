@@ -1,24 +1,3 @@
-"""Modal workers and the three ways to run Armory in the cloud.
-
-    mode      server                      client
-    -------   -------------------------   --------------------------
-    gpu       real policy on an L40S      LIBERO sim on a T4
-    mock      mock policy on a CPU        mock envs on CPUs
-    runtime   none (agent returns nulls)  LIBERO sim on a T4
-
-``gpu`` is the real experiment. ``mock`` swaps both ends for stand-ins that keep
-the timing honest -- the mock policy sleeps on a measured batch-size -> latency
-table (``armory/backends/inference_profiles.json``) -- so scheduling behaviour
-survives at CPU prices. ``runtime`` drops the server entirely to debug the
-environment/agent loop on its own.
-
-Server and client always sit on separate containers, bridged by a
-``modal.forward`` TCP tunnel and two ephemeral ``modal.Dict``s: one for the
-server to publish its address, one for the client to signal it is finished.
-``launch`` is that whole dance. ``run.py`` calls it locally for a single case;
-``CaseRunner`` calls it on a container for each case of a sweep.
-"""
-
 from __future__ import annotations
 
 import copy
@@ -48,7 +27,6 @@ REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
 STAGING_ROOT = pathlib.Path("/tmp/armory-modal")  # noqa: S108
 CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
-REGION = "us-east"
 SERVER_GPU = "L40S"
 LIBERO_GPU = "T4"
 TIMEOUT_S = 2 * 60 * 60
@@ -213,8 +191,6 @@ def _run(
     cpu=4,
     memory=16384,
     gpu=SERVER_GPU,
-    region=REGION,
-    max_containers=5,
     volumes={
         str(REMOTE_ARTIFACTS_ROOT): artifacts_volume,
         CHECKPOINT_VOLUME_PATH: checkpoint_volume,
@@ -233,8 +209,6 @@ class GpuServer:
     timeout=TIMEOUT_S,
     cpu=2,
     memory=8192,
-    region=REGION,
-    max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class CpuMockServer:
@@ -253,8 +227,6 @@ class CpuMockServer:
     cpu=1,
     memory=MIN_LIBERO_MEMORY_MIB,
     gpu=LIBERO_GPU,
-    region=REGION,
-    max_containers=5,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class LiberoClient:
@@ -270,8 +242,6 @@ class LiberoClient:
     timeout=TIMEOUT_S,
     cpu=1,
     memory=8192,
-    region=REGION,
-    max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class CpuMockClient:
@@ -432,7 +402,6 @@ def launch(
 @app.cls(
     image=cpu_mock_image,  # cheap: only spawns the server/client and hands off URLs
     timeout=TIMEOUT_S,
-    max_containers=10,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
 class CaseRunner:

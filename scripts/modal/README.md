@@ -15,17 +15,16 @@ by a `modal.forward` TCP tunnel plus a pair of ephemeral `modal.Dict`s. `--mode`
 picks both ends at once — it fixes the workers, the agent, and the environment
 backend, so the configs can't contradict it:
 
-| `--mode` | server | client | use it for |
-|---|---|---|---|
-| `gpu` | real π0.5 / GR00T on an **L40S** | LIBERO sim on a **T4** (EGL) | the real experiment |
-| `mock` | mock policy, **CPU** | mock envs, **CPU** | fast/cheap iteration; timing preserved |
-| `runtime` | none — the agent returns nulls | LIBERO sim on a **T4** | debugging the env/agent loop alone |
+| `--mode`  | server                           | client                       | use it for                             |
+| --------- | -------------------------------- | ---------------------------- | -------------------------------------- |
+| `gpu`     | real π0.5 / GR00T on an **L40S** | LIBERO sim on a **T4** (EGL) | the real experiment                    |
+| `mock`    | mock policy, **CPU**             | mock envs, **CPU**           | fast/cheap iteration; timing preserved |
+| `runtime` | none — the agent returns nulls   | LIBERO sim on a **T4**       | debugging the env/agent loop alone     |
 
-`mock` keeps the timing honest rather than merely running: `MockPolicy.infer_batch`
-sleeps on a measured batch-size → latency table
-(`src/armory/backends/inference_profiles.json`, real L40S/H100 numbers), so
-scheduling behaviour survives at CPU prices. Client CPUs scale with fleet size
-(1 per robot process, capped at Modal's 16); LIBERO clients also get 3 GiB per CPU.
+``gpu`` is the real experiment.
+``mock`` is for quick experiments.
+``runtime`` is for debugging the simulation.
+Client CPUs scale with fleet size (1 per robot process, capped at Modal's 16); LIBERO clients also get 3 GiB per CPU.
 
 Two entrypoints, same modes:
 - **`run.py`** — one case (one fleet, one scheduler).

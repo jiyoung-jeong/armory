@@ -1,17 +1,13 @@
 """Run one case (one fleet, one scheduler) on Modal.
 
-    # mock policy + mock envs, all CPU. The cheap smoke test.
-    uv run modal run scripts/modal/run.py --mode mock
+# mock policy + mock envs, all CPU.
+uv run modal run scripts/modal/run.py --mode mock
 
-    # real policy on an L40S driving LIBERO sim on a T4.
-    uv run modal run scripts/modal/run.py --mode gpu --client-config configs/client/libero/short.json
+# real policy on an L40S driving LIBERO sim on a T4.
+uv run modal run scripts/modal/run.py --mode gpu --client-config configs/client/libero/short.json
 
-    # LIBERO sim with no server at all, to debug the environment/agent loop.
-    uv run modal run scripts/modal/run.py --mode runtime
-
-The mode fixes the workers, the agent, and the environment backend (see
-``app.py``); the config files supply everything else. Outputs land on the
-artifacts volume and are downloaded to ``--output-dir``.
+# LIBERO sim with no server at all, to debug the environment/agent loop.
+uv run modal run scripts/modal/run.py --mode runtime
 """
 
 from __future__ import annotations

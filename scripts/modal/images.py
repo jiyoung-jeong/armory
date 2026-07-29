@@ -1,5 +1,3 @@
-"""Modal images for the evaluation, serving, and LIBERO profiles."""
-
 from __future__ import annotations
 
 import os

@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 app = modal.App("armory-serve")
 
 GPU = "l40s"
-REGION = "us-east"
+REGION = None
 ENV_MODE = "LIBERO"
 MAX_BATCH_SIZE = 5
 PORT = 8080
