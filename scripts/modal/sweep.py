@@ -1,7 +1,6 @@
 """Modal scheduler sweep: one Modal case per (scheduler x seed x fleet x ...) combo.
 
-Mirrors ``scripts/sbatch/launch_sweep.py``. Scheduler and server axes are swept
-by flags; client fleet shapes come from one ``--client-config`` file or every
+ Scheduler and server axes are swept by flags; client fleet shapes come from one ``--client-config`` file or every
 JSON/JSONC file under a config directory. ``--mode`` picks where it all runs
 (see ``app.py``); only ``gpu`` and ``mock`` make sense here, since a sweep with
 no server has no scheduler to sweep.
