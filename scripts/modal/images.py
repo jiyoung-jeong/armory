@@ -90,11 +90,6 @@ def _sync(image: modal.Image, *extras: str) -> modal.Image:
 
 
 def _add_repo_sources(image: modal.Image, *modules: str) -> modal.Image:
-    # utils is a standalone module under src/ that scripts/run.py and
-    # scripts/serve.py import by bare name. Mount it by explicit file path
-    # (not add_local_python_source): the bare name `utils` is ambiguous — the
-    # repo also has scripts/utils.py — and the resolver picks the wrong one, so
-    # pin the src/ copy onto /root (already on sys.path via the package mounts).
     return (
         image.add_local_python_source(*modules)
         .add_local_dir(str(REPO_ROOT / "configs"), remote_path=str(REMOTE_ROOT / "configs"))
@@ -103,7 +98,6 @@ def _add_repo_sources(image: modal.Image, *modules: str) -> modal.Image:
             str(REPO_ROOT / "src/armory/backends/inference_profiles.json"),
             "/root/armory/backends/inference_profiles.json",
         )
-        .add_local_file(str(REPO_ROOT / "src/utils.py"), "/root/utils.py")
     )
 
 
