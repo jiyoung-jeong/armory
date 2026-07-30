@@ -293,6 +293,7 @@ def _apply_mode(mode: Mode, server_config: dict, client_config: dict, run_dir: s
     client_config["agent"] = mode.agent
     client_config["output_dir"] = run_dir
     client_config["overwrite"] = True
+    server_config.setdefault("server", {})["output_dir"] = run_dir
     client_config.setdefault("experiment_config", {}).setdefault("environment", {})["kind"] = (
         mode.env_kind
     )

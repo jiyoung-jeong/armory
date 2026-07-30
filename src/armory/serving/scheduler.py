@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import multiprocessing as mp
+import pathlib
 import signal
+from dataclasses import asdict
 from multiprocessing.synchronize import Event
 
 import zmq
@@ -56,7 +59,7 @@ class SchedulerWorker:
         sched_in_ep: str,
         result_ep: str,
         batch_queue: mp.Queue,
-        scheduler_metrics_queue: mp.Queue | None,
+        metrics_dir: pathlib.Path,
         max_batch_size: int,
         config: SchedulerConfig,
         ready_event: Event,
@@ -65,7 +68,7 @@ class SchedulerWorker:
         self.sched_in_ep = sched_in_ep
         self.result_ep = result_ep
         self.batch_queue = batch_queue
-        self.scheduler_metrics_queue = scheduler_metrics_queue
+        self.metrics_dir = metrics_dir
         self.max_batch_size = max_batch_size
         self.config = config
         self.ready_event = ready_event
@@ -85,6 +88,8 @@ class SchedulerWorker:
                 f"Unknown scheduling algorithm {self.config.scheduling_algorithm!r}. "
                 f"Available: {sorted(SCHEDULER_REGISTRY)}"
             )
+
+        decisions_log = open(self.metrics_dir / "scheduler_decisions.jsonl", "w")
 
         ctx = zmq.Context()
 
@@ -135,11 +140,13 @@ class SchedulerWorker:
             # logger.debug("tick=%d stage=schedule_begin", tick)
             decisions = self._current_scheduler.schedule()
 
-            if self.scheduler_metrics_queue is not None:
+            if decisions:
                 try:
-                    self.scheduler_metrics_queue.put_nowait(decisions)
+                    for decision in decisions:
+                        decisions_log.write(json.dumps(asdict(decision), default=float) + "\n")
+                    decisions_log.flush()
                 except Exception:
-                    logger.exception("tick=%d failed to enqueue scheduler decisions", tick)
+                    logger.exception("tick=%d failed to record scheduler decisions", tick)
 
     # ------------------------------------------------------------------
     # Helpers

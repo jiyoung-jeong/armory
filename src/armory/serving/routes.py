@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY
 from armory.serving.schemas import Reconfigure, ResetAll
-from armory.serving.server_runtime import ServerState
+from armory.serving.server_runtime import ServerState, write_metadata
 
 # Keep existing log attribution while this code moves out of server.py.
 logger = logging.getLogger("armory.serving.server")
@@ -57,6 +57,7 @@ def register_routes(
 
         await state.scheduler_sock.send_pyobj(Reconfigure(config=config))
         state.current_scheduler = config
+        write_metadata(state, metadata)
         logger.info("Reconfigure requested: %s", config)
         return {
             "status": "ok",

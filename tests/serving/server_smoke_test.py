@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import pathlib
 import queue
 import signal
+import tempfile
 import time
 import traceback
 from typing import Any
@@ -177,6 +179,7 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
                 ServerConfig(
                     max_batch_size=2,
                     scheduler=SchedulerConfig(scheduling_algorithm=TWO_ROBOT_ALGORITHM),
+                    output_dir=pathlib.Path(tempfile.mkdtemp()),
                 ),
             )
         ) as client:

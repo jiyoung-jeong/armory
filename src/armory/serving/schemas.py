@@ -98,8 +98,6 @@ class Reconfigure:
     config: SchedulerConfig
 
 
-# TODO: this is the server-side version of ActionChunk that I think is used
-# for the mirror. Remind me to discuss and also mention where it is used.
 @dataclass(frozen=True, slots=True)
 class ActionChunk:
     chunk_id: int

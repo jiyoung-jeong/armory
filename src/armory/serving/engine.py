@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import multiprocessing as mp
+import pathlib
 import signal
 import time
 from multiprocessing.synchronize import Event
@@ -51,6 +53,7 @@ class GpuWorker:
         server_out_ep: str,
         gpu_out_ep: str,
         ready_event: Event,
+        metrics_dir: pathlib.Path,
         log_queue: mp.Queue | None = None,
     ) -> None:
         self.policy_factory = policy_factory
@@ -60,6 +63,7 @@ class GpuWorker:
         self.server_out_ep = server_out_ep
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
+        self.metrics_dir = metrics_dir
         self.log_queue = log_queue
 
     def run(self) -> None:
@@ -89,6 +93,7 @@ class GpuWorker:
         self._latency_tracker = EMALatencyTracker()
         self._last_served_action_index: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
+        self._batches_log = open(self.metrics_dir / "batches.jsonl", "w")
 
         self._profile_and_send(policy, result_sock)
 
@@ -108,15 +113,15 @@ class GpuWorker:
                 end_time = time.perf_counter() + batch.idle_duration
                 while time.perf_counter() < end_time:
                     pass
-                result_sock.send_pyobj(
-                    ResponseBatch(
-                        responses=[],
-                        batch_id=batch.batch_id,
-                        batch_size=0,
-                        inference_start_time=t0,
-                        inference_duration=time.time() - t0,
-                    )
+                response_batch = ResponseBatch(
+                    responses=[],
+                    batch_id=batch.batch_id,
+                    batch_size=0,
+                    inference_start_time=t0,
+                    inference_duration=time.time() - t0,
                 )
+                result_sock.send_pyobj(response_batch)
+                self._log_batch(response_batch, [])
                 continue
 
             slot_reqs: list[SlotRequest] = batch.requests
@@ -138,15 +143,15 @@ class GpuWorker:
                     # logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
 
             if len(slot_datas) == 0:
-                result_sock.send_pyobj(
-                    ResponseBatch(
-                        responses=[],
-                        batch_id=batch.batch_id,
-                        batch_size=len(slot_datas),
-                        inference_start_time=time.time(),
-                        inference_duration=0.0,
-                    )
+                response_batch = ResponseBatch(
+                    responses=[],
+                    batch_id=batch.batch_id,
+                    batch_size=len(slot_datas),
+                    inference_start_time=time.time(),
+                    inference_duration=0.0,
                 )
+                result_sock.send_pyobj(response_batch)
+                self._log_batch(response_batch, [])
                 # logger.warning("Sent empty response batch")
                 continue
 
@@ -172,20 +177,36 @@ class GpuWorker:
             )  # NOTE from Rohan: this was originally slot_reqs
 
             # Send responses directly to WS — not via scheduler
-            result_sock.send_pyobj(
-                ResponseBatch(
-                    responses=responses,
-                    batch_id=batch.batch_id,
-                    batch_size=len(slot_requests),
-                    inference_start_time=t0,
-                    inference_duration=inference_duration,
-                )
+            response_batch = ResponseBatch(
+                responses=responses,
+                batch_id=batch.batch_id,
+                batch_size=len(slot_requests),
+                inference_start_time=t0,
+                inference_duration=inference_duration,
             )
+            result_sock.send_pyobj(response_batch)
+            self._log_batch(response_batch, slot_requests)
             logger.debug("Sent response batch: %s", responses)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _log_batch(self, response_batch: ResponseBatch, requests: list[SlotRequest]) -> None:
+        self._batches_log.write(
+            json.dumps(
+                {
+                    "batch_id": response_batch.batch_id,
+                    "robot_ids": [request.robot_id for request in requests],
+                    "request_ids": [request.request_id for request in requests],
+                    "batch_size": response_batch.batch_size,
+                    "inference_start_time": response_batch.inference_start_time,
+                    "inference_duration": response_batch.inference_duration,
+                }
+            )
+            + "\n"
+        )
+        self._batches_log.flush()
 
     @staticmethod
     def _make_infer_response(

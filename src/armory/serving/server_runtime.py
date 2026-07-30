@@ -8,16 +8,18 @@ state. ZMQ contexts are not fork-safe.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import multiprocessing as mp
 import os
+import pathlib
 import signal
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from multiprocessing.synchronize import Event
-from typing import Protocol, TypeAlias
+from typing import Protocol, TextIO, TypeAlias
 
 import zmq.asyncio
 from fastapi import FastAPI
@@ -54,6 +56,21 @@ class ServerState:
     # Current effective scheduler config. Mutated by POST /reconfigure so
     # /metadata always reports what the scheduler subprocess is actually using.
     current_scheduler: SchedulerConfig
+    metrics_dir: pathlib.Path
+    events_log: TextIO
+
+
+def metrics_dir(config: ServerConfig) -> pathlib.Path:
+    path = config.output_dir / "server"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_metadata(state: ServerState, metadata: ServerMetadata) -> None:
+    payload = asdict(metadata)
+    payload["scheduling_algorithm"] = state.current_scheduler.scheduling_algorithm
+    payload["scheduler"] = state.current_scheduler.model_dump()
+    (state.metrics_dir / "metadata.json").write_text(json.dumps(payload, indent=2))
 
 
 async def _router_task(
@@ -144,6 +161,7 @@ def _start_backend(
             socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
             gpu_ready,
+            metrics_dir(config),
             log_queue,
         ).run,
         daemon=True,
@@ -154,7 +172,7 @@ def _start_backend(
             socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
             batch_queue,
-            None,
+            metrics_dir(config),
             config.max_batch_size,
             config.scheduler,
             sched_ready,
@@ -221,14 +239,19 @@ def create_lifespan(
 
         response_queues: dict[str, asyncio.Queue] = {}
 
-        app.state.server = ServerState(
+        record_dir = metrics_dir(config)
+        state = ServerState(
             scheduler_sock=scheduler_sock,
             response_queues=response_queues,
             slots=slots,
             robot_metadata={},
             batch_queue=batch_queue,
             current_scheduler=config.scheduler,
+            metrics_dir=record_dir,
+            events_log=open(record_dir / "events.jsonl", "w"),
         )
+        app.state.server = state
+        write_metadata(state, metadata)
 
         router = asyncio.create_task(_router_task(response_sock, response_queues))
         watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
@@ -237,6 +260,7 @@ def create_lifespan(
 
         watchdog.cancel()
         router.cancel()
+        state.events_log.close()
         gpu_proc.terminate()
         scheduler_proc.terminate()
 

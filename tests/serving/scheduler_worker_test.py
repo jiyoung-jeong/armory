@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections import deque
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +16,7 @@ from armory.serving.schemas import (
     Reconfigure,
     ResetAll,
     ResponseBatch,
+    SchedulerDecision,
     SlotRequest,
     WarmupSeed,
 )
@@ -155,6 +158,7 @@ def test_schedulers_read_their_own_knobs_from_the_config() -> None:
 
 def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     replacement_name = "_characterization-replacement"
     monkeypatch.setitem(SCHEDULER_REGISTRY, replacement_name, _ReplacementScheduler)
@@ -164,7 +168,7 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         sched_in_ep="control",
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
-        scheduler_metrics_queue=None,
+        metrics_dir=tmp_path,
         max_batch_size=4,
         config=SchedulerConfig(scheduling_algorithm="max-batch"),
         ready_event=object(),  # type: ignore[arg-type]
@@ -226,7 +230,9 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
     assert drained == [(replacement, result_socket)]
 
 
-def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_reconfigure_keeps_the_current_scheduler(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     class _BrokenScheduler:
         def __init__(self, *args: object, **kwargs: object) -> None:
             del args, kwargs
@@ -239,7 +245,7 @@ def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.Monk
         sched_in_ep="control",
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
-        scheduler_metrics_queue=None,
+        metrics_dir=tmp_path,
         max_batch_size=2,
         config=SchedulerConfig(scheduling_algorithm="max-batch"),
         ready_event=object(),  # type: ignore[arg-type]
@@ -257,7 +263,7 @@ def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.Monk
     assert worker.config.scheduling_algorithm == "max-batch"
 
 
-def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
+def test_engine_completion_messages_are_fully_drained_in_fifo_order(tmp_path: Path) -> None:
     first = ResponseBatch([], 10, 0, 100.0, 0.0)
     second = ResponseBatch([], 11, 0, 101.0, 0.0)
     socket = _MessageSocket([first, second])
@@ -274,7 +280,7 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
         sched_in_ep="control",
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
-        scheduler_metrics_queue=None,
+        metrics_dir=tmp_path,
         max_batch_size=2,
         config=SchedulerConfig(scheduling_algorithm="max-batch"),
         ready_event=object(),  # type: ignore[arg-type]
@@ -288,6 +294,7 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
 
 def test_worker_tick_processes_engine_then_server_then_schedules(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     events: list[object] = []
 
@@ -303,17 +310,13 @@ def test_worker_tick_processes_engine_then_server_then_schedules(
             self.latency_tracker = _LoopLatencyTracker()
             self._drain_fn = None
 
-        def schedule(self) -> list[str]:
+        def schedule(self) -> list[SchedulerDecision]:
             events.append("schedule")
-            return ["decision"]
+            return [SchedulerDecision(scheduler_name="loop", batch_id=1)]
 
     class _ReadyEvent:
         def set(self) -> None:
             events.append("ready")
-
-    class _MetricsQueue:
-        def put_nowait(self, decisions: list[str]) -> None:
-            events.append(("metrics", decisions))
 
     class _StopLoop(Exception):
         pass
@@ -352,7 +355,7 @@ def test_worker_tick_processes_engine_then_server_then_schedules(
         sched_in_ep="control",
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
-        scheduler_metrics_queue=_MetricsQueue(),  # type: ignore[arg-type]
+        metrics_dir=tmp_path,
         max_batch_size=2,
         config=SchedulerConfig(scheduling_algorithm=algorithm),
         ready_event=_ReadyEvent(),  # type: ignore[arg-type]
@@ -376,6 +379,11 @@ def test_worker_tick_processes_engine_then_server_then_schedules(
         "engine",
         "server",
         "schedule",
-        ("metrics", ["decision"]),
         "poll",
     ]
+
+    recorded = [
+        json.loads(line)
+        for line in (tmp_path / "scheduler_decisions.jsonl").read_text().splitlines()
+    ]
+    assert [(r["scheduler_name"], r["batch_id"]) for r in recorded] == [("loop", 1)]

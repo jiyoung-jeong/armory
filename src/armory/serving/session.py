@@ -7,6 +7,7 @@ router state, and HTTP control-plane routes live in neighboring modules.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Iterator
@@ -31,6 +32,11 @@ from armory_client.messages import (
 
 # Keep existing log attribution while this code moves out of server.py.
 logger = logging.getLogger("armory.serving.server")
+
+
+def _log_event(state: ServerState, record: dict) -> None:
+    state.events_log.write(json.dumps(record) + "\n")
+    state.events_log.flush()
 
 
 async def _handshake(
@@ -149,6 +155,17 @@ async def _receive_loop(
                             server_send_time=send_time,
                         )
                     )
+                    _log_event(
+                        state,
+                        {
+                            "kind": "ack",
+                            "robot_id": robot_id,
+                            "request_id": ack.request_id,
+                            "chunk_id": ack.chunk_id,
+                            "receive_time": ack.receive_time,
+                            "server_send_time": send_time,
+                        },
+                    )
                     continue
                 case "infer":
                     pass
@@ -200,6 +217,17 @@ async def _receive_loop(
                 weight=state.robot_metadata[robot_id].weight,
             )
             await state.scheduler_sock.send_pyobj(slot_req)
+            _log_event(
+                state,
+                {
+                    "kind": "request",
+                    "robot_id": robot_id,
+                    "request_id": request_id,
+                    "observation_step": req.observation_step,
+                    "request_timestamp": req.request_timestamp,
+                    "arrival_time": arrival_timestamp,
+                },
+            )
     except WebSocketDisconnect:
         logger.debug("Robot %s disconnected", robot_id)
 
