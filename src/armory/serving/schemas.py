@@ -32,7 +32,6 @@ class SlotRequest:
     params: RTCParams | None
     noise: np.ndarray | None
     control_hz: float
-    estimated_d_param: int = 0  # filled by scheduler before batching
 
     def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
         return (

@@ -43,6 +43,7 @@ def _action_times(mirror: Mirror) -> dict[RobotID, float]:
 def _execution_times(mirror: Mirror) -> dict[RobotID, float]:
     return {rid: robot.executed_steps / robot.control_hz for rid, robot in mirror.robots.items()}
 
+
 def _starvation_time(robot: Robot) -> float:
     return robot.starved_steps() / robot.control_hz
 
@@ -72,6 +73,7 @@ def _mirror_summary(mirror: Mirror, now: float) -> str:
             f"{rid}: deadline_in={deadline_in:+.3f}s chunks={n_chunks} buffer_steps={buffer_steps}"
         )
     return " | ".join(parts)
+
 
 HORIZON = 1.0
 GAMMA = 1
@@ -266,7 +268,9 @@ class IncrementalSearch:
         node = parent_node.get_twin()
         if isinstance(queued_batch, Idle):
             next_time = gpu_end_time + queued_batch.duration
-            node.queue_idle(queued_batch.duration, next(self._search_batch_id), dispatch_time=gpu_end_time)
+            node.queue_idle(
+                queued_batch.duration, next(self._search_batch_id), dispatch_time=gpu_end_time
+            )
         else:
             next_time = gpu_end_time + self.latency_tracker.infer_latency(len(queued_batch))
             # don't need to fast forward since we've already fast_forwarded to time before batch.
@@ -407,8 +411,15 @@ class IncrementalSearch:
         eval_node = node.get_twin()
         eval_node.fast_forward(end_time)
 
-        scores = {rid: eval_node.robots[rid].score / eval_node.robots[rid].control_hz for rid in eval_node.robots}
-        weighted_scores = {rid: scores[rid] * self.action_horizon_multipliers[eval_node.robots[rid].max_execution_horizon] for rid in scores}
+        scores = {
+            rid: eval_node.robots[rid].score / eval_node.robots[rid].control_hz
+            for rid in eval_node.robots
+        }
+        weighted_scores = {
+            rid: scores[rid]
+            * self.action_horizon_multipliers[eval_node.robots[rid].max_execution_horizon]
+            for rid in scores
+        }
         score_sum = sum(weighted_scores.values())
 
         objective = score_sum / gpu_time
@@ -463,7 +474,6 @@ class IncrementalSearch:
     #             objective,
     #             [b for b in schedule],
     #         )
-
 
     # def _evaluate(self, schedule: tuple[Batch, ...], gpu_end_time: float, node: Mirror) -> None:
     #     gpu_time = gpu_end_time - self.start_time
@@ -537,7 +547,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         def _phase(name: str, start: float, end: float) -> None:
             phases.append({"name": name, "start": start, "end": end})
 
-        if not self._latest_requests:
+        if not self.mirror.robots:
             # logger.debug("lookahead stage=exit reason=no_requests")
             return [], {"reason": "no_requests", "phases": phases}
 
@@ -655,7 +665,9 @@ class LookaheadActionsScheduler(RequestScheduler):
         # Commit the plan prefix: real batches become SlotRequest lists; idle
         # actions pass through as-is for base.schedule to dispatch as GPU sleeps.
         batches: list[list[SlotRequest] | Idle] = [
-            action if isinstance(action, Idle) else [self._latest_requests[rid] for rid in action]
+            action
+            if isinstance(action, Idle)
+            else [self.mirror.robots[rid].last_request for rid in action]
             for action in best[:dispatch_budget]
         ]
         _phase("postprocess", search_end, time.time())
