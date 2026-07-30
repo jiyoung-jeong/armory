@@ -6,13 +6,14 @@ import sys
 import time
 from enum import Enum
 from functools import partial
+from multiprocessing.queues import Queue
 from multiprocessing.synchronize import Barrier
 
 from pydantic import model_validator
 from scripts.utils import JsonArgs
 
-import logging_config
 from armory.serving.protocol import SchedulerConfig
+from armory.utils.logging_config import setup_logging, setup_worker_logging
 from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from evaluation.agents.base import Agent
@@ -107,6 +108,7 @@ def run_robot(
     robot_idx: int,
     start_barrier: Barrier,
     libero_spec: object | None = None,
+    log_queue: Queue | None = None,
 ) -> None:
     """One robot's whole life: seed, build env/agent, roll out, tear down.
 
@@ -114,6 +116,9 @@ def run_robot(
     multi-robot fleet; in the latter case the per-process isolation keeps heavy
     env state and the websocket receive thread separate per robot.
     """
+    if log_queue is not None:
+        setup_worker_logging(log_queue, process_name=f"robot_{robot_idx}")
+
     config = args.experiment_config
     seed_everything(config.seed + robot_idx)
 
@@ -156,7 +161,7 @@ def run_robot(
         runtime.close()
 
 
-def run_fleet(args: Args) -> None:
+def run_fleet(args: Args, log_queue: Queue) -> None:
     num_robots = len(args.experiment_config.robots)
     start_barrier = multiprocessing.Barrier(num_robots)
     libero_specs: list[object | None]
@@ -180,7 +185,7 @@ def run_fleet(args: Args) -> None:
     processes = [
         multiprocessing.Process(
             target=run_robot,
-            args=(args, robot_idx, start_barrier, libero_specs[robot_idx]),
+            args=(args, robot_idx, start_barrier, libero_specs[robot_idx], log_queue),
             name=f"robot_{robot_idx}",
         )
         for robot_idx in range(num_robots)
@@ -200,19 +205,24 @@ def main(args: Args) -> None:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    logging_config.setup_logging(log_path=args.output_dir / "run.log", level=logging.INFO)
+    log_queue, log_listener = setup_logging(
+        log_path=args.output_dir / "run.log", level=logging.INFO
+    )
 
-    if args.agent == AgentType.POLICY:
-        control_client = ServerControlClient(host=args.host, port=args.port)
-        control_client.reconfigure_server(args.scheduler_config)
-        control_client.reset_server()
+    try:
+        if args.agent == AgentType.POLICY:
+            control_client = ServerControlClient(host=args.host, port=args.port)
+            control_client.reconfigure_server(args.scheduler_config)
+            control_client.reset_server()
 
-    args.to_json(args.output_dir / "experiment_args.json")
+        args.to_json(args.output_dir / "experiment_args.json")
 
-    run_fleet(args)
+        run_fleet(args, log_queue)
 
-    calculate_metrics(args.output_dir)
-    generate_all_plots(args.output_dir)
+        calculate_metrics(args.output_dir)
+        generate_all_plots(args.output_dir)
+    finally:
+        log_listener.stop()
 
 
 if __name__ == "__main__":

@@ -100,7 +100,7 @@ def _prepare(
     startup, which is the same directory, and would take them with it.
 
     ``-m scripts.<module>`` (not the file path) so /app leads sys.path and the
-    src ``utils``/``logging_config`` win over the shadowing scripts/utils.py.
+    src ``utils`` wins over the shadowing scripts/utils.py.
     """
     staging = STAGING_ROOT / name
     staging.mkdir(parents=True, exist_ok=True)

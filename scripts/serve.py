@@ -57,7 +57,6 @@ class Args(JsonArgs):
 
 def main(args: Args) -> None:
     seed_everything(args.seed)
-    # TODO: there are two logging_config files. Let's unify them into one file and prefer concise implementations
     log_path = (
         pathlib.Path(args.log_dir)
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
