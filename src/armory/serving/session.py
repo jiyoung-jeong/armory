@@ -16,9 +16,8 @@ from fastapi import WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from armory.serving.rtc import InferType
-from armory.serving.schemas import AckNotification, RobotID, SlotRequest, WarmupSeed
+from armory.serving.schemas import AckNotification, RobotID, SlotData, WarmupSeed
 from armory.serving.server_runtime import ServerState
-from armory.serving.slots import SlotData
 from armory_client import msgpack_numpy
 from armory_client.messages import (
     ConnectRequest,
@@ -141,19 +140,7 @@ async def _receive_loop(
                         )
                         continue
                     await state.scheduler_sock.send_pyobj(
-                        AckNotification(
-                            robot_id=robot_id,
-                            request_id=ack.request_id,
-                            chunk_id=ack.chunk_id,
-                            observation_step=ack.observation_step,
-                            action_index_start=ack.action_index_start,
-                            min_execution_horizon=ack.min_execution_horizon,
-                            max_execution_horizon=ack.max_execution_horizon,
-                            execution_start_step=ack.execution_start_step,
-                            first_executed_index=ack.first_executed_index,
-                            receive_time=ack.receive_time,
-                            server_send_time=send_time,
-                        )
+                        AckNotification(ack=ack, robot_id=robot_id, server_send_time=send_time)
                     )
                     _log_event(
                         state,
@@ -177,33 +164,12 @@ async def _receive_loop(
 
             # Write observation and request metadata atomically so the GPU
             # always reads metadata corresponding to the same observation.
-            request_id = next(request_ids)
-            arrival_timestamp = time.time()
-            state.slots.write(
-                slot_index,
-                SlotData(
-                    robot_id=robot_id,
-                    obs=req.observation,
-                    request_id=request_id,
-                    arrival_timestamp=arrival_timestamp,
-                    observation_step=req.observation_step,
-                    action_index_start=req.action_index_start,
-                    request_timestamp=req.request_timestamp,
-                    deadline=req.deadline,
-                    min_execution_horizon=req.min_execution_horizon,
-                    max_execution_horizon=req.max_execution_horizon,
-                    infer_type=InferType.SYNC,
-                    params=None,
-                    noise=req.noise,
-                    control_hz=state.robot_metadata[robot_id].control_hz,
-                ),
-            )
-
-            slot_req = SlotRequest(
+            slot_data = SlotData(
                 slot_index=slot_index,
                 robot_id=robot_id,
-                request_id=request_id,
-                arrival_timestamp=arrival_timestamp,
+                request_id=next(request_ids),
+                arrival_timestamp=time.time(),
+                observation=req.observation,
                 observation_step=req.observation_step,
                 action_index_start=req.action_index_start,
                 request_timestamp=req.request_timestamp,
@@ -216,16 +182,17 @@ async def _receive_loop(
                 control_hz=state.robot_metadata[robot_id].control_hz,
                 weight=state.robot_metadata[robot_id].weight,
             )
-            await state.scheduler_sock.send_pyobj(slot_req)
+            state.slots.write(slot_index, slot_data)
+            await state.scheduler_sock.send_pyobj(slot_data.request)
             _log_event(
                 state,
                 {
                     "kind": "request",
                     "robot_id": robot_id,
-                    "request_id": request_id,
+                    "request_id": slot_data.request_id,
                     "observation_step": req.observation_step,
                     "request_timestamp": req.request_timestamp,
-                    "arrival_time": arrival_timestamp,
+                    "arrival_time": slot_data.arrival_timestamp,
                 },
             )
     except WebSocketDisconnect:

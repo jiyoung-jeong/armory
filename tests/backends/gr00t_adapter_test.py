@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
-from armory.serving.schemas import InternalRequest
-from armory_client.messages import InferType
+from armory.backends.types import warmup_request
+from armory.serving.schemas import SlotData
 from gr00t_adapter.policy_adapter import (
     LANGUAGE_KEY,
     _convert_gripper,
@@ -21,22 +23,17 @@ def _request(
     image_value: int,
     wrist_value: int,
     prompt: str,
-) -> InternalRequest:
-    return InternalRequest(
+) -> SlotData:
+    return replace(
+        warmup_request(
+            {
+                "state": state,
+                "image": np.full((2, 3, 3), image_value, dtype=np.uint8),
+                "wrist_image": np.full((2, 3, 3), wrist_value, dtype=np.uint8),
+                "prompt": prompt,
+            }
+        ),
         robot_id=robot_id,
-        observation={
-            "state": state,
-            "image": np.full((2, 3, 3), image_value, dtype=np.uint8),
-            "wrist_image": np.full((2, 3, 3), wrist_value, dtype=np.uint8),
-            "prompt": prompt,
-        },
-        observation_step=0,
-        action_index_start=0,
-        request_timestamp=1.0,
-        deadline=2.0,
-        min_execution_horizon=0,
-        max_execution_horizon=0,
-        infer_type=InferType.SYNC,
     )
 
 

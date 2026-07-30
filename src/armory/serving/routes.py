@@ -29,8 +29,8 @@ def register_routes(
         state: ServerState | None = getattr(request.app.state, "server", None)
         payload = asdict(metadata)
         if state is not None:
-            payload["scheduling_algorithm"] = state.current_scheduler.scheduling_algorithm
-            payload["scheduler"] = state.current_scheduler.model_dump()
+            payload["scheduling_algorithm"] = state.config.scheduler.scheduling_algorithm
+            payload["scheduler"] = state.config.scheduler.model_dump()
         return payload
 
     @app.post("/reconfigure")
@@ -42,7 +42,7 @@ def register_routes(
         """
         state: ServerState = request.app.state.server
         body = await request.json() if await request.body() else {}
-        algorithm = body.get("scheduling_algorithm") or state.current_scheduler.scheduling_algorithm
+        algorithm = body.get("scheduling_algorithm") or state.config.scheduler.scheduling_algorithm
         if algorithm not in SCHEDULER_REGISTRY:
             raise HTTPException(
                 status_code=400,
@@ -50,19 +50,23 @@ def register_routes(
                 f"available: {sorted(SCHEDULER_REGISTRY)}",
             )
 
-        config = SchedulerConfig(
-            scheduling_algorithm=algorithm,
-            alpha=state.current_scheduler.alpha,
+        config = state.config.model_copy(
+            update={
+                "scheduler": SchedulerConfig(
+                    scheduling_algorithm=algorithm,
+                    alpha=state.config.scheduler.alpha,
+                )
+            }
         )
 
         await state.scheduler_sock.send_pyobj(Reconfigure(config=config))
-        state.current_scheduler = config
+        state.config = config
         write_metadata(state, metadata)
-        logger.info("Reconfigure requested: %s", config)
+        logger.info("Reconfigure requested: %s", config.scheduler)
         return {
             "status": "ok",
             "scheduling_algorithm": algorithm,
-            "scheduler": config.model_dump(),
+            "scheduler": config.scheduler.model_dump(),
         }
 
     @app.post("/reset")

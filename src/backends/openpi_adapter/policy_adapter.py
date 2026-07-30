@@ -9,7 +9,6 @@ while preserving RTC support by splitting RTC/non-RTC into sub-batches.
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -17,9 +16,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from armory.backends.types import PolicyRequest, PolicyResult
+from armory.backends.types import PolicyResult, warmup_request
 from armory.serving.rtc import InferType, RTCParams
-from armory.serving.schemas import InternalRequest
+from armory.serving.schemas import SlotData
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -170,7 +169,7 @@ class OpenPiPolicyAdapter:
         return _model.Observation.from_dict(batched)
 
     def _infer_batch_group(
-        self, requests: Sequence[PolicyRequest], *, use_rtc: bool
+        self, requests: Sequence[SlotData], *, use_rtc: bool
     ) -> list[PolicyResult]:
         """Run a homogeneous sub-batch (all RTC or all non-RTC) in a single GPU call."""
         batch_size = len(requests)
@@ -261,7 +260,7 @@ class OpenPiPolicyAdapter:
     # Armory engine interface
     # ------------------------------------------------------------------
 
-    def infer_batch(self, requests: Sequence[PolicyRequest]) -> list[PolicyResult]:
+    def infer_batch(self, requests: Sequence[SlotData]) -> list[PolicyResult]:
         """GPU-parallel batch inference, splitting RTC and non-RTC into sub-batches."""
         if not requests:
             return []
@@ -292,39 +291,13 @@ class OpenPiPolicyAdapter:
         assert all(r is not None for r in results)
         return list(results)  # type: ignore[return-value]
 
-    def make_infer_request(self) -> InternalRequest:
-        return InternalRequest(
-            robot_id="__warmup__",
-            observation=self._make_example_fn(),
-            observation_step=0,
-            action_index_start=0,
-            request_timestamp=time.time(),
-            deadline=time.time() + 60.0,
-            min_execution_horizon=0,
-            max_execution_horizon=0,
-            infer_type=InferType.SYNC,
-            params=None,
-            noise=None,
-        )
+    def make_infer_request(self) -> SlotData:
+        return warmup_request(self._make_example_fn())
 
     def warmup(self, max_batch_size: int) -> None:
         """Warm up both SYNC and RTC paths to trigger JAX JIT compilation."""
         example_obs = self._make_example_fn()
-        warmup_requests = [
-            InternalRequest(
-                robot_id="__warmup__",
-                observation=example_obs,
-                observation_step=0,
-                action_index_start=0,
-                request_timestamp=0,
-                deadline=0,
-                min_execution_horizon=0,
-                max_execution_horizon=0,
-                infer_type=InferType.SYNC,
-                params=None,
-                noise=None,
-            ),
-        ]
+        warmup_requests = [warmup_request(example_obs)]
 
         # Add RTC warmup if the model supports it
         if not self._is_pytorch_model and not self._is_triton_optimized:
@@ -334,19 +307,11 @@ class OpenPiPolicyAdapter:
                 else np.zeros((8, 7), dtype=np.float32)
             )
             warmup_requests.append(
-                InternalRequest(
-                    robot_id="__warmup__",
-                    observation=example_obs,
-                    observation_step=0,
-                    action_index_start=0,
-                    request_timestamp=0,
-                    deadline=0,
-                    min_execution_horizon=0,
-                    max_execution_horizon=0,
+                warmup_request(
+                    example_obs,
                     infer_type=InferType.INFERENCE_TIME_RTC,
                     params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
-                    noise=None,
-                ),
+                )
             )
 
         for req in warmup_requests:

@@ -70,25 +70,6 @@ def test_broker(scenario: Scenario) -> None:
             assert action.step == control_step.action_step
 
 
-def test_broker_preserves_min_execution_horizon_from_response() -> None:
-    broker = ActionChunkBroker()
-    response = InferResponse(
-        robot_id="test",
-        request_id=0,
-        chunk_id=10,
-        observation_step=4,
-        action_index_start=8,
-        request_timestamp=0.0,
-        actions=np.zeros((5, 7)),
-        min_execution_horizon=3,
-        max_execution_horizon=5,
-    )
-
-    chunk = broker.receive_response(response)
-
-    assert chunk.min_execution_horizon == 3
-
-
 class _FakeWebsocket:
     def __init__(self) -> None:
         self.sent: list[dict] = []

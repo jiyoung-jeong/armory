@@ -28,7 +28,7 @@ from fastapi.concurrency import asynccontextmanager
 from armory.backends.types import PolicyFactory
 from armory.serving.config import ServerConfig
 from armory.serving.engine import GpuWorker
-from armory.serving.protocol import SchedulerConfig, ServerMetadata
+from armory.serving.protocol import ServerMetadata
 from armory.serving.scheduler import SchedulerWorker
 from armory.serving.schemas import BatchProfile, ResponseBatch
 from armory.serving.slots import RobotSlots
@@ -53,9 +53,9 @@ class ServerState:
     slots: RobotSlots  # WS manages slot allocation
     robot_metadata: dict[str, ConnectRequest]
     batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
-    # Current effective scheduler config. Mutated by POST /reconfigure so
-    # /metadata always reports what the scheduler subprocess is actually using.
-    current_scheduler: SchedulerConfig
+    # Current effective server config. Mutated by POST /reconfigure so
+    # /metadata always reports what the subprocesses are actually using.
+    config: ServerConfig
     metrics_dir: pathlib.Path
     events_log: TextIO
 
@@ -68,8 +68,8 @@ def metrics_dir(config: ServerConfig) -> pathlib.Path:
 
 def write_metadata(state: ServerState, metadata: ServerMetadata) -> None:
     payload = asdict(metadata)
-    payload["scheduling_algorithm"] = state.current_scheduler.scheduling_algorithm
-    payload["scheduler"] = state.current_scheduler.model_dump()
+    payload["scheduling_algorithm"] = state.config.scheduler.scheduling_algorithm
+    payload["scheduler"] = state.config.scheduler.model_dump()
     (state.metrics_dir / "metadata.json").write_text(json.dumps(payload, indent=2))
 
 
@@ -155,7 +155,7 @@ def _start_backend(
     gpu_proc = mp.Process(
         target=GpuWorker(
             policy_factory,
-            config.max_batch_size,
+            config,
             slots,
             batch_queue,
             socket_addresses["server_out_ep"],
@@ -173,8 +173,7 @@ def _start_backend(
             socket_addresses["gpu_out_ep"],
             batch_queue,
             metrics_dir(config),
-            config.max_batch_size,
-            config.scheduler,
+            config,
             sched_ready,
             log_queue,
         ).run,
@@ -246,7 +245,7 @@ def create_lifespan(
             slots=slots,
             robot_metadata={},
             batch_queue=batch_queue,
-            current_scheduler=config.scheduler,
+            config=config,
             metrics_dir=record_dir,
             events_log=open(record_dir / "events.jsonl", "w"),
         )

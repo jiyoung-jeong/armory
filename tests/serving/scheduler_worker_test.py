@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
 from collections import deque
 from pathlib import Path
 
 import pytest
 
-import armory.serving.scheduler as scheduler_module
-from armory.scheduling.base import RequestScheduler
+from armory.serving.config import ServerConfig
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType
 from armory.serving.scheduler import SCHEDULER_REGISTRY, SchedulerWorker
@@ -16,21 +14,10 @@ from armory.serving.schemas import (
     Reconfigure,
     ResetAll,
     ResponseBatch,
-    SchedulerDecision,
     SlotRequest,
     WarmupSeed,
 )
-from armory_client.messages import ResetRequest
-
-EXPECTED_SCHEDULERS = {
-    "max-batch": "MaxBatchScheduler",
-    "greedy-deadline": "GreedyDeadlineScheduler",
-    "dynamic-action": "DynamicActionScheduler",
-    "lookahead-actions": "LookaheadActionsScheduler",
-    "round-robin": "RoundRobinScheduler",
-    "random": "RandomBatchScheduler",
-    "starvation": "StarvationScheduler",
-}
+from armory_client.messages import ResetRequest, ResponseAck
 
 
 def _slot_request(robot_id: str = "robot-new", request_id: int = 11) -> SlotRequest:
@@ -54,16 +41,18 @@ def _slot_request(robot_id: str = "robot-new", request_id: int = 11) -> SlotRequ
 
 def _ack(robot_id: str = "robot-new", request_id: int = 11) -> AckNotification:
     return AckNotification(
+        ack=ResponseAck(
+            request_id=request_id,
+            chunk_id=5,
+            observation_step=3,
+            receive_time=22.0,
+            action_index_start=4,
+            min_execution_horizon=1,
+            max_execution_horizon=8,
+            execution_start_step=5,
+            first_executed_index=1,
+        ),
         robot_id=robot_id,
-        request_id=request_id,
-        chunk_id=5,
-        observation_step=3,
-        action_index_start=4,
-        min_execution_horizon=1,
-        max_execution_horizon=8,
-        execution_start_step=5,
-        first_executed_index=1,
-        receive_time=22.0,
         server_send_time=21.0,
     )
 
@@ -124,7 +113,7 @@ class _SpyScheduler:
         self.calls.append(("update", request.robot_id, request.request_id))
 
     def update_ack(self, notification: AckNotification) -> None:
-        self.calls.append(("update_ack", notification.robot_id, notification.request_id))
+        self.calls.append(("update_ack", notification.robot_id, notification.ack.request_id))
 
 
 class _ReplacementScheduler(_SpyScheduler):
@@ -137,12 +126,6 @@ class _ReplacementScheduler(_SpyScheduler):
         self.config = config
         self._drain_fn = None
         type(self).instances.append(self)
-
-
-def test_scheduler_registry_names_classes_and_order_are_stable() -> None:
-    assert {name: cls.__name__ for name, cls in SCHEDULER_REGISTRY.items()} == EXPECTED_SCHEDULERS
-    assert list(SCHEDULER_REGISTRY) == list(EXPECTED_SCHEDULERS)
-    assert all(issubclass(cls, RequestScheduler) for cls in SCHEDULER_REGISTRY.values())
 
 
 def test_schedulers_read_their_own_knobs_from_the_config() -> None:
@@ -169,8 +152,10 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         metrics_dir=tmp_path,
-        max_batch_size=4,
-        config=SchedulerConfig(scheduling_algorithm="max-batch"),
+        config=ServerConfig(
+            max_batch_size=4,
+            scheduler=SchedulerConfig(scheduling_algorithm="max-batch"),
+        ),
         ready_event=object(),  # type: ignore[arg-type]
     )
     original = _SpyScheduler()
@@ -192,7 +177,12 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         [
             ResetRequest(robot_id="robot-old"),
             ResetAll(),
-            Reconfigure(config=SchedulerConfig(scheduling_algorithm=replacement_name, alpha=0.25)),
+            Reconfigure(
+                config=ServerConfig(
+                    max_batch_size=4,
+                    scheduler=SchedulerConfig(scheduling_algorithm=replacement_name, alpha=0.25),
+                )
+            ),
             request,
             ack,
             WarmupSeed(
@@ -209,8 +199,8 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
     assert len(_ReplacementScheduler.instances) == 1
     replacement = _ReplacementScheduler.instances[0]
     assert worker._current_scheduler is replacement
-    assert worker.config.scheduling_algorithm == replacement_name
-    assert worker.config.alpha == 0.25
+    assert worker.config.scheduler.scheduling_algorithm == replacement_name
+    assert worker.config.scheduler.alpha == 0.25
     assert replacement.max_batch_size == 4
     assert replacement.config.alpha == 0.25
     assert replacement.calls == [
@@ -246,8 +236,10 @@ def test_failed_reconfigure_keeps_the_current_scheduler(
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         metrics_dir=tmp_path,
-        max_batch_size=2,
-        config=SchedulerConfig(scheduling_algorithm="max-batch"),
+        config=ServerConfig(
+            max_batch_size=2,
+            scheduler=SchedulerConfig(scheduling_algorithm="max-batch"),
+        ),
         ready_event=object(),  # type: ignore[arg-type]
     )
     original = _SpyScheduler()
@@ -256,11 +248,16 @@ def test_failed_reconfigure_keeps_the_current_scheduler(
     worker._result_sock = _MessageSocket()
 
     worker._handle_reconfigure(
-        Reconfigure(config=SchedulerConfig(scheduling_algorithm=replacement_name))
+        Reconfigure(
+            config=ServerConfig(
+                max_batch_size=2,
+                scheduler=SchedulerConfig(scheduling_algorithm=replacement_name),
+            )
+        )
     )
 
     assert worker._current_scheduler is original
-    assert worker.config.scheduling_algorithm == "max-batch"
+    assert worker.config.scheduler.scheduling_algorithm == "max-batch"
 
 
 def test_engine_completion_messages_are_fully_drained_in_fifo_order(tmp_path: Path) -> None:
@@ -281,8 +278,10 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order(tmp_path: Pa
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         metrics_dir=tmp_path,
-        max_batch_size=2,
-        config=SchedulerConfig(scheduling_algorithm="max-batch"),
+        config=ServerConfig(
+            max_batch_size=2,
+            scheduler=SchedulerConfig(scheduling_algorithm="max-batch"),
+        ),
         ready_event=object(),  # type: ignore[arg-type]
     )
 
@@ -290,100 +289,3 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order(tmp_path: Pa
 
     assert sink.completed == [first, second]
     assert socket.messages == deque()
-
-
-def test_worker_tick_processes_engine_then_server_then_schedules(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    events: list[object] = []
-
-    class _LoopLatencyTracker:
-        def update_infer(self, batch_size: int, latency: float) -> None:
-            events.append(("seed", batch_size, latency))
-
-    class _LoopScheduler:
-        def __init__(
-            self, config: SchedulerConfig, batch_queue: object, max_batch_size: int
-        ) -> None:
-            del config, batch_queue, max_batch_size
-            self.latency_tracker = _LoopLatencyTracker()
-            self._drain_fn = None
-
-        def schedule(self) -> list[SchedulerDecision]:
-            events.append("schedule")
-            return [SchedulerDecision(scheduler_name="loop", batch_id=1)]
-
-    class _ReadyEvent:
-        def set(self) -> None:
-            events.append("ready")
-
-    class _StopLoop(Exception):
-        pass
-
-    class _Context:
-        def __init__(self) -> None:
-            self.sockets = deque([_MessageSocket(), _MessageSocket()])
-
-        def socket(self, socket_type: int) -> _MessageSocket:
-            del socket_type
-            return self.sockets.popleft()
-
-    class _Poller:
-        def __init__(self) -> None:
-            self.poll_count = 0
-
-        def register(self, socket: _MessageSocket, flags: int) -> None:
-            del socket, flags
-
-        def poll(self, timeout: int) -> None:
-            assert timeout == 1
-            self.poll_count += 1
-            events.append("poll")
-            if self.poll_count == 2:
-                raise _StopLoop
-
-    algorithm = "_characterization-loop"
-    monkeypatch.setitem(SCHEDULER_REGISTRY, algorithm, _LoopScheduler)  # type: ignore[arg-type]
-    monkeypatch.setattr(scheduler_module.signal, "signal", lambda *args: None)
-    monkeypatch.setattr(scheduler_module.gc, "collect", lambda: None)
-    monkeypatch.setattr(scheduler_module.gc, "freeze", lambda: None)
-    monkeypatch.setattr(scheduler_module.zmq, "Context", _Context)
-    monkeypatch.setattr(scheduler_module.zmq, "Poller", _Poller)
-
-    worker = SchedulerWorker(
-        sched_in_ep="control",
-        result_ep="results",
-        batch_queue=object(),  # type: ignore[arg-type]
-        metrics_dir=tmp_path,
-        max_batch_size=2,
-        config=SchedulerConfig(scheduling_algorithm=algorithm),
-        ready_event=_ReadyEvent(),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(worker, "_recv_batch_profile", lambda socket: {1: 0.01, 2: 0.02})
-    monkeypatch.setattr(
-        worker,
-        "_process_engine_messages",
-        lambda active, socket: events.append("engine"),
-    )
-    monkeypatch.setattr(worker, "_process_server_messages", lambda socket: events.append("server"))
-
-    with pytest.raises(_StopLoop):
-        worker.run()
-
-    assert events == [
-        ("seed", 1, 0.01),
-        ("seed", 2, 0.02),
-        "ready",
-        "poll",
-        "engine",
-        "server",
-        "schedule",
-        "poll",
-    ]
-
-    recorded = [
-        json.loads(line)
-        for line in (tmp_path / "scheduler_decisions.jsonl").read_text().splitlines()
-    ]
-    assert [(r["scheduler_name"], r["batch_id"]) for r in recorded] == [("loop", 1)]

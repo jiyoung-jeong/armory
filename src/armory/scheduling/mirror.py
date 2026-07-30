@@ -41,7 +41,7 @@ from armory.serving.schemas import (
     RobotID,
     SlotRequest,
 )
-from armory_client.messages import InferResponse
+from armory_client.messages import InferResponse, ResponseAck
 
 logger = logging.getLogger(__name__)
 
@@ -184,21 +184,11 @@ class Robot:
         self.chunks[i] = replace(self.chunks[i], arrival_time=arrival_time)
         return i
 
-    def apply_ack(self, ack: AckNotification) -> None:
+    def apply_ack(self, ack: ResponseAck) -> None:
         """Client confirmed receipt: trust the ack's fields exactly, re-derive
         downstream chunks from the actual receive time."""
         i = self._find_index(ack.chunk_id)
-        self.chunks[i] = ActionChunk(
-            chunk_id=ack.chunk_id,
-            observation_step=ack.observation_step,
-            action_index_start=ack.action_index_start,
-            min_execution_horizon=ack.min_execution_horizon,
-            max_execution_horizon=ack.max_execution_horizon,
-            arrival_time=ack.receive_time,
-            execution_start_step=ack.execution_start_step,
-            first_executed_index=ack.first_executed_index,
-            origin="confirmed",
-        )
+        self.chunks[i] = ActionChunk.from_ack(ack)
         self._recompute_from(i + 1)
         self.assert_consistency()
 
@@ -802,22 +792,22 @@ class Mirror:
         for robot_id, start in touched_from.items():
             self.robots[robot_id].recompute_and_check(start)
 
-    def confirm_chunk(self, ack: AckNotification) -> None:
-        robot = self.robots.get(ack.robot_id)
+    def confirm_chunk(self, notification: AckNotification) -> None:
+        robot = self.robots.get(notification.robot_id)
         if robot is None:
-            logger.debug("Ignoring ack for unknown robot: %s", ack.robot_id)
+            logger.debug("Ignoring ack for unknown robot: %s", notification.robot_id)
             return
         # The chunk may have been wiped by an intervening reset_robot (and the
         # robot since re-registered with a fresh empty chunks list). Acks are
         # advisory arrival-time refinements, so dropping a stale one is safe.
-        if not any(c.chunk_id == ack.chunk_id for c in robot.chunks):
+        if not any(c.chunk_id == notification.ack.chunk_id for c in robot.chunks):
             logger.debug(
                 "Ignoring ack for unknown chunk: robot=%s chunk_id=%s",
-                ack.robot_id,
-                ack.chunk_id,
+                notification.robot_id,
+                notification.ack.chunk_id,
             )
             return
-        robot.apply_ack(ack)
+        robot.apply_ack(notification.ack)
 
     def schedulable_robot_ids(
         self,

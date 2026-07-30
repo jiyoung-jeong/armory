@@ -13,6 +13,7 @@ from pydantic import model_validator
 from scripts.utils import JsonArgs
 
 from armory.serving.protocol import SchedulerConfig
+from armory.utils import seed_everything
 from armory.utils.logging_config import setup_logging, setup_worker_logging
 from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
@@ -27,7 +28,6 @@ from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import ExperimentConfig
-from utils import seed_everything
 
 logger = logging.getLogger(__name__)
 

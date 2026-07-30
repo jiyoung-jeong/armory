@@ -22,14 +22,12 @@ Output from GR00T (dict of action arrays):
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Sequence
 
 import numpy as np
 
-from armory.backends.types import PolicyRequest, PolicyResult
-from armory.serving.rtc import InferType
-from armory.serving.schemas import InternalRequest
+from armory.backends.types import PolicyResult, warmup_request
+from armory.serving.schemas import SlotData
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +48,8 @@ _ACTION_KEYS = ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]
 LANGUAGE_KEY = "annotation.human.action.task_description"
 
 
-def _obs_to_groot(requests: Sequence[PolicyRequest]) -> dict:
-    """Convert a list of armory InternalRequests into a single batched GR00T observation."""
+def _obs_to_groot(requests: Sequence[SlotData]) -> dict:
+    """Convert a list of armory SlotDatas into a single batched GR00T observation."""
     B = len(requests)
     images = [req.observation["image"] for req in requests]
     wrist_images = [req.observation["wrist_image"] for req in requests]
@@ -132,33 +130,21 @@ class Gr00tPolicyAdapter:
     Implements:
       warmup(max_batch_size)
       infer_batch(requests) -> list[dict]
-      make_infer_request() -> InternalRequest
+      make_infer_request() -> SlotData
     """
 
     def __init__(self, policy):
         self._policy = policy
 
-    def infer_batch(self, requests: Sequence[PolicyRequest]) -> list[PolicyResult]:
+    def infer_batch(self, requests: Sequence[SlotData]) -> list[PolicyResult]:
         if not requests:
             return []
         obs = _obs_to_groot(requests)
         action_dict, _ = self._policy.get_action(obs)
         return _groot_action_to_armory(action_dict, len(requests))
 
-    def make_infer_request(self) -> InternalRequest:
-        return InternalRequest(
-            robot_id="__warmup__",
-            observation=_make_example_obs(),
-            observation_step=0,
-            action_index_start=0,
-            request_timestamp=time.time(),
-            deadline=time.time() + 60.0,
-            min_execution_horizon=0,
-            max_execution_horizon=0,
-            infer_type=InferType.SYNC,
-            params=None,
-            noise=None,
-        )
+    def make_infer_request(self) -> SlotData:
+        return warmup_request(_make_example_obs())
 
     def warmup(self, max_batch_size: int) -> None:
         request = self.make_infer_request()

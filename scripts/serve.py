@@ -13,8 +13,8 @@ from armory.backends.registry import resolve_policy
 from armory.backends.types import EnvMode, ModelFamily
 from armory.serving.config import ServerConfig
 from armory.serving.server import PolicyServer
+from armory.utils import seed_everything
 from armory.utils.logging_config import setup_logging
-from utils import seed_everything  # noqa: E402
 
 
 @dataclasses.dataclass

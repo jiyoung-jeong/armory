@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
-from armory.backends.types import PolicyRequest, PolicyResult
-from armory.serving.schemas import InferType, InternalRequest
+from armory.backends.types import PolicyResult, warmup_request
+from armory.serving.schemas import SlotData
 
 with Path(__file__).with_name("inference_profiles.json").open() as f:
     INFERENCE_PROFILES = json.load(f)
@@ -32,27 +32,14 @@ class MockPolicy:
         self._inference_latency = inference_latency
         self.metadata = {"env": env}
 
-    def make_infer_request(self) -> InternalRequest:
+    def make_infer_request(self) -> SlotData:
         # Only ever fed to infer_batch, which ignores every field but the count.
-        now = time.time()
-        return InternalRequest(
-            robot_id="__warmup__",
-            observation={},
-            observation_step=0,
-            action_index_start=0,
-            request_timestamp=now,
-            deadline=now + 60.0,
-            min_execution_horizon=0,
-            max_execution_horizon=0,
-            infer_type=InferType.SYNC,
-            params=None,
-            noise=None,
-        )
+        return warmup_request({})
 
     def warmup(self, max_batch_size: int) -> None:
         del max_batch_size
 
-    def infer_batch(self, requests: Sequence[PolicyRequest]) -> list[PolicyResult]:
+    def infer_batch(self, requests: Sequence[SlotData]) -> list[PolicyResult]:
         inference_latency = self._inference_latency[len(requests)]
         now = time.time()
         while time.time() - now < inference_latency:
