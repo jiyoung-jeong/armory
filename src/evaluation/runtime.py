@@ -4,8 +4,6 @@ import dataclasses
 import logging
 import math
 import time
-from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -61,29 +59,16 @@ def _with_actions_left(
     )
 
 
-# TODO: episode sink pattern is weird, just return rollout and send function call to ThreadPoolExecutor
-# also don't have runtime own threadpoolexecutor, since close might be called before. when it comes time
-# we can discuss how to manage lifecycle. Maybe the caller should make sure ThreadPoolExecutor finishes.
 class Runtime:
     def __init__(
         self,
         environment: Environment,
         agent: Agent,
         control_hz: float = 0.0,
-        episode_sink: Callable[[Rollout], None] | None = None,
     ) -> None:
         self._environment = environment
         self._agent = agent
         self._step_time = 1 / control_hz if control_hz > 0 else 0.0
-        self._episode_sink = episode_sink
-        # A single worker preserves episode order for sinks that allocate output
-        # names sequentially, while allowing the next rollout to begin during IO.
-        self._save_executor = (
-            ThreadPoolExecutor(max_workers=1, thread_name_prefix="episode-save")
-            if episode_sink is not None
-            else None
-        )
-        self._save_futures: list[Future[None]] = []
 
     def has_time_to_step(self, deadline: float) -> bool:
         """Whether a step started now would land before ``deadline``.
@@ -148,7 +133,7 @@ class Runtime:
         episode_data = self._agent.snapshot_episode_data()
         truncated = not self._environment.is_episode_complete()
         logger.info("Episode truncated by deadline." if truncated else "Episode completed.")
-        rollout = Rollout(
+        return Rollout(
             observations=tuple(observations),
             steps=_with_actions_left(steps, tuple(episode_data.actions_left)),
             success=self._environment.current_success,
@@ -156,24 +141,12 @@ class Runtime:
             initial_state=self._environment.current_initial_state,
             action_chunks=tuple(episode_data.action_chunks),
         )
-        if self._episode_sink is not None:
-            assert self._save_executor is not None
-            self._save_futures.append(self._save_executor.submit(self._episode_sink, rollout))
-        return rollout
 
     def close(self) -> None:
         try:
-            try:
-                self._environment.close()
-            finally:
-                self._agent.close()
+            self._environment.close()
         finally:
-            if self._save_executor is not None:
-                # Do not return until every accepted rollout is durable.
-                self._save_executor.shutdown(wait=True)
-                # ``shutdown`` waits but does not re-raise worker exceptions.
-                for save_future in self._save_futures:
-                    save_future.result()
+            self._agent.close()
 
     def _step(self) -> tuple[Observation, Action]:
         observation = self._environment.get_observation()

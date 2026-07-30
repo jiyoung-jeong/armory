@@ -4,8 +4,8 @@ import pathlib
 import shutil
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
-from functools import partial
 from multiprocessing.synchronize import Barrier
 
 from pydantic import model_validator
@@ -131,12 +131,7 @@ def run_robot(
         save_video=not isinstance(config.environment, MockConfig),
     )
 
-    runtime = Runtime(
-        environment,
-        agent,
-        control_hz=meta.control_hz,
-        episode_sink=partial(save_episode, meta=meta),
-    )
+    runtime = Runtime(environment, agent, control_hz=meta.control_hz)
     # Held with the first episode reset and every robot ready to step, so the
     # fleet is whole for the entire deadline below rather than trickling in as
     # each environment finishes resetting.
@@ -144,16 +139,20 @@ def run_robot(
     start_barrier.wait(timeout=_FLEET_START_TIMEOUT_S)
 
     deadline = time.monotonic() + args.experiment_config.time_limit
-    try:
-        episode = 0
-        while runtime.run_episode(deadline) is not None:
-            episode += 1
-            runtime.start_episode()
-
-        logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
-
-    finally:
-        runtime.close()
+    # A single worker preserves episode order for the sequentially named output
+    # folders, while allowing the next rollout to begin during IO.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="episode-save") as save_executor:
+        saves: list[Future[None]] = []
+        try:
+            while (rollout := runtime.run_episode(deadline)) is not None:
+                saves.append(save_executor.submit(save_episode, rollout, meta))
+                runtime.start_episode()
+            logger.info("robot %d: ran %d episode(s)", meta.robot_idx, len(saves))
+        finally:
+            runtime.close()
+    # ``ThreadPoolExecutor.__exit__`` waits but does not re-raise worker exceptions.
+    for save in saves:
+        save.result()
 
 
 def run_fleet(args: Args) -> None:
