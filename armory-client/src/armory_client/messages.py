@@ -37,15 +37,6 @@ class InferResponse:
     max_execution_horizon: int
     noise: np.ndarray | None = None  # action_horizon noise_dim
 
-    # TODO: these timestamps don't need to go to the client,
-    # if these timestamps are used for some client-side plots
-    # we can move the plots server-side.
-    # Lifecycle timestamps (filled by server, all time.time()):
-    server_arrival_time: float = 0.0  # WS: when observation arrived
-    inference_start_time: float = 0.0  # GPU: before infer_batch
-    inference_end_time: float = 0.0  # GPU: after infer_batch
-    server_send_time: float = 0.0  # WS: just before websocket.send_bytes()
-
 
 @dataclass(frozen=True)
 class ResponseAck:

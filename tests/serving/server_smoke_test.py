@@ -21,7 +21,6 @@ from armory_client.messages import (
     ConnectRequest,
     InferRequest,
     InferResponse,
-    InferType,
     ResponseAck,
     WarmupAck,
     WarmupPing,
@@ -122,7 +121,6 @@ def _send_infer(websocket: Any, robot_id: str, observation_step: int) -> None:
             deadline=requested_at + 10.0,
             min_execution_horizon=1,
             max_execution_horizon=ACTION_HORIZON,
-            infer_type=InferType.SYNC,
         ),
     )
 
@@ -134,10 +132,6 @@ def _receive_and_ack(websocket: Any, robot_id: str, observation_step: int) -> In
     assert response.action_index_start == observation_step * ACTION_HORIZON
     assert response.actions.shape == (ACTION_HORIZON, ACTION_DIM)
     assert response.actions.dtype == np.float32
-    assert response.server_arrival_time > 0
-    assert response.inference_start_time >= response.server_arrival_time
-    assert response.inference_end_time >= response.inference_start_time
-    assert response.server_send_time >= response.inference_end_time
 
     _send(
         websocket,
