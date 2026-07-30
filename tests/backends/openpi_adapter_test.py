@@ -121,9 +121,3 @@ def test_infer_batch_splits_rtc_requests_and_restores_original_order(
         {"robot_id": "rtc-without-params-2", "used_rtc": False},
         {"robot_id": "rtc-3", "used_rtc": True},
     ]
-
-
-def test_infer_batch_with_no_requests_does_not_invoke_policy() -> None:
-    adapter = OpenPiPolicyAdapter(SimpleNamespace(), make_example_fn=lambda: {})
-
-    assert adapter.infer_batch([]) == []

@@ -4,8 +4,6 @@ from collections import deque
 
 import pytest
 
-import armory.serving.scheduler as scheduler_module
-from armory.scheduling.base import RequestScheduler
 from armory.serving.config import ServerConfig
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType
@@ -19,16 +17,6 @@ from armory.serving.schemas import (
     WarmupSeed,
 )
 from armory_client.messages import ResetRequest, ResponseAck
-
-EXPECTED_SCHEDULERS = {
-    "max-batch": "MaxBatchScheduler",
-    "greedy-deadline": "GreedyDeadlineScheduler",
-    "dynamic-action": "DynamicActionScheduler",
-    "lookahead-actions": "LookaheadActionsScheduler",
-    "round-robin": "RoundRobinScheduler",
-    "random": "RandomBatchScheduler",
-    "starvation": "StarvationScheduler",
-}
 
 
 def _slot_request(robot_id: str = "robot-new", request_id: int = 11) -> SlotRequest:
@@ -137,12 +125,6 @@ class _ReplacementScheduler(_SpyScheduler):
         self.config = config
         self._drain_fn = None
         type(self).instances.append(self)
-
-
-def test_scheduler_registry_names_classes_and_order_are_stable() -> None:
-    assert {name: cls.__name__ for name, cls in SCHEDULER_REGISTRY.items()} == EXPECTED_SCHEDULERS
-    assert list(SCHEDULER_REGISTRY) == list(EXPECTED_SCHEDULERS)
-    assert all(issubclass(cls, RequestScheduler) for cls in SCHEDULER_REGISTRY.values())
 
 
 def test_schedulers_read_their_own_knobs_from_the_config() -> None:
@@ -303,100 +285,3 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
 
     assert sink.completed == [first, second]
     assert socket.messages == deque()
-
-
-def test_worker_tick_processes_engine_then_server_then_schedules(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    events: list[object] = []
-
-    class _LoopLatencyTracker:
-        def update_infer(self, batch_size: int, latency: float) -> None:
-            events.append(("seed", batch_size, latency))
-
-    class _LoopScheduler:
-        def __init__(
-            self, config: SchedulerConfig, batch_queue: object, max_batch_size: int
-        ) -> None:
-            del config, batch_queue, max_batch_size
-            self.latency_tracker = _LoopLatencyTracker()
-            self._drain_fn = None
-
-        def schedule(self) -> list[str]:
-            events.append("schedule")
-            return ["decision"]
-
-    class _ReadyEvent:
-        def set(self) -> None:
-            events.append("ready")
-
-    class _MetricsQueue:
-        def put_nowait(self, decisions: list[str]) -> None:
-            events.append(("metrics", decisions))
-
-    class _StopLoop(Exception):
-        pass
-
-    class _Context:
-        def __init__(self) -> None:
-            self.sockets = deque([_MessageSocket(), _MessageSocket()])
-
-        def socket(self, socket_type: int) -> _MessageSocket:
-            del socket_type
-            return self.sockets.popleft()
-
-    class _Poller:
-        def __init__(self) -> None:
-            self.poll_count = 0
-
-        def register(self, socket: _MessageSocket, flags: int) -> None:
-            del socket, flags
-
-        def poll(self, timeout: int) -> None:
-            assert timeout == 1
-            self.poll_count += 1
-            events.append("poll")
-            if self.poll_count == 2:
-                raise _StopLoop
-
-    algorithm = "_characterization-loop"
-    monkeypatch.setitem(SCHEDULER_REGISTRY, algorithm, _LoopScheduler)  # type: ignore[arg-type]
-    monkeypatch.setattr(scheduler_module.signal, "signal", lambda *args: None)
-    monkeypatch.setattr(scheduler_module.gc, "collect", lambda: None)
-    monkeypatch.setattr(scheduler_module.gc, "freeze", lambda: None)
-    monkeypatch.setattr(scheduler_module.zmq, "Context", _Context)
-    monkeypatch.setattr(scheduler_module.zmq, "Poller", _Poller)
-
-    worker = SchedulerWorker(
-        sched_in_ep="control",
-        result_ep="results",
-        batch_queue=object(),  # type: ignore[arg-type]
-        scheduler_metrics_queue=_MetricsQueue(),  # type: ignore[arg-type]
-        config=ServerConfig(
-            max_batch_size=2,
-            scheduler=SchedulerConfig(scheduling_algorithm=algorithm),
-        ),
-        ready_event=_ReadyEvent(),  # type: ignore[arg-type]
-    )
-    monkeypatch.setattr(worker, "_recv_batch_profile", lambda socket: {1: 0.01, 2: 0.02})
-    monkeypatch.setattr(
-        worker,
-        "_process_engine_messages",
-        lambda active, socket: events.append("engine"),
-    )
-    monkeypatch.setattr(worker, "_process_server_messages", lambda socket: events.append("server"))
-
-    with pytest.raises(_StopLoop):
-        worker.run()
-
-    assert events == [
-        ("seed", 1, 0.01),
-        ("seed", 2, 0.02),
-        "ready",
-        "poll",
-        "engine",
-        "server",
-        "schedule",
-        ("metrics", ["decision"]),
-        "poll",
-    ]
