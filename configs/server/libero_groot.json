@@ -9,9 +9,5 @@
   "num_steps": 10,
   "scheduling_algorithm": "lookahead-actions",
   "alpha": 1.0,
-  "log_level": "INFO",
-  "action_horizon_multipliers": {
-    "6": 1.0,
-    "10": 1.0
-  }
+  "log_level": "INFO"
 }

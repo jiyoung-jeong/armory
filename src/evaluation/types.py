@@ -113,7 +113,7 @@ class Robot(BaseModel):
     observation_latency: NetworkLatency = NetworkLatency()
     action_latency: NetworkLatency = NetworkLatency()
 
-    weight: int = 1
+    weight: float = 1.0
 
 
 class ExperimentConfig(JSONBaseModel):

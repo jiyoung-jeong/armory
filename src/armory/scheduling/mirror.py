@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class ControlStep():
+class ControlStep:
     time: float
     observation_step: int
     action_step: int | None  # which action index was executed at this step
@@ -55,7 +55,7 @@ class ControlStep():
 
 
 @dataclass(slots=True)
-class ChunkContext():
+class ChunkContext:
     observation_step: int  # step when observation was captured
     action_index_start: int  # action index of the first action in the chunk
     min_execution_horizon: int
@@ -63,6 +63,7 @@ class ChunkContext():
     arrival_time: float  # estimated/actual time the chunk lands on the robot
     execution_start_step: int = 0  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
+
 
 class Robot:
     """Mirror of a single robot's control steps and action chunks.
@@ -81,6 +82,7 @@ class Robot:
         min_execution_horizon: int,
         max_execution_horizon: int,
         latency_tracker: LatencyTracker,
+        weight: float = 1.0,
     ):
         # NOTE: saving some things here for convenience, pattern is quite bad
         self.robot_id = robot_id
@@ -88,6 +90,7 @@ class Robot:
         self.min_execution_horizon = min_execution_horizon
         self.max_execution_horizon = max_execution_horizon
         self.latency_tracker = latency_tracker
+        self.weight = weight
 
         # Both lists are sorted increasing by time by assertion.
         self.steps: deque[ControlStep] = deque(maxlen=30)
@@ -362,7 +365,9 @@ class Robot:
     def max_overall_action_step(self) -> int:
         if not self.chunks:
             return -1
-        return max(chunk.action_index_start + chunk.max_execution_horizon - 1 for chunk in self.chunks)
+        return max(
+            chunk.action_index_start + chunk.max_execution_horizon - 1 for chunk in self.chunks
+        )
         # return self.chunks[-1].action_index_start + self.chunks[-1].max_execution_horizon - 1
 
     def get_latest_control_step_before(self, time: float) -> ControlStep | None:
@@ -489,7 +494,9 @@ class Robot:
             reward = 1.0 if is_available and self.chunks[chunk_idx].origin == "searched" else 0.0
             self.update_score(reward)
 
-            assert action_step is not None or action_step <= self.max_overall_action_step, f"action_step {action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
+            assert action_step is not None or action_step <= self.max_overall_action_step, (
+                f"action_step {action_step} is greater than max_overall_action_step {self.max_overall_action_step}"
+            )
             time += dt
             observation_step += 1
             action_step = next_action_step
@@ -511,6 +518,7 @@ class Robot:
         twin.min_execution_horizon = self.min_execution_horizon
         twin.max_execution_horizon = self.max_execution_horizon
         twin.latency_tracker = self.latency_tracker
+        twin.weight = self.weight
         twin.steps = deque(self.steps)
         twin.chunks = deque(self.chunks)
         twin.last_request = self.last_request  # NOTE: bad hack
@@ -525,6 +533,7 @@ class Robot:
             "control_hz": self.control_hz,
             "min_execution_horizon": self.min_execution_horizon,
             "max_execution_horizon": self.max_execution_horizon,
+            "weight": self.weight,
             "n_steps": len(self.steps),
             "n_chunks": len(self.chunks),
             "action_index_range": (
@@ -555,6 +564,7 @@ class Robot:
     def update_score(self, reward: float) -> None:
         self.score += self.discount * reward
         self.discount *= self.gamma
+
 
 @dataclass
 class Batch:
@@ -635,6 +645,7 @@ class Mirror:
                 request.min_execution_horizon,
                 request.max_execution_horizon,
                 self.latency_tracker,
+                request.weight,
             )
         return self.robots[request.robot_id].step(request)
 
@@ -809,7 +820,8 @@ class Mirror:
         robot.apply_ack(ack)
 
     def schedulable_robot_ids(
-        self, fast_forward: bool = True,
+        self,
+        fast_forward: bool = True,
     ) -> list[RobotID]:
         schedulable_robot_ids: list[RobotID] = []
 

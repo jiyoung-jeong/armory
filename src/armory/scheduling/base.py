@@ -8,6 +8,7 @@ from typing import Any
 
 from armory.scheduling.latency import EMALatencyTracker
 from armory.scheduling.mirror import Mirror
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.schemas import (
     AckNotification,
     Idle,
@@ -22,7 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class RequestScheduler(ABC):
-    def __init__(self, batch_queue: mp.Queue, max_batch_size: int = 1):
+    def __init__(
+        self,
+        config: SchedulerConfig,
+        batch_queue: mp.Queue,
+        max_batch_size: int = 1,
+    ):
+        self._config = config
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
 

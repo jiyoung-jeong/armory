@@ -16,23 +16,10 @@ class SchedulerConfig(BaseModel):
     scheduling_algorithm: str = "greedy-deadline"
     # Server-startup-only: POST /reconfigure preserves the boot-time alpha.
     alpha: float = 1.0
-    action_horizon_multipliers: dict[int, float] = {}
-
-    def to_scheduler_kwargs(self) -> dict | None:
-        if self.scheduling_algorithm == "dynamic-action":
-            return {"alpha": self.alpha}
-        if self.scheduling_algorithm == "lookahead-actions":
-            return {"action_horizon_multipliers": self.action_horizon_multipliers}
-        return None
 
     def to_reconfigure_body(self) -> dict:
         """JSON body for POST /reconfigure (alpha is boot-only, not sent)."""
-        return {
-            "scheduling_algorithm": self.scheduling_algorithm,
-            "action_horizon_multipliers": {
-                str(k): float(v) for k, v in self.action_horizon_multipliers.items()
-            },
-        }
+        return {"scheduling_algorithm": self.scheduling_algorithm}
 
 
 @dataclass
@@ -50,7 +37,6 @@ class ServerMetadata:
     max_batch_size: int
     env: str  # environment mode (ALOHA, LIBERO, etc.)
     scheduling_algorithm: str
-    scheduler_kwargs: dict | None = None
     tunnel_url: str | None = None
     location: str | None = None
 

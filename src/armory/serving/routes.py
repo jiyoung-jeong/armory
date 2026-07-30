@@ -29,21 +29,20 @@ def register_routes(
         state: ServerState | None = getattr(request.app.state, "server", None)
         payload = asdict(metadata)
         if state is not None:
-            payload["scheduling_algorithm"] = state.current_algorithm
-            payload["scheduler_kwargs"] = dict(state.current_scheduler_kwargs)
+            payload["scheduling_algorithm"] = state.current_scheduler.scheduling_algorithm
+            payload["scheduler"] = state.current_scheduler.model_dump()
         return payload
 
     @app.post("/reconfigure")
     async def reconfigure(request: Request) -> dict:
-        """Swap the scheduler's algorithm and/or multipliers in place.
+        """Swap the scheduler's algorithm in place.
 
-        Body: ``{"scheduling_algorithm": str?, "action_horizon_multipliers": dict?}``.
-        Either field is optional; omitted fields preserve the current value.
-        Returns the resulting effective scheduler_kwargs.
+        Body: ``{"scheduling_algorithm": str?}``, optional; an omitted field
+        preserves the current value. Returns the effective SchedulerConfig.
         """
         state: ServerState = request.app.state.server
         body = await request.json() if await request.body() else {}
-        algorithm = body.get("scheduling_algorithm") or state.current_algorithm
+        algorithm = body.get("scheduling_algorithm") or state.current_scheduler.scheduling_algorithm
         if algorithm not in SCHEDULER_REGISTRY:
             raise HTTPException(
                 status_code=400,
@@ -51,43 +50,18 @@ def register_routes(
                 f"available: {sorted(SCHEDULER_REGISTRY)}",
             )
 
-        if "action_horizon_multipliers" in body and body["action_horizon_multipliers"] is not None:
-            try:
-                multipliers = {
-                    int(k): float(v) for k, v in body["action_horizon_multipliers"].items()
-                }
-            except (TypeError, ValueError, AttributeError) as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"action_horizon_multipliers must be a dict of int->float pairs ({e})",
-                ) from e
-        else:
-            multipliers = dict(
-                state.current_scheduler_kwargs.get("action_horizon_multipliers")
-                or state.boot_action_horizon_multipliers
-            )
-
         config = SchedulerConfig(
             scheduling_algorithm=algorithm,
-            alpha=state.boot_alpha,
-            action_horizon_multipliers=multipliers,
+            alpha=state.current_scheduler.alpha,
         )
-        kwargs = config.to_scheduler_kwargs() or {}
 
-        await state.scheduler_sock.send_pyobj(
-            Reconfigure(algorithm=algorithm, scheduler_kwargs=dict(kwargs))
-        )
-        state.current_algorithm = algorithm
-        state.current_scheduler_kwargs = dict(kwargs)
-        logger.info(
-            "Reconfigure requested: algorithm=%s scheduler_kwargs=%s",
-            algorithm,
-            kwargs,
-        )
+        await state.scheduler_sock.send_pyobj(Reconfigure(config=config))
+        state.current_scheduler = config
+        logger.info("Reconfigure requested: %s", config)
         return {
             "status": "ok",
             "scheduling_algorithm": algorithm,
-            "scheduler_kwargs": dict(kwargs),
+            "scheduler": config.model_dump(),
         }
 
     @app.post("/reset")

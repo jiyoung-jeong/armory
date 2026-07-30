@@ -38,11 +38,6 @@ def _parse_ws_url(host: str, port: int | None) -> str:
 
 
 class BidirectionalWebsocket:
-    """Implements the Policy interface by communicating with a server over websocket.
-
-    See WebsocketPolicyServer for a corresponding server implementation.
-    """
-
     def __init__(
         self,
         robot_id: str,
@@ -50,6 +45,7 @@ class BidirectionalWebsocket:
         port: int | None = None,
         api_key: str | None = None,
         control_hz: float = 10.0,
+        weight: float = 1.0,
         pre_send_hook: Callable[[], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
@@ -57,16 +53,21 @@ class BidirectionalWebsocket:
         self._api_key = api_key
         self._pre_send_hook = pre_send_hook
         self._control_hz = control_hz
+        self._weight = weight
 
     def connect(self):
         self._ws = self._connect_ws()
-        self._handshake(self._control_hz)
+        self._handshake()
         self._warmup()
 
-    def _handshake(self, control_hz: float) -> None:
+    def _handshake(self) -> None:
         """Send ConnectRequest with robot_id, wait for server acknowledgment."""
         self._ws.send(
-            msgpack_numpy.packb(ConnectRequest(robot_id=self._robot_id, control_hz=control_hz))
+            msgpack_numpy.packb(
+                ConnectRequest(
+                    robot_id=self._robot_id, control_hz=self._control_hz, weight=self._weight
+                )
+            )
         )
         msgpack_numpy.unpackb(self._ws.recv())  # ConnectResponse ack
         logger.info("Connected as robot_id=%s", self._robot_id)

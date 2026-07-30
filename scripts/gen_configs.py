@@ -39,6 +39,7 @@ sys.path[:0] = [str(_ROOT / "src"), str(_ROOT), str(_HERE)]
 import serve  # noqa: E402
 import tyro  # noqa: E402
 
+from armory.serving.config import EngineConfig, ServerConfig  # noqa: E402
 from armory.serving.protocol import SchedulerConfig  # noqa: E402
 from evaluation.envs.config import LiberoConfig, MockConfig  # noqa: E402
 from evaluation.types import ExecutionHorizon, ExperimentConfig, Robot  # noqa: E402
@@ -50,6 +51,10 @@ FLEET_SHAPES = {
     "hom": lambda n, fast, slow: [fast] * n,
     "half_fast_half_slow": lambda n, fast, slow: [fast] * (n // 2) + [slow] * (n - n // 2),
     "one_fast": lambda n, fast, slow: [fast] + [slow] * (n - 1),
+}
+
+SCHEDULER_AXES = {
+    "dynamic-action": ("alpha",),
 }
 
 
@@ -69,8 +74,6 @@ class Args:
     max_batch_sizes: tuple[int, ...] = (5,)
     alphas: tuple[float, ...] = (1.0,)
     """Only reaches dynamic-action; variants collapse for every other scheduler."""
-    horizon_boosts: tuple[float, ...] = (1.0,)
-    """Lookahead multiplier applied to the fast horizon (slow stays 1.0)."""
     num_steps: int = 10
     port: int = 8080
 
@@ -92,33 +95,30 @@ def _num(value: float) -> str:
 def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
     """One entry per *distinct* server config, named after the knobs that matter.
 
-    ``SchedulerConfig.to_scheduler_kwargs`` is the authority on which knob each
-    scheduler actually reads, so variants differing only in an ignored knob
-    collapse to a single file instead of becoming duplicate sweep cases.
+    Variants differing only in a knob the chosen scheduler ignores collapse to a
+    single file instead of becoming duplicate sweep cases.
     """
     label_batch = len(args.max_batch_sizes) > 1
     seen: set[tuple] = set()
     configs: list[tuple[str, serve.Args]] = []
 
-    for scheduler, batch, alpha, boost in itertools.product(
-        args.schedulers, args.max_batch_sizes, args.alphas, args.horizon_boosts
+    for scheduler, batch, alpha in itertools.product(
+        args.schedulers, args.max_batch_sizes, args.alphas
     ):
-        candidate = SchedulerConfig(
+        axes = SCHEDULER_AXES.get(scheduler, ())
+        values = {"alpha": alpha}
+        config = SchedulerConfig(
             scheduling_algorithm=scheduler,
-            alpha=alpha,
-            action_horizon_multipliers={args.fast_horizon: boost, args.slow_horizon: 1.0},
+            **{axis: values[axis] for axis in axes},
         )
-        kwargs = candidate.to_scheduler_kwargs() or {}
-        key = (scheduler, batch, json.dumps(kwargs, sort_keys=True, default=str))
+        key = (batch, config.model_dump_json())
         if key in seen:
             continue
         seen.add(key)
 
         name = scheduler
-        if "alpha" in kwargs:
+        if "alpha" in axes:
             name += f"_alpha{_num(alpha)}"
-        if "action_horizon_multipliers" in kwargs:
-            name += f"_boost{_num(boost)}"
         if label_batch:
             name += f"_b{batch}"
 
@@ -128,10 +128,12 @@ def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
                 serve.Args(
                     env=args.server_env,
                     model=args.model,
-                    num_steps=args.num_steps,
-                    max_batch_size=batch,
                     port=args.port,
-                    scheduler=SchedulerConfig(scheduling_algorithm=scheduler, **kwargs),
+                    server=ServerConfig(
+                        max_batch_size=batch,
+                        scheduler=config,
+                        engine=EngineConfig(num_steps=args.num_steps),
+                    ),
                 ),
             )
         )

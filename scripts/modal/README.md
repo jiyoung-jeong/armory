@@ -88,8 +88,8 @@ artifacts under `--output-dir`, then prints the `plot_sweep.py` command.
 
 `gen_configs.py` collapses variants a scheduler would ignore — `--alphas 0 0.5 1`
 yields three `dynamic-action` configs but only one `greedy-deadline`, because
-`SchedulerConfig.to_scheduler_kwargs` says `alpha` never reaches it. That is why
-the sweeper can stay a dumb product.
+`gen_configs.SCHEDULER_AXES` says `alpha` never reaches it. That is why the
+sweeper can stay a dumb product.
 
 ### Config schemas
 
@@ -99,9 +99,11 @@ the sweeper can stay a dumb product.
 
 ```jsonc
 // server config  ->  scripts/serve.py Args
-// `scheduler` is nested; in mock mode `policy` is overwritten with the mock.
-{"model": "pi05", "env": "libero", "max_batch_size": 5, "port": 8080,
- "scheduler": {"scheduling_algorithm": "lookahead-actions", "alpha": 1.0}}
+// serving knobs live under `server`; in mock mode `policy` is overwritten with the mock.
+{"model": "pi05", "env": "libero", "port": 8080,
+ "server": {"max_batch_size": 5,
+            "scheduler": {"scheduling_algorithm": "lookahead-actions", "alpha": 1.0},
+            "engine": {"num_steps": 10}}}
 
 // client config  ->  evaluation.types.ExperimentConfig
 // robots is a list (len = fleet size); LIBERO assigns distinct tasks from its suite.

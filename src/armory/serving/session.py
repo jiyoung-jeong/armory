@@ -197,6 +197,7 @@ async def _receive_loop(
                 params=None,
                 noise=req.noise,
                 control_hz=state.robot_metadata[robot_id].control_hz,
+                weight=state.robot_metadata[robot_id].weight,
             )
             await state.scheduler_sock.send_pyobj(slot_req)
     except WebSocketDisconnect:

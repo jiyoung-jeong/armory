@@ -58,6 +58,7 @@ class ResponseAck:
 class ConnectRequest:
     robot_id: str
     control_hz: float
+    weight: float = 1.0
     type: Literal["connect"] = "connect"
 
 

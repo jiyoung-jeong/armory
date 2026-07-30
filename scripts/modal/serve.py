@@ -24,11 +24,6 @@ SCHEDULING_ALGORITHM = "lookahead-actions"
 ALPHA = 2.0
 MIN_OBSERVATION_STEP_DIFF = 12
 
-ACTION_HORIZON_MULTIPLIERS = {
-    10: 1.0,
-    20: 1.0,
-}
-
 checkpoint_volume = modal.Volume.from_name("openpi-checkpoints", create_if_missing=True)
 CHECKPOINT_VOLUME_PATH = "/checkpoints"
 
@@ -68,13 +63,12 @@ class ModalPolicyServer:
                 {
                     "model": MODEL.lower(),
                     "env": ENV_MODE.lower(),
-                    "max_batch_size": MAX_BATCH_SIZE,
                     "port": PORT,
-                    "scheduler": {
-                        "scheduling_algorithm": SCHEDULING_ALGORITHM,
-                        "alpha": ALPHA,
-                        "action_horizon_multipliers": {
-                            str(k): v for k, v in ACTION_HORIZON_MULTIPLIERS.items()
+                    "server": {
+                        "max_batch_size": MAX_BATCH_SIZE,
+                        "scheduler": {
+                            "scheduling_algorithm": SCHEDULING_ALGORITHM,
+                            "alpha": ALPHA,
                         },
                     },
                 }

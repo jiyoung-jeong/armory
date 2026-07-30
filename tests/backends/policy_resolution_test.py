@@ -55,7 +55,6 @@ def test_resolve_openpi_policy_metadata_and_factory(
     assert resolved.metadata.max_batch_size == 5
     assert resolved.metadata.env == "libero"
     assert resolved.metadata.scheduling_algorithm == "round-robin"
-    assert resolved.metadata.scheduler_kwargs is None
 
     assert isinstance(resolved.factory, backend_registry.OpenPiPolicyFactory)
     assert resolved.factory.config_name == expected_config
@@ -95,7 +94,6 @@ def test_resolve_gr00t_policy_metadata_and_factory(
     assert resolved.metadata.max_batch_size == 4
     assert resolved.metadata.env == "libero"
     assert resolved.metadata.scheduling_algorithm == "lookahead-actions"
-    assert resolved.metadata.scheduler_kwargs is None
 
     assert isinstance(resolved.factory, backend_registry.Gr00tPolicyFactory)
     assert resolved.factory.model_family == "gr00t-n1.7"

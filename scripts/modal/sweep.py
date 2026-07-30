@@ -82,7 +82,7 @@ class Case:
             "server_config": self.server.model_dump(mode="json"),
             "client_config": {
                 "experiment_config": self.experiment.model_dump(mode="json"),
-                "scheduler_config": self.server.scheduler.model_dump(mode="json"),
+                "scheduler_config": self.server.server.scheduler.model_dump(mode="json"),
             },
             "stream_logs": stream_logs,
         }
@@ -93,18 +93,18 @@ class Case:
         The plotting scripts group by these columns, so they have to be present
         whether or not this particular sweep varied them.
         """
-        multipliers = self.server.scheduler.action_horizon_multipliers
+        server = self.server.server
         return {
             "stamp": stamp,
             "run_id": self.run_id,
-            "scheduler": self.server.scheduler.scheduling_algorithm,
+            "scheduler": server.scheduler.scheduling_algorithm,
             "server_variant": self.server_name,
             "experiment": self.experiment_name,
             "num_robots": len(self.experiment.robots),
             "seed": self.seed,
-            "max_batch_size": self.server.max_batch_size,
-            "alpha": self.server.scheduler.alpha,
-            "action_horizon_multipliers": dict(multipliers) if multipliers else "",
+            "max_batch_size": server.max_batch_size,
+            "alpha": server.scheduler.alpha,
+            "weights": ",".join(f"{robot.weight:g}" for robot in self.experiment.robots),
         }
 
 

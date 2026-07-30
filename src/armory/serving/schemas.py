@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias
 
 import numpy as np
 
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType, RTCParams
 from armory_client.messages import InferResponse
 
@@ -32,6 +33,7 @@ class SlotRequest:
     params: RTCParams | None
     noise: np.ndarray | None
     control_hz: float
+    weight: float = 1.0
 
     def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
         return (
@@ -84,18 +86,16 @@ class ResetAll:
 
 @dataclass(frozen=True, slots=True)
 class Reconfigure:
-    """Server-internal: rebuild the scheduler in-place with a new algorithm/kwargs.
+    """Server-internal: rebuild the scheduler in-place from a new SchedulerConfig.
 
     Published from the WS main process on POST /reconfigure. The scheduler
     subprocess constructs a fresh ``RequestScheduler`` from
-    ``SCHEDULER_REGISTRY[algorithm]`` with ``scheduler_kwargs`` and swaps it
-    in. The previously-seeded batch latency profile is re-applied to the new
-    instance; per-robot latency state is left to be re-seeded by the next
-    warmup phase.
+    ``SCHEDULER_REGISTRY[config.scheduling_algorithm]`` and swaps it in. The
+    previously-seeded batch latency profile is re-applied to the new instance;
+    per-robot latency state is left to be re-seeded by the next warmup phase.
     """
 
-    algorithm: str
-    scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
+    config: SchedulerConfig
 
 
 # TODO: this is the server-side version of ActionChunk that I think is used
