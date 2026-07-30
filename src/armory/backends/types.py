@@ -3,15 +3,39 @@
 from __future__ import annotations
 
 import enum
+import time
 from collections.abc import Sequence
-from typing import Protocol, TypeAlias, TypedDict
+from typing import Protocol, TypedDict
 
 import numpy as np
 
-from armory.serving.schemas import InternalRequest
-from armory_client.messages import InferRequest
+from armory.serving.rtc import InferType, RTCParams
+from armory.serving.schemas import SlotData
 
-PolicyRequest: TypeAlias = InternalRequest | InferRequest
+
+def warmup_request(
+    observation: dict,
+    infer_type: InferType = InferType.SYNC,
+    params: RTCParams | None = None,
+) -> SlotData:
+    now = time.time()
+    return SlotData(
+        slot_index=0,
+        robot_id="__warmup__",
+        request_id=0,
+        arrival_timestamp=now,
+        observation=observation,
+        observation_step=0,
+        action_index_start=0,
+        request_timestamp=now,
+        deadline=now + 60.0,
+        min_execution_horizon=0,
+        max_execution_horizon=0,
+        infer_type=infer_type,
+        params=params,
+        noise=None,
+        control_hz=0.0,
+    )
 
 
 class EnvMode(str, enum.Enum):
@@ -62,9 +86,9 @@ class ServingPolicy(Protocol):
 
     def warmup(self, max_batch_size: int) -> None: ...
 
-    def make_infer_request(self) -> PolicyRequest: ...
+    def make_infer_request(self) -> SlotData: ...
 
-    def infer_batch(self, requests: Sequence[PolicyRequest]) -> list[PolicyResult]: ...
+    def infer_batch(self, requests: Sequence[SlotData]) -> list[PolicyResult]: ...
 
 
 class PolicyFactory(Protocol):

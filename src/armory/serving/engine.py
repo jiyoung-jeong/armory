@@ -4,6 +4,7 @@ import logging
 import multiprocessing as mp
 import signal
 import time
+from dataclasses import replace
 from multiprocessing.synchronize import Event
 
 import numpy as np
@@ -15,15 +16,15 @@ from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
-    InternalRequest,
     RequestBatch,
     ResetAll,
     ResponseBatch,
     RobotID,
+    SlotData,
     SlotRequest,
     WarmupSeed,
 )
-from armory.serving.slots import RobotSlots, SlotData
+from armory.serving.slots import RobotSlots
 from armory.utils import logging_config
 from armory_client.messages import (
     InferResponse,
@@ -152,8 +153,7 @@ class GpuWorker:
 
             batch_size = len(slot_datas)
             infer_requests = [
-                InternalRequest.from_slot_data(sd, self._make_params(sd, batch_size))
-                for sd in slot_datas
+                replace(sd, params=self._make_params(sd, batch_size)) for sd in slot_datas
             ]
 
             logger.info("Inferring batch of %d", len(infer_requests))
@@ -243,7 +243,7 @@ class GpuWorker:
                 logger.debug("Received slot request: %s", msg)
             elif isinstance(msg, AckNotification):
                 self._latency_tracker.update_action_delivery(
-                    msg.robot_id, msg.receive_time, msg.server_send_time
+                    msg.robot_id, msg.ack.receive_time, msg.server_send_time
                 )
                 logger.debug("Received ack notification: %s", msg)
             elif isinstance(msg, WarmupSeed):

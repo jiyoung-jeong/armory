@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from armory.serving.schemas import InternalRequest
-from armory_client.messages import InferType, RTCParams
+from armory.backends.types import warmup_request
+from armory.serving.rtc import InferType, RTCParams
+from armory.serving.schemas import SlotData
 from openpi_adapter.policy_adapter import OpenPiPolicyAdapter, _recursive_stack, _rename_keys
 
 
@@ -16,18 +18,11 @@ def _request(
     robot_id: str,
     infer_type: InferType,
     params: RTCParams | None = None,
-) -> InternalRequest:
-    return InternalRequest(
+) -> SlotData:
+    return replace(
+        warmup_request({}, infer_type, params),
         robot_id=robot_id,
-        observation={},
-        observation_step=0,
-        action_index_start=0,
-        request_timestamp=1.0,
-        deadline=2.0,
-        min_execution_horizon=0,
         max_execution_horizon=4,
-        infer_type=infer_type,
-        params=params,
     )
 
 
@@ -105,7 +100,7 @@ def test_infer_batch_splits_rtc_requests_and_restores_original_order(
     calls: list[tuple[bool, list[str]]] = []
 
     def fake_infer_batch_group(
-        grouped_requests: list[InternalRequest],
+        grouped_requests: list[SlotData],
         *,
         use_rtc: bool,
     ) -> list[dict]:

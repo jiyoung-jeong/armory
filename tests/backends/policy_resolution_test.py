@@ -16,7 +16,7 @@ import pytest
 from armory.backends import registry as backend_registry
 from armory.backends.mock import MockPolicyFactory
 from armory.backends.types import EnvMode
-from armory_client.messages import InferRequest
+from armory.serving.schemas import SlotData
 from openpi_adapter.serve_factory import EnvMode as OpenPiEnvMode
 
 
@@ -143,7 +143,7 @@ def test_mock_factory_constructs_the_same_engine_policy_contract() -> None:
     )
     policy = factory()
     request = policy.make_infer_request()
-    assert isinstance(request, InferRequest)
+    assert isinstance(request, SlotData)
     assert policy.metadata == {"env": "libero"}
 
     policy._inference_latency[1] = 0.0

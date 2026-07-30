@@ -17,7 +17,7 @@ from armory.serving.schemas import (
     SlotRequest,
     WarmupSeed,
 )
-from armory_client.messages import ResetRequest
+from armory_client.messages import ResetRequest, ResponseAck
 
 EXPECTED_SCHEDULERS = {
     "max-batch": "MaxBatchScheduler",
@@ -51,16 +51,18 @@ def _slot_request(robot_id: str = "robot-new", request_id: int = 11) -> SlotRequ
 
 def _ack(robot_id: str = "robot-new", request_id: int = 11) -> AckNotification:
     return AckNotification(
+        ack=ResponseAck(
+            request_id=request_id,
+            chunk_id=5,
+            observation_step=3,
+            receive_time=22.0,
+            action_index_start=4,
+            min_execution_horizon=1,
+            max_execution_horizon=8,
+            execution_start_step=5,
+            first_executed_index=1,
+        ),
         robot_id=robot_id,
-        request_id=request_id,
-        chunk_id=5,
-        observation_step=3,
-        action_index_start=4,
-        min_execution_horizon=1,
-        max_execution_horizon=8,
-        execution_start_step=5,
-        first_executed_index=1,
-        receive_time=22.0,
         server_send_time=21.0,
     )
 
@@ -121,7 +123,7 @@ class _SpyScheduler:
         self.calls.append(("update", request.robot_id, request.request_id))
 
     def update_ack(self, notification: AckNotification) -> None:
-        self.calls.append(("update_ack", notification.robot_id, notification.request_id))
+        self.calls.append(("update_ack", notification.robot_id, notification.ack.request_id))
 
 
 class _ReplacementScheduler(_SpyScheduler):

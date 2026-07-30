@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias
+from dataclasses import dataclass, field, fields
+from typing import Any, NamedTuple, TypeAlias
 
 import numpy as np
 
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType, RTCParams
-from armory_client.messages import InferResponse
-
-if TYPE_CHECKING:
-    from armory.serving.slots import SlotData
+from armory_client.messages import InferResponse, ResponseAck
 
 RobotID: TypeAlias = str
 
@@ -41,21 +38,28 @@ class SlotRequest:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SlotData(SlotRequest):
+    """Observation and request metadata written together atomically into a slot.
+
+    This ensures that when the GPU worker reads a slot, the metadata (timestamps,
+    step, etc.) always corresponds to the observation being inferred, even if the
+    slot was overwritten by a newer request after the SlotRequest was enqueued.
+    """
+
+    observation: dict
+
+    @property
+    def request(self) -> SlotRequest:
+        return SlotRequest(**{f.name: getattr(self, f.name) for f in fields(SlotRequest)})
+
+
 @dataclass(frozen=True, slots=True)
 class AckNotification:
     """Sent from WS to scheduler when a client acks receipt of an InferResponse."""
 
+    ack: ResponseAck
     robot_id: RobotID
-    request_id: int
-    chunk_id: int
-    observation_step: int
-    action_index_start: int
-    min_execution_horizon: int
-    max_execution_horizon: int
-    execution_start_step: int
-    first_executed_index: int
-
-    receive_time: float
     server_send_time: float
 
 
@@ -119,13 +123,14 @@ class ActionChunk:
     debug_info: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_ack(cls, ack: AckNotification) -> ActionChunk:
+    def from_ack(cls, ack: ResponseAck) -> ActionChunk:
         return cls(
             chunk_id=ack.chunk_id,
             observation_step=ack.observation_step,
             action_index_start=ack.action_index_start,
             min_execution_horizon=ack.min_execution_horizon,
             max_execution_horizon=ack.max_execution_horizon,
+            arrival_time=ack.receive_time,
             execution_start_step=ack.execution_start_step,
             first_executed_index=ack.first_executed_index,
             origin="confirmed",
@@ -190,36 +195,3 @@ class SchedulerDecision:
     batch_id: int | None = None
     scheduled: list[RobotID] = field(default_factory=list)
     notes: dict[str, Any] = field(default_factory=dict)
-
-
-# TODO manual: think about how to name/define server-side dataclasses
-# without being overly repetitive.
-@dataclass(frozen=True, slots=True)
-class InternalRequest:
-    robot_id: str
-    observation: dict
-    observation_step: int
-    action_index_start: int
-    request_timestamp: float
-    deadline: float
-    min_execution_horizon: int
-    max_execution_horizon: int
-    infer_type: InferType
-    params: RTCParams | None = None
-    noise: np.ndarray | None = None  # action_horizon noise_dim
-    type: Literal["infer"] = "infer"
-
-    @classmethod
-    def from_slot_data(cls, slot_data: SlotData, params: RTCParams | None) -> InternalRequest:
-        return cls(
-            robot_id=slot_data.robot_id,
-            observation=slot_data.obs,
-            observation_step=slot_data.observation_step,
-            action_index_start=slot_data.action_index_start,
-            request_timestamp=slot_data.request_timestamp,
-            deadline=slot_data.deadline,
-            min_execution_horizon=slot_data.min_execution_horizon,
-            max_execution_horizon=slot_data.max_execution_horizon,
-            infer_type=slot_data.infer_type,
-            params=params,
-        )

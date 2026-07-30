@@ -10,9 +10,9 @@ from armory.backends.types import (
     MockPolicyConfig,
     ModelFamily,
     PolicyFactory,
-    PolicyRequest,
     PolicyResult,
     ServingPolicy,
+    warmup_request,
 )
 
 __all__ = [
@@ -20,7 +20,7 @@ __all__ = [
     "MockPolicyConfig",
     "ModelFamily",
     "PolicyFactory",
-    "PolicyRequest",
     "PolicyResult",
     "ServingPolicy",
+    "warmup_request",
 ]

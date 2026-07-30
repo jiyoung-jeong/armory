@@ -9,7 +9,7 @@ from armory.scheduling.latency import LatencyTracker
 from armory.scheduling.mirror import Batch, Mirror, Robot
 from armory.serving.rtc import InferType
 from armory.serving.schemas import AckNotification, ResponseBatch, SlotRequest
-from armory_client.messages import InferResponse
+from armory_client.messages import InferResponse, ResponseAck
 from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Scenario
 
 ROBOT_ID = "test"
@@ -300,16 +300,18 @@ def test_mirror_confirm_chunk_by_chunk_id() -> None:
     mirror.fast_forward(chunk.arrival_time + EPS)
 
     ack = AckNotification(
+        ack=ResponseAck(
+            request_id=0,
+            chunk_id=chunk.chunk_id,
+            observation_step=chunk.observation_step,
+            receive_time=42.0,
+            action_index_start=chunk.action_index_start,
+            min_execution_horizon=chunk.min_execution_horizon,
+            max_execution_horizon=chunk.max_execution_horizon,
+            execution_start_step=3,
+            first_executed_index=1,
+        ),
         robot_id=ROBOT_ID,
-        request_id=0,
-        chunk_id=chunk.chunk_id,
-        observation_step=chunk.observation_step,
-        action_index_start=chunk.action_index_start,
-        min_execution_horizon=chunk.min_execution_horizon,
-        max_execution_horizon=chunk.max_execution_horizon,
-        execution_start_step=3,
-        first_executed_index=1,
-        receive_time=42.0,
         server_send_time=0.0,
     )
     mirror.confirm_chunk(ack)
