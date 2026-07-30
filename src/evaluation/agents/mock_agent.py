@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing_extensions import override
 
 from armory_client.schemas import Action, ActionChunk, Observation
-from evaluation.agents.base import Agent, AgentEpisodeData
+from evaluation.agents.base import Agent
 
 
 class MockAgent(Agent):
@@ -32,6 +32,7 @@ class MockAgent(Agent):
     def close(self) -> None:
         pass
 
+    @property
     @override
-    def snapshot_episode_data(self) -> AgentEpisodeData:
-        return AgentEpisodeData()
+    def action_chunks(self) -> tuple[ActionChunk, ...]:
+        return ()

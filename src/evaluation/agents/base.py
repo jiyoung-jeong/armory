@@ -1,15 +1,6 @@
 import abc
-from dataclasses import dataclass
 
 from armory_client.schemas import Action, ActionChunk, Observation
-
-
-@dataclass(frozen=True)
-class AgentEpisodeData:
-    """Agent-owned diagnostics captured with a completed episode."""
-
-    action_chunks: tuple[ActionChunk, ...] = ()
-    actions_left: tuple[int, ...] = ()
 
 
 class Agent(abc.ABC):
@@ -25,6 +16,7 @@ class Agent(abc.ABC):
     def close(self) -> None:
         """Release resources owned by this agent."""
 
+    @property
     @abc.abstractmethod
-    def snapshot_episode_data(self) -> AgentEpisodeData:
-        """Return a stable snapshot of diagnostics for the current episode."""
+    def action_chunks(self) -> tuple[ActionChunk, ...]:
+        """Chunks received since the last ``reset``, read before the next one."""

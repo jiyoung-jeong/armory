@@ -57,6 +57,8 @@ class Action:
     action: np.ndarray
     action_chunk_index: int | None
     index_in_chunk: int | None
+    # Queue depth when this action was taken; None for agents with no queue.
+    actions_left: int | None = None
 
 
 @dataclass

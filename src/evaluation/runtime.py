@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import logging
 import math
 import time
@@ -43,20 +42,6 @@ class Rollout:
     truncated: bool
     initial_state: np.ndarray | None
     action_chunks: tuple[ActionChunk, ...]
-
-
-def _with_actions_left(
-    steps: list[StepRecord], actions_left: tuple[int, ...]
-) -> tuple[StepRecord, ...]:
-    """Fold the agent's queue-depth history into the per-step records.
-
-    The agent records one entry per ``get_action`` call, so it can be longer
-    than the steps recorded here; steps with no entry keep ``None``.
-    """
-    return tuple(
-        dataclasses.replace(step, actions_left=actions_left[i]) if i < len(actions_left) else step
-        for i, step in enumerate(steps)
-    )
 
 
 class Runtime:
@@ -123,6 +108,7 @@ class Runtime:
                     env_step=observation.step,
                     action_chunk_index=action.action_chunk_index,
                     action_index=action.index_in_chunk,
+                    actions_left=action.actions_left,
                 )
             )
             last_step_time = self._pace(last_step_time, self._step_time)
@@ -130,16 +116,15 @@ class Runtime:
         if not steps:
             return None
 
-        episode_data = self._agent.snapshot_episode_data()
         truncated = not self._environment.is_episode_complete()
         logger.info("Episode truncated by deadline." if truncated else "Episode completed.")
         return Rollout(
             observations=tuple(observations),
-            steps=_with_actions_left(steps, tuple(episode_data.actions_left)),
+            steps=tuple(steps),
             success=self._environment.current_success,
             truncated=truncated,
             initial_state=self._environment.current_initial_state,
-            action_chunks=tuple(episode_data.action_chunks),
+            action_chunks=self._agent.action_chunks,
         )
 
     def close(self) -> None:

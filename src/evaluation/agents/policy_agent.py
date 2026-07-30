@@ -1,3 +1,4 @@
+import dataclasses
 import threading
 from collections.abc import Callable
 
@@ -6,7 +7,7 @@ from typing_extensions import override
 from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from armory_client.schemas import Action, ActionChunk, Observation
-from evaluation.agents.base import Agent, AgentEpisodeData
+from evaluation.agents.base import Agent
 
 
 # TODO manual: create_null_action needs more thought, it's weird to have the function signature like this
@@ -35,7 +36,10 @@ class PolicyAgent(Agent):
         with self._lock:
             action = self._broker.get_action(observation.step)
             if action is None:
-                action = self._create_null_action(observation, self._broker.current_action_chunk)
+                action = dataclasses.replace(
+                    self._create_null_action(observation, self._broker.current_action_chunk),
+                    actions_left=0,
+                )
             self._ws_client.send(
                 observation,
                 self._broker.next_action_step,
@@ -57,14 +61,11 @@ class PolicyAgent(Agent):
         self._ws_client.close()
         self._background_thread.join(timeout=5)
 
-    # TODO: shouldn't need a crazy dataclass or special method for this?
+    @property
     @override
-    def snapshot_episode_data(self) -> AgentEpisodeData:
+    def action_chunks(self) -> tuple[ActionChunk, ...]:
         with self._lock:
-            return AgentEpisodeData(
-                action_chunks=tuple(self._broker.action_chunks),
-                actions_left=tuple(self._broker.actions_left_history),
-            )
+            return tuple(self._broker.action_chunks)
 
     def _receive_actions(self) -> None:
         while not self._closed:
