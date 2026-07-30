@@ -29,7 +29,8 @@ from fastapi import FastAPI, WebSocket
 
 from armory.backends.types import PolicyFactory
 from armory.serving import server_runtime as _runtime
-from armory.serving.protocol import SchedulerConfig, ServerMetadata
+from armory.serving.config import ServerConfig
+from armory.serving.protocol import ServerMetadata
 from armory.serving.routes import register_routes
 from armory.serving.session import serve_websocket_session
 
@@ -40,14 +41,14 @@ _request_id_counter = itertools.count(1)
 def create_app(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler: SchedulerConfig,
+    config: ServerConfig,
     log_queue: mp.Queue | None = None,
 ) -> FastAPI:
     """Compose the server runtime, WebSocket transport, and HTTP routes."""
     lifespan = _runtime.create_lifespan(
         metadata,
         policy_factory,
-        scheduler,
+        config,
         log_queue,
     )
     app = FastAPI(lifespan=lifespan)
@@ -73,19 +74,19 @@ class PolicyServer:
         self,
         metadata: ServerMetadata,
         policy_factory: PolicyFactory,
-        scheduler: SchedulerConfig,
+        config: ServerConfig,
         log_queue: mp.Queue | None = None,
     ):
         self._metadata = metadata
         self._policy_factory = policy_factory
-        self._scheduler = scheduler
+        self._config = config
         self._log_queue = log_queue
 
     def serve_forever(self, host="0.0.0.0", port=8000):
         app = create_app(
             self._metadata,
             self._policy_factory,
-            self._scheduler,
+            self._config,
             self._log_queue,
         )
         uvicorn.run(app, host=host, port=port)

@@ -12,6 +12,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from armory.scheduling.base import RequestScheduler
+from armory.serving.config import ServerConfig
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY
 from armory.serving.schemas import SlotRequest
@@ -173,7 +174,10 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             create_app(
                 metadata,
                 _SmokePolicyFactory(),
-                SchedulerConfig(scheduling_algorithm=TWO_ROBOT_ALGORITHM),
+                ServerConfig(
+                    max_batch_size=2,
+                    scheduler=SchedulerConfig(scheduling_algorithm=TWO_ROBOT_ALGORITHM),
+                ),
             )
         ) as client:
             initial_metadata = client.get("/metadata")

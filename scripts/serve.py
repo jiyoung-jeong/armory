@@ -11,7 +11,7 @@ from scripts.utils import JsonArgs
 
 from armory.backends.registry import resolve_policy
 from armory.backends.types import EnvMode, ModelFamily
-from armory.serving.protocol import SchedulerConfig
+from armory.serving.config import ServerConfig
 from armory.serving.server import PolicyServer
 from armory.utils.logging_config import setup_logging
 from utils import seed_everything  # noqa: E402
@@ -44,10 +44,7 @@ class Args(JsonArgs):
     env: EnvMode = EnvMode.LIBERO
     model: ModelFamily = ModelFamily.PI05
     policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
-    num_steps: int = 10
-
-    max_batch_size: int = 1
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
 
     port: int = 8080
     seed: int = 7
@@ -75,9 +72,9 @@ def main(args: Args) -> None:
         env=args.env,
         policy_config=policy_config,
         policy_dir=policy_dir,
-        max_batch_size=args.max_batch_size,
-        num_steps=args.num_steps,
-        scheduling_algorithm=args.scheduler.scheduling_algorithm,
+        max_batch_size=args.server.max_batch_size,
+        num_steps=args.server.engine.num_steps,
+        scheduling_algorithm=args.server.scheduler.scheduling_algorithm,
         mock=mock,
     )
 
@@ -88,7 +85,7 @@ def main(args: Args) -> None:
     server = PolicyServer(
         metadata=resolved.metadata,
         policy_factory=resolved.factory,
-        scheduler=args.scheduler,
+        config=args.server,
         log_queue=log_queue,
     )
     try:

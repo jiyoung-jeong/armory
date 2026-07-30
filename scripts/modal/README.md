@@ -99,9 +99,11 @@ sweeper can stay a dumb product.
 
 ```jsonc
 // server config  ->  scripts/serve.py Args
-// `scheduler` is nested; in mock mode `policy` is overwritten with the mock.
-{"model": "pi05", "env": "libero", "max_batch_size": 5, "port": 8080,
- "scheduler": {"scheduling_algorithm": "lookahead-actions", "alpha": 1.0}}
+// serving knobs live under `server`; in mock mode `policy` is overwritten with the mock.
+{"model": "pi05", "env": "libero", "port": 8080,
+ "server": {"max_batch_size": 5,
+            "scheduler": {"scheduling_algorithm": "lookahead-actions", "alpha": 1.0},
+            "engine": {"num_steps": 10}}}
 
 // client config  ->  evaluation.types.ExperimentConfig
 // robots is a list (len = fleet size); LIBERO assigns distinct tasks from its suite.

@@ -39,6 +39,7 @@ sys.path[:0] = [str(_ROOT / "src"), str(_ROOT), str(_HERE)]
 import serve  # noqa: E402
 import tyro  # noqa: E402
 
+from armory.serving.config import EngineConfig, ServerConfig  # noqa: E402
 from armory.serving.protocol import SchedulerConfig  # noqa: E402
 from evaluation.envs.config import LiberoConfig, MockConfig  # noqa: E402
 from evaluation.types import ExecutionHorizon, ExperimentConfig, Robot  # noqa: E402
@@ -135,10 +136,12 @@ def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
                 serve.Args(
                     env=args.server_env,
                     model=args.model,
-                    num_steps=args.num_steps,
-                    max_batch_size=batch,
                     port=args.port,
-                    scheduler=config,
+                    server=ServerConfig(
+                        max_batch_size=batch,
+                        scheduler=config,
+                        engine=EngineConfig(num_steps=args.num_steps),
+                    ),
                 ),
             )
         )

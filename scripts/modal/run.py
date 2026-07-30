@@ -21,7 +21,12 @@ from scripts.modal.app import MODES, app, launch
 from scripts.modal.images import REMOTE_ROOT
 from scripts.modal.utils import ARTIFACTS_VOLUME_NAME
 
-DEFAULT_SERVER_CONFIG = {"model": "pi05", "env": "libero", "max_batch_size": 1, "port": 8080}
+DEFAULT_SERVER_CONFIG = {
+    "model": "pi05",
+    "env": "libero",
+    "port": 8080,
+    "server": {"max_batch_size": 1},
+}
 
 
 @app.local_entrypoint()

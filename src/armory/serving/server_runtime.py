@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 
 from armory.backends.types import PolicyFactory
+from armory.serving.config import ServerConfig
 from armory.serving.engine import GpuWorker
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SchedulerWorker
@@ -115,7 +116,7 @@ class BackendStarter(Protocol):
         self,
         metadata: ServerMetadata,
         policy_factory: PolicyFactory,
-        scheduler: SchedulerConfig,
+        config: ServerConfig,
         log_queue: mp.Queue | None,
     ) -> BackendResources: ...
 
@@ -126,7 +127,7 @@ Lifespan: TypeAlias = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 def _start_backend(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler: SchedulerConfig,
+    config: ServerConfig,
     log_queue: mp.Queue | None,
 ) -> BackendResources:
     slots = RobotSlots(max_robots=MAX_ROBOTS)
@@ -137,7 +138,7 @@ def _start_backend(
     gpu_proc = mp.Process(
         target=GpuWorker(
             policy_factory,
-            metadata.max_batch_size,
+            config.max_batch_size,
             slots,
             batch_queue,
             socket_addresses["server_out_ep"],
@@ -154,8 +155,8 @@ def _start_backend(
             socket_addresses["gpu_out_ep"],
             batch_queue,
             None,
-            metadata.max_batch_size,
-            scheduler,
+            config.max_batch_size,
+            config.scheduler,
             sched_ready,
             log_queue,
         ).run,
@@ -180,7 +181,7 @@ def _start_backend(
 def create_lifespan(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler: SchedulerConfig,
+    config: ServerConfig,
     log_queue: mp.Queue | None,
     *,
     start_backend: BackendStarter = _start_backend,
@@ -199,7 +200,7 @@ def create_lifespan(
         ) = start_backend(
             metadata,
             policy_factory,
-            scheduler,
+            config,
             log_queue,
         )
 
@@ -226,7 +227,7 @@ def create_lifespan(
             slots=slots,
             robot_metadata={},
             batch_queue=batch_queue,
-            current_scheduler=scheduler,
+            current_scheduler=config.scheduler,
         )
 
         router = asyncio.create_task(_router_task(response_sock, response_queues))

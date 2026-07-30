@@ -68,13 +68,15 @@ class ModalPolicyServer:
                 {
                     "model": MODEL.lower(),
                     "env": ENV_MODE.lower(),
-                    "max_batch_size": MAX_BATCH_SIZE,
                     "port": PORT,
-                    "scheduler": {
-                        "scheduling_algorithm": SCHEDULING_ALGORITHM,
-                        "alpha": ALPHA,
-                        "action_horizon_multipliers": {
-                            str(k): v for k, v in ACTION_HORIZON_MULTIPLIERS.items()
+                    "server": {
+                        "max_batch_size": MAX_BATCH_SIZE,
+                        "scheduler": {
+                            "scheduling_algorithm": SCHEDULING_ALGORITHM,
+                            "alpha": ALPHA,
+                            "action_horizon_multipliers": {
+                                str(k): v for k, v in ACTION_HORIZON_MULTIPLIERS.items()
+                            },
                         },
                     },
                 }
