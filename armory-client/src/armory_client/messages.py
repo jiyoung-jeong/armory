@@ -37,15 +37,6 @@ class InferResponse:
     max_execution_horizon: int
     noise: np.ndarray | None = None  # action_horizon noise_dim
 
-    # TODO: these timestamps don't need to go to the client,
-    # if these timestamps are used for some client-side plots
-    # we can move the plots server-side.
-    # Lifecycle timestamps (filled by server, all time.time()):
-    server_arrival_time: float = 0.0  # WS: when observation arrived
-    inference_start_time: float = 0.0  # GPU: before infer_batch
-    inference_end_time: float = 0.0  # GPU: after infer_batch
-    server_send_time: float = 0.0  # WS: just before websocket.send_bytes()
-
 
 @dataclass(frozen=True)
 class ResponseAck:
@@ -61,28 +52,6 @@ class ResponseAck:
     first_executed_index: int = 0  # index within chunk where actual execution started
 
     type: Literal["ack"] = "ack"
-
-
-@dataclass(frozen=True)
-class ActionChunk:
-    chunk_id: int
-    observation_step: int  # step when observation was captured
-    action_index_start: int  # action index of the first action in the chunk
-    min_execution_horizon: int
-    max_execution_horizon: int
-    arrival_time: float  # estimated/actual time the chunk lands on the robot
-    execution_start_step: int  # client step when new chunk became available
-    first_executed_index: int = 0  # index within chunk where actual execution started
-    # TODO: this lifecycle information definitely does not belong on client, if this is
-    # here because it's reused on the server for the mirror, we can discuss creating
-    # wrapper dataclasses just for the server
-
-    # Provenance/lifecycle tag. Transitions:
-    #   "queued"    -> queued by production scheduler (arrival_time predicted)
-    #   "searched"  -> queued inside a lookahead search snapshot (never confirmed)
-    #   "completed" -> GPU returned the batch (arrival_time refined from real completion)
-    #   "confirmed" -> robot acked receipt (arrival_time = actual receive_time)
-    origin: str = "queued"
 
 
 @dataclass(frozen=True)

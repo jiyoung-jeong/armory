@@ -8,17 +8,19 @@ from dataclasses import dataclass
 import imageio
 import numpy as np
 import pandas as pd
+from pydantic import ConfigDict
 
 from armory_client.schemas import ActionChunk
 from evaluation.runtime import Rollout
-from evaluation.types import JSONDataclass, Timestamp
+from evaluation.types import JSONBaseModel, StepRecord
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class Result(JSONDataclass):
+class Result(JSONBaseModel):
     """Per-episode metadata persisted to ``metadata.json``."""
+
+    model_config = ConfigDict(frozen=True)
 
     robot_idx: int
     success: bool
@@ -31,7 +33,7 @@ class Result(JSONDataclass):
     truncated: bool = False
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclass(frozen=True)
 class SaveMeta:
     """Static, per-robot metadata needed to lay an episode out on disk."""
 
@@ -55,16 +57,10 @@ def save_episode(rollout: Rollout, meta: SaveMeta) -> None:
     out_folder, episode_idx = _next_out_folder(meta, outcome=_outcome(rollout))
 
     _save_metadata(out_folder, rollout, meta, episode_idx)
-    Timestamp.to_csv(rollout.timestamps, out_folder / "timestamps.csv")
+    StepRecord.to_parquet(list(rollout.steps), out_folder / "steps.parquet")
     save_action_chunks(rollout.action_chunks, out_folder)
     if meta.save_video:
         _save_video(out_folder, rollout, meta.control_hz)
-    np.save(
-        out_folder / "actions_left.npy",
-        np.array(rollout.actions_left, dtype=np.int32),
-    )
-
-    np.save(out_folder / "cost_history.npy", cost_history(rollout))
     logger.info("Saved episode %d to %s", episode_idx, out_folder)
 
 
@@ -81,18 +77,6 @@ def _action_chunk_record(chunk: ActionChunk) -> dict[str, object]:
     record["actions"] = chunk.actions.tolist()
     record["noise"] = chunk.noise.tolist() if chunk.noise is not None else None
     return record
-
-
-def cost_history(rollout: Rollout) -> list[float]:
-    """Elapsed time from a chunk's inference request to each step that executes it."""
-    costs: list[float] = []
-    for ts in rollout.timestamps:
-        idx = ts.action_chunk_index
-        if idx is not None and idx < len(rollout.action_chunks):
-            costs.append(ts.timestamp - rollout.action_chunks[idx].request_timestamp)
-        else:
-            costs.append(float("nan"))
-    return costs
 
 
 def _outcome(rollout: Rollout) -> str:
@@ -120,7 +104,7 @@ def _save_metadata(
         success=rollout.success,
         truncated=rollout.truncated,
         robot_idx=meta.robot_idx,
-        steps_taken=len(rollout.timestamps),
+        steps_taken=len(rollout.steps),
         task_suite_name=meta.task_suite_name,
         task_id=meta.task_id,
         task_language=meta.task_language,

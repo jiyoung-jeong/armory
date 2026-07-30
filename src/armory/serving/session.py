@@ -7,7 +7,6 @@ router state, and HTTP control-plane routes live in neighboring modules.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import logging
 import time
 from collections.abc import Iterator
@@ -111,7 +110,7 @@ async def _receive_loop(
     *,
     robot_id: RobotID,
     slot_index: int,
-    pending_responses: dict[int, InferResponse],
+    send_times: dict[int, float],
     request_ids: Iterator[int],
 ) -> None:
     try:
@@ -125,8 +124,8 @@ async def _receive_loop(
                     continue
                 case "ack":
                     ack = ResponseAck(**msg)
-                    response = pending_responses.pop(ack.request_id, None)
-                    if response is None:
+                    send_time = send_times.pop(ack.request_id, None)
+                    if send_time is None:
                         # A client reset can leave an in-flight response whose
                         # background receiver still ACKs after local state reset.
                         logger.debug(
@@ -147,7 +146,7 @@ async def _receive_loop(
                             execution_start_step=ack.execution_start_step,
                             first_executed_index=ack.first_executed_index,
                             receive_time=ack.receive_time,
-                            server_send_time=response.server_send_time,
+                            server_send_time=send_time,
                         )
                     )
                     continue
@@ -207,14 +206,13 @@ async def _receive_loop(
 async def _send_loop(
     websocket: WebSocket,
     response_queue: asyncio.Queue[InferResponse],
-    pending_responses: dict[int, InferResponse],
+    send_times: dict[int, float],
 ) -> None:
     while True:
         response = await response_queue.get()
-        stamped = dataclasses.replace(response, server_send_time=time.time())
-        pending_responses[response.request_id] = stamped
-        await websocket.send_bytes(msgpack_numpy.packb(stamped))
-        logger.debug("Sent response: %s", stamped)
+        send_times[response.request_id] = time.time()
+        await websocket.send_bytes(msgpack_numpy.packb(response))
+        logger.debug("Sent response: %s", response)
 
 
 async def serve_websocket_session(
@@ -234,7 +232,7 @@ async def serve_websocket_session(
     await _warmup(websocket, state, robot_id, action_payload_size, num_warmup)
 
     response_queue: asyncio.Queue[InferResponse] = state.response_queues[robot_id]
-    pending_responses: dict[int, InferResponse] = {}
+    send_times: dict[int, float] = {}
 
     recv_task = asyncio.create_task(
         _receive_loop(
@@ -242,11 +240,11 @@ async def serve_websocket_session(
             state,
             robot_id=robot_id,
             slot_index=slot_index,
-            pending_responses=pending_responses,
+            send_times=send_times,
             request_ids=request_ids,
         )
     )
-    send_task = asyncio.create_task(_send_loop(websocket, response_queue, pending_responses))
+    send_task = asyncio.create_task(_send_loop(websocket, response_queue, send_times))
     try:
         await recv_task
     finally:

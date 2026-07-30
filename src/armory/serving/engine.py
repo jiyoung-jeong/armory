@@ -163,7 +163,7 @@ class GpuWorker:
             inference_duration = t1 - t0
 
             responses = [
-                self._make_infer_response(slot_data, action, chunk_id, t0, t1)
+                self._make_infer_response(slot_data, action, chunk_id)
                 for slot_data, action, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
@@ -192,8 +192,6 @@ class GpuWorker:
         slot_data: SlotData,
         result: PolicyResult,
         chunk_id: int,
-        inference_start_time: float,
-        inference_end_time: float,
     ) -> InferResponse:
         """Translate one internal policy result into the client wire response."""
         return InferResponse(
@@ -207,9 +205,6 @@ class GpuWorker:
             max_execution_horizon=slot_data.max_execution_horizon,
             actions=result["actions"],
             noise=result["noise"],
-            server_arrival_time=slot_data.arrival_timestamp,
-            inference_start_time=inference_start_time,
-            inference_end_time=inference_end_time,
         )
 
     def _profile_and_send(self, policy: ServingPolicy, notify_sock: zmq.Socket) -> None:
