@@ -197,7 +197,6 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
                 "scheduler": {
                     "scheduling_algorithm": TWO_ROBOT_ALGORITHM,
                     "alpha": 1.0,
-                    "action_horizon_multipliers": {},
                 },
             }
             reset = client.post("/reset")

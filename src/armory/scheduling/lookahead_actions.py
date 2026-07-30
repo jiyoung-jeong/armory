@@ -5,7 +5,6 @@ import logging
 import multiprocessing as mp
 import time
 from collections import deque, namedtuple
-from collections.abc import Mapping
 from typing import Any, TypeAlias
 
 from armory.scheduling.base import RequestScheduler
@@ -52,14 +51,6 @@ def _starvation_times(mirror: Mirror) -> dict[RobotID, float]:
     return {rid: _starvation_time(robot) for rid, robot in mirror.robots.items()}
 
 
-def _coerce_horizon_multipliers(
-    multipliers: Mapping[int | str, float] | None,
-) -> dict[int, float]:
-    if multipliers is None:
-        return {}
-    return {int(horizon): float(multiplier) for horizon, multiplier in multipliers.items()}
-
-
 def _mirror_summary(mirror: Mirror, now: float) -> str:
     if not mirror.robots:
         return "no robots"
@@ -99,19 +90,14 @@ class IncrementalSearch:
         mirror: Mirror,
         latency_tracker: LatencyTracker,
         max_depth: int = 5,
-        action_horizon_multipliers: Mapping[int | str, float] | None = None,
         max_batch_size: int = 1,
         idle_durations: tuple[float, ...] = DEFAULT_IDLE_DURATIONS,
     ) -> None:
         self.latency_tracker = latency_tracker
         self.start_time = mirror.next_time_server_available()
         self.max_depth = max_depth
-        self.action_horizon_multipliers = _coerce_horizon_multipliers(action_horizon_multipliers)
         self.max_batch_size = max_batch_size
         self.idle_durations = tuple(idle_durations)
-        logger.debug(
-            "incremental search, action_horizon_multipliers=%s", self.action_horizon_multipliers
-        )
 
         self.root_node = mirror.get_twin()
         self.root_node.chunk_id_counter = itertools.count(1)
@@ -176,8 +162,7 @@ class IncrementalSearch:
         # Group into tiers by priority, preserving EDF order within each tier
         tiers: dict[float, list[RobotID]] = {}
         for rid in sorted_robot_ids:  # already EDF-sorted
-            p = self.action_horizon_multipliers[mirror.robots[rid].max_execution_horizon]
-            tiers.setdefault(p, []).append(rid)
+            tiers.setdefault(mirror.robots[rid].weight, []).append(rid)
         tier_list = [tiers[p] for p in sorted(tiers.keys(), reverse=True)]
 
         pool_size = len(sorted_robot_ids)
@@ -266,12 +251,7 @@ class IncrementalSearch:
             rid: eval_node.robots[rid].score / eval_node.robots[rid].control_hz
             for rid in eval_node.robots
         }
-        weighted_scores = {
-            rid: scores[rid]
-            * self.action_horizon_multipliers[eval_node.robots[rid].max_execution_horizon]
-            for rid in scores
-        }
-        score_sum = sum(weighted_scores.values())
+        score_sum = sum(scores[rid] * eval_node.robots[rid].weight for rid in scores)
 
         objective = score_sum / gpu_time
 
@@ -306,14 +286,7 @@ class LookaheadActionsScheduler(RequestScheduler):
         self.max_in_flight = max_in_flight
         self.step_budget_nodes = step_budget_nodes
         self.scheduling_buffer = scheduling_buffer
-        self.action_horizon_multipliers = _coerce_horizon_multipliers(
-            self._config.action_horizon_multipliers
-        )
         self.idle_durations = tuple(idle_durations)
-        logger.debug(
-            "lookahead actions scheduler, action_horizon_multipliers=%s",
-            self.action_horizon_multipliers,
-        )
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
@@ -356,7 +329,6 @@ class LookaheadActionsScheduler(RequestScheduler):
             "max_in_flight": self.max_in_flight,
             "step_budget_nodes": self.step_budget_nodes,
             "scheduling_buffer": self.scheduling_buffer,
-            "action_horizon_multipliers": dict(self.action_horizon_multipliers),
             "slack_s": slack,
             "next_server_available": next_avail,
             "in_flight": in_flight,
@@ -376,7 +348,6 @@ class LookaheadActionsScheduler(RequestScheduler):
             self.mirror,
             self.latency_tracker,
             self.max_depth,
-            self.action_horizon_multipliers,
             self._max_batch_size,
             self.idle_durations,
         )

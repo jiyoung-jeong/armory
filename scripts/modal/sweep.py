@@ -94,7 +94,6 @@ class Case:
         whether or not this particular sweep varied them.
         """
         server = self.server.server
-        multipliers = server.scheduler.action_horizon_multipliers
         return {
             "stamp": stamp,
             "run_id": self.run_id,
@@ -105,7 +104,7 @@ class Case:
             "seed": self.seed,
             "max_batch_size": server.max_batch_size,
             "alpha": server.scheduler.alpha,
-            "action_horizon_multipliers": dict(multipliers) if multipliers else "",
+            "weights": ",".join(f"{robot.weight:g}" for robot in self.experiment.robots),
         }
 
 

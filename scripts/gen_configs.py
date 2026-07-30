@@ -55,7 +55,6 @@ FLEET_SHAPES = {
 
 SCHEDULER_AXES = {
     "dynamic-action": ("alpha",),
-    "lookahead-actions": ("action_horizon_multipliers",),
 }
 
 
@@ -75,8 +74,6 @@ class Args:
     max_batch_sizes: tuple[int, ...] = (5,)
     alphas: tuple[float, ...] = (1.0,)
     """Only reaches dynamic-action; variants collapse for every other scheduler."""
-    horizon_boosts: tuple[float, ...] = (1.0,)
-    """Lookahead multiplier applied to the fast horizon (slow stays 1.0)."""
     num_steps: int = 10
     port: int = 8080
 
@@ -105,14 +102,11 @@ def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
     seen: set[tuple] = set()
     configs: list[tuple[str, serve.Args]] = []
 
-    for scheduler, batch, alpha, boost in itertools.product(
-        args.schedulers, args.max_batch_sizes, args.alphas, args.horizon_boosts
+    for scheduler, batch, alpha in itertools.product(
+        args.schedulers, args.max_batch_sizes, args.alphas
     ):
         axes = SCHEDULER_AXES.get(scheduler, ())
-        values = {
-            "alpha": alpha,
-            "action_horizon_multipliers": {args.fast_horizon: boost, args.slow_horizon: 1.0},
-        }
+        values = {"alpha": alpha}
         config = SchedulerConfig(
             scheduling_algorithm=scheduler,
             **{axis: values[axis] for axis in axes},
@@ -125,8 +119,6 @@ def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
         name = scheduler
         if "alpha" in axes:
             name += f"_alpha{_num(alpha)}"
-        if "action_horizon_multipliers" in axes:
-            name += f"_boost{_num(boost)}"
         if label_batch:
             name += f"_b{batch}"
 

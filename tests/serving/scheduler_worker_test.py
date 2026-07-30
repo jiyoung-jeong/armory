@@ -143,15 +143,13 @@ def test_scheduler_registry_names_classes_and_order_are_stable() -> None:
 
 
 def test_schedulers_read_their_own_knobs_from_the_config() -> None:
-    config = SchedulerConfig(alpha=0.25, action_horizon_multipliers={1: 0.5, 4: 1.0})
+    config = SchedulerConfig(alpha=0.25)
     batch_queue = object()
 
     dynamic = SCHEDULER_REGISTRY["dynamic-action"](config, batch_queue, max_batch_size=2)
-    lookahead = SCHEDULER_REGISTRY["lookahead-actions"](config, batch_queue, max_batch_size=2)
     greedy = SCHEDULER_REGISTRY["greedy-deadline"](config, batch_queue, max_batch_size=2)
 
     assert dynamic._alpha == 0.25
-    assert lookahead.action_horizon_multipliers == {1: 0.5, 4: 1.0}
     assert greedy._config is config
 
 

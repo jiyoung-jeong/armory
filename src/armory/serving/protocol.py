@@ -16,16 +16,10 @@ class SchedulerConfig(BaseModel):
     scheduling_algorithm: str = "greedy-deadline"
     # Server-startup-only: POST /reconfigure preserves the boot-time alpha.
     alpha: float = 1.0
-    action_horizon_multipliers: dict[int, float] = {}
 
     def to_reconfigure_body(self) -> dict:
         """JSON body for POST /reconfigure (alpha is boot-only, not sent)."""
-        return {
-            "scheduling_algorithm": self.scheduling_algorithm,
-            "action_horizon_multipliers": {
-                str(k): float(v) for k, v in self.action_horizon_multipliers.items()
-            },
-        }
+        return {"scheduling_algorithm": self.scheduling_algorithm}
 
 
 @dataclass

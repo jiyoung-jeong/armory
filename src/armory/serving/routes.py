@@ -35,11 +35,10 @@ def register_routes(
 
     @app.post("/reconfigure")
     async def reconfigure(request: Request) -> dict:
-        """Swap the scheduler's algorithm and/or multipliers in place.
+        """Swap the scheduler's algorithm in place.
 
-        Body: ``{"scheduling_algorithm": str?, "action_horizon_multipliers": dict?}``.
-        Either field is optional; omitted fields preserve the current value.
-        Returns the resulting effective SchedulerConfig.
+        Body: ``{"scheduling_algorithm": str?}``, optional; an omitted field
+        preserves the current value. Returns the effective SchedulerConfig.
         """
         state: ServerState = request.app.state.server
         body = await request.json() if await request.body() else {}
@@ -51,23 +50,9 @@ def register_routes(
                 f"available: {sorted(SCHEDULER_REGISTRY)}",
             )
 
-        if "action_horizon_multipliers" in body and body["action_horizon_multipliers"] is not None:
-            try:
-                multipliers = {
-                    int(k): float(v) for k, v in body["action_horizon_multipliers"].items()
-                }
-            except (TypeError, ValueError, AttributeError) as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"action_horizon_multipliers must be a dict of int->float pairs ({e})",
-                ) from e
-        else:
-            multipliers = dict(state.current_scheduler.action_horizon_multipliers)
-
         config = SchedulerConfig(
             scheduling_algorithm=algorithm,
             alpha=state.current_scheduler.alpha,
-            action_horizon_multipliers=multipliers,
         )
 
         await state.scheduler_sock.send_pyobj(Reconfigure(config=config))

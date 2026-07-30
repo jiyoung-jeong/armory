@@ -89,6 +89,7 @@ def create_agent(args: Args, robot_idx: int, environment: _environment.Environme
         host=args.host,
         port=args.port,
         control_hz=robot.control_hz,
+        weight=robot.weight,
     )
     ws_client.connect()
 
