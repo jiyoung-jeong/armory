@@ -303,8 +303,8 @@ def compute_fairness_metrics(output_path: pathlib.Path) -> dict | None:
     if server_path.exists():
         try:
             with open(server_path) as f:
-                kwargs = (json.load(f) or {}).get("scheduler_kwargs") or {}
-            alpha = kwargs.get("alpha")
+                scheduler = (json.load(f) or {}).get("scheduler") or {}
+            alpha = scheduler.get("alpha")
         except (json.JSONDecodeError, OSError):
             alpha = None
 

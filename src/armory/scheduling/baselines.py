@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from armory.scheduling.base import RequestScheduler
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.schemas import RobotID, SlotRequest
 
 logger = logging.getLogger(__name__)
@@ -90,10 +91,11 @@ class RoundRobinScheduler(RequestScheduler):
 
     def __init__(
         self,
+        config: SchedulerConfig,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
     ):
-        super().__init__(batch_queue, max_batch_size)
+        super().__init__(config, batch_queue, max_batch_size)
         self._rr_index: int = 0
         self._rr_robot_order: list[str] = []
 
@@ -154,12 +156,12 @@ class StarvationScheduler(RequestScheduler):
 
     def __init__(
         self,
+        config: SchedulerConfig,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        min_execution_horizon: int = 0,
         min_observation_step_diff: int = 0,
     ):
-        super().__init__(batch_queue, max_batch_size, min_execution_horizon=min_execution_horizon)
+        super().__init__(config, batch_queue, max_batch_size)
         self._min_observation_step_diff = min_observation_step_diff
         self._last_scheduled_obs_step: dict[RobotID, int] = {}
 

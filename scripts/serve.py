@@ -85,15 +85,10 @@ def main(args: Args) -> None:
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    # TODO: don't need to turn into kwargs anymore, just pass the pydantic BaseModel
-    # Can delete to_scheduler_kwargs() function definition after too.
-    scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
-    resolved.metadata.scheduler_kwargs = scheduler_kwargs
-
     server = PolicyServer(
         metadata=resolved.metadata,
         policy_factory=resolved.factory,
-        scheduler_kwargs=scheduler_kwargs,
+        scheduler=args.scheduler,
         log_queue=log_queue,
     )
     try:

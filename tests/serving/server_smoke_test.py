@@ -12,7 +12,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from armory.scheduling.base import RequestScheduler
-from armory.serving.protocol import ServerMetadata
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY
 from armory.serving.schemas import SlotRequest
 from armory.serving.server import NUM_WARMUP, create_app
@@ -169,7 +169,13 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             scheduling_algorithm=TWO_ROBOT_ALGORITHM,
         )
 
-        with TestClient(create_app(metadata, _SmokePolicyFactory())) as client:
+        with TestClient(
+            create_app(
+                metadata,
+                _SmokePolicyFactory(),
+                SchedulerConfig(scheduling_algorithm=TWO_ROBOT_ALGORITHM),
+            )
+        ) as client:
             initial_metadata = client.get("/metadata")
             assert initial_metadata.status_code == 200
             assert initial_metadata.json()["scheduling_algorithm"] == TWO_ROBOT_ALGORITHM
@@ -184,7 +190,11 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             assert reconfigured.json() == {
                 "status": "ok",
                 "scheduling_algorithm": TWO_ROBOT_ALGORITHM,
-                "scheduler_kwargs": {},
+                "scheduler": {
+                    "scheduling_algorithm": TWO_ROBOT_ALGORITHM,
+                    "alpha": 1.0,
+                    "action_horizon_multipliers": {},
+                },
             }
             reset = client.post("/reset")
             assert reset.status_code == 200

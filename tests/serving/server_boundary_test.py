@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import armory.serving.server as server
-from armory.serving.protocol import ServerMetadata
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
 
 
 class _UnusedPolicyFactory:
@@ -25,7 +25,9 @@ def _metadata() -> ServerMetadata:
 
 
 def test_create_app_only_composes_runtime_until_lifespan_starts() -> None:
-    app = server.create_app(_metadata(), _UnusedPolicyFactory())
+    app = server.create_app(
+        _metadata(), _UnusedPolicyFactory(), SchedulerConfig(scheduling_algorithm="round-robin")
+    )
 
     assert not hasattr(app.state, "server")
     application_paths = [

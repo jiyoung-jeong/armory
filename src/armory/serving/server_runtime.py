@@ -17,7 +17,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from multiprocessing.synchronize import Event
-from typing import Any, Protocol, TypeAlias
+from typing import Protocol, TypeAlias
 
 import zmq.asyncio
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ from fastapi.concurrency import asynccontextmanager
 
 from armory.backends.types import PolicyFactory
 from armory.serving.engine import GpuWorker
-from armory.serving.protocol import ServerMetadata
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SchedulerWorker
 from armory.serving.schemas import BatchProfile, ResponseBatch
 from armory.serving.slots import RobotSlots
@@ -52,11 +52,7 @@ class ServerState:
     batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
     # Current effective scheduler config. Mutated by POST /reconfigure so
     # /metadata always reports what the scheduler subprocess is actually using.
-    # boot_alpha is preserved across reconfigures (alpha is server-startup-only).
-    current_algorithm: str
-    current_scheduler_kwargs: dict[str, Any]
-    boot_alpha: float
-    boot_action_horizon_multipliers: dict[int, float]
+    current_scheduler: SchedulerConfig
 
 
 async def _router_task(
@@ -119,7 +115,7 @@ class BackendStarter(Protocol):
         self,
         metadata: ServerMetadata,
         policy_factory: PolicyFactory,
-        scheduler_kwargs: dict[str, object] | None,
+        scheduler: SchedulerConfig,
         log_queue: mp.Queue | None,
     ) -> BackendResources: ...
 
@@ -130,7 +126,7 @@ Lifespan: TypeAlias = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 def _start_backend(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler_kwargs: dict[str, object] | None,
+    scheduler: SchedulerConfig,
     log_queue: mp.Queue | None,
 ) -> BackendResources:
     slots = RobotSlots(max_robots=MAX_ROBOTS)
@@ -159,8 +155,7 @@ def _start_backend(
             batch_queue,
             None,
             metadata.max_batch_size,
-            metadata.scheduling_algorithm,
-            scheduler_kwargs,
+            scheduler,
             sched_ready,
             log_queue,
         ).run,
@@ -185,7 +180,7 @@ def _start_backend(
 def create_lifespan(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler_kwargs: dict[str, object] | None,
+    scheduler: SchedulerConfig,
     log_queue: mp.Queue | None,
     *,
     start_backend: BackendStarter = _start_backend,
@@ -204,7 +199,7 @@ def create_lifespan(
         ) = start_backend(
             metadata,
             policy_factory,
-            scheduler_kwargs,
+            scheduler,
             log_queue,
         )
 
@@ -225,22 +220,13 @@ def create_lifespan(
 
         response_queues: dict[str, asyncio.Queue] = {}
 
-        boot_kwargs = dict(scheduler_kwargs or {})
-        boot_alpha = float(boot_kwargs.get("alpha", 1.0))
-        boot_multipliers = {
-            int(k): float(v)
-            for k, v in (boot_kwargs.get("action_horizon_multipliers") or {}).items()
-        }
         app.state.server = ServerState(
             scheduler_sock=scheduler_sock,
             response_queues=response_queues,
             slots=slots,
             robot_metadata={},
             batch_queue=batch_queue,
-            current_algorithm=metadata.scheduling_algorithm,
-            current_scheduler_kwargs=dict(boot_kwargs),
-            boot_alpha=boot_alpha,
-            boot_action_horizon_multipliers=boot_multipliers,
+            current_scheduler=scheduler,
         )
 
         router = asyncio.create_task(_router_task(response_sock, response_queues))

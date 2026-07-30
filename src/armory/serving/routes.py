@@ -29,8 +29,8 @@ def register_routes(
         state: ServerState | None = getattr(request.app.state, "server", None)
         payload = asdict(metadata)
         if state is not None:
-            payload["scheduling_algorithm"] = state.current_algorithm
-            payload["scheduler_kwargs"] = dict(state.current_scheduler_kwargs)
+            payload["scheduling_algorithm"] = state.current_scheduler.scheduling_algorithm
+            payload["scheduler"] = state.current_scheduler.model_dump()
         return payload
 
     @app.post("/reconfigure")
@@ -39,11 +39,11 @@ def register_routes(
 
         Body: ``{"scheduling_algorithm": str?, "action_horizon_multipliers": dict?}``.
         Either field is optional; omitted fields preserve the current value.
-        Returns the resulting effective scheduler_kwargs.
+        Returns the resulting effective SchedulerConfig.
         """
         state: ServerState = request.app.state.server
         body = await request.json() if await request.body() else {}
-        algorithm = body.get("scheduling_algorithm") or state.current_algorithm
+        algorithm = body.get("scheduling_algorithm") or state.current_scheduler.scheduling_algorithm
         if algorithm not in SCHEDULER_REGISTRY:
             raise HTTPException(
                 status_code=400,
@@ -62,32 +62,21 @@ def register_routes(
                     detail=f"action_horizon_multipliers must be a dict of int->float pairs ({e})",
                 ) from e
         else:
-            multipliers = dict(
-                state.current_scheduler_kwargs.get("action_horizon_multipliers")
-                or state.boot_action_horizon_multipliers
-            )
+            multipliers = dict(state.current_scheduler.action_horizon_multipliers)
 
         config = SchedulerConfig(
             scheduling_algorithm=algorithm,
-            alpha=state.boot_alpha,
+            alpha=state.current_scheduler.alpha,
             action_horizon_multipliers=multipliers,
         )
-        kwargs = config.to_scheduler_kwargs() or {}
 
-        await state.scheduler_sock.send_pyobj(
-            Reconfigure(algorithm=algorithm, scheduler_kwargs=dict(kwargs))
-        )
-        state.current_algorithm = algorithm
-        state.current_scheduler_kwargs = dict(kwargs)
-        logger.info(
-            "Reconfigure requested: algorithm=%s scheduler_kwargs=%s",
-            algorithm,
-            kwargs,
-        )
+        await state.scheduler_sock.send_pyobj(Reconfigure(config=config))
+        state.current_scheduler = config
+        logger.info("Reconfigure requested: %s", config)
         return {
             "status": "ok",
             "scheduling_algorithm": algorithm,
-            "scheduler_kwargs": dict(kwargs),
+            "scheduler": config.model_dump(),
         }
 
     @app.post("/reset")

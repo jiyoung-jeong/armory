@@ -3,19 +3,19 @@ import time
 from typing import Any
 
 from armory.scheduling.base import RequestScheduler
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.schemas import SlotRequest
 
 
 class DynamicActionScheduler(RequestScheduler):
     def __init__(
         self,
+        config: SchedulerConfig,
         batch_queue: mp.Queue,
         max_batch_size: int = 1,
-        *,
-        alpha: float = 0.0,
     ):
-        super().__init__(batch_queue, max_batch_size)
-        self._alpha = max(0.0, alpha)
+        super().__init__(config, batch_queue, max_batch_size)
+        self._alpha = max(0.0, self._config.alpha)
         self._service_debt: dict[str, float] = {}
         self._demand_rate: dict[str, float] = {}
         self._last_advance = time.time()

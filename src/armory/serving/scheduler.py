@@ -18,6 +18,7 @@ from armory.scheduling.baselines import (
 )
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -57,8 +58,7 @@ class SchedulerWorker:
         batch_queue: mp.Queue,
         scheduler_metrics_queue: mp.Queue | None,
         max_batch_size: int,
-        algorithm: str,
-        scheduler_kwargs: dict | None,
+        config: SchedulerConfig,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
     ) -> None:
@@ -67,8 +67,7 @@ class SchedulerWorker:
         self.batch_queue = batch_queue
         self.scheduler_metrics_queue = scheduler_metrics_queue
         self.max_batch_size = max_batch_size
-        self.algorithm = algorithm
-        self.scheduler_kwargs = scheduler_kwargs
+        self.config = config
         self.ready_event = ready_event
         self.log_queue = log_queue
 
@@ -79,12 +78,11 @@ class SchedulerWorker:
         if self.log_queue is not None:
             logging_config.setup_worker_logging(self.log_queue, process_name="scheduler")
 
-        logger.info("Scheduler starting (algorithm=%s)", self.algorithm)
+        logger.info("Scheduler starting (%s)", self.config)
 
-        cls = SCHEDULER_REGISTRY.get(self.algorithm)
-        if cls is None:
+        if self.config.scheduling_algorithm not in SCHEDULER_REGISTRY:
             raise ValueError(
-                f"Unknown scheduling algorithm {self.algorithm!r}. "
+                f"Unknown scheduling algorithm {self.config.scheduling_algorithm!r}. "
                 f"Available: {sorted(SCHEDULER_REGISTRY)}"
             )
 
@@ -98,14 +96,8 @@ class SchedulerWorker:
         result_sock.setsockopt(zmq.SUBSCRIBE, b"")
         result_sock.connect(self.result_ep)  # GPU connects
 
-        extra_kwargs: dict = dict(self.scheduler_kwargs or {})
-        self._current_scheduler: RequestScheduler = cls(
-            self.batch_queue,
-            max_batch_size=self.max_batch_size,
-            **extra_kwargs,
-        )
         self._result_sock = result_sock
-        self._current_scheduler._drain_fn = self._make_drain_fn()
+        self._current_scheduler: RequestScheduler = self._build_scheduler(self.config)
 
         batch_profile = self._recv_batch_profile(result_sock)
         self._batch_profile: dict[int, float] = dict(batch_profile)
@@ -212,37 +204,31 @@ class SchedulerWorker:
         # mid-search still drains into the active instance.
         return lambda: self._process_engine_messages(self._current_scheduler, self._result_sock)
 
+    def _build_scheduler(self, config: SchedulerConfig) -> RequestScheduler:
+        cls = SCHEDULER_REGISTRY[config.scheduling_algorithm]
+        scheduler = cls(config, self.batch_queue, max_batch_size=self.max_batch_size)
+        scheduler._drain_fn = self._make_drain_fn()
+        return scheduler
+
     def _handle_reconfigure(self, msg: Reconfigure) -> None:
-        cls = SCHEDULER_REGISTRY.get(msg.algorithm)
-        if cls is None:
+        if msg.config.scheduling_algorithm not in SCHEDULER_REGISTRY:
             # WS main validates before publishing; this branch is defence-in-depth.
             logger.error(
                 "Reconfigure ignored: unknown algorithm %r (available: %s)",
-                msg.algorithm,
+                msg.config.scheduling_algorithm,
                 sorted(SCHEDULER_REGISTRY),
             )
             return
         try:
-            new_scheduler = cls(
-                self.batch_queue,
-                max_batch_size=self.max_batch_size,
-                **dict(msg.scheduler_kwargs or {}),
-            )
+            new_scheduler = self._build_scheduler(msg.config)
         except Exception:
             logger.exception(
-                "Reconfigure failed to construct %s with kwargs=%s; keeping current scheduler",
-                msg.algorithm,
-                msg.scheduler_kwargs,
+                "Reconfigure failed to construct %s; keeping current scheduler",
+                msg.config,
             )
             return
-        new_scheduler._drain_fn = self._make_drain_fn()
         for batch_size, latency in self._batch_profile.items():
             new_scheduler.latency_tracker.update_infer(batch_size, latency)
         self._current_scheduler = new_scheduler
-        self.algorithm = msg.algorithm
-        self.scheduler_kwargs = dict(msg.scheduler_kwargs or {})
-        logger.info(
-            "Reconfigured scheduler: algorithm=%s kwargs=%s",
-            msg.algorithm,
-            msg.scheduler_kwargs,
-        )
+        self.config = msg.config
+        logger.info("Reconfigured scheduler: %s", msg.config)

@@ -6,6 +6,7 @@ import pytest
 
 import armory.serving.scheduler as scheduler_module
 from armory.scheduling.base import RequestScheduler
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType
 from armory.serving.scheduler import SCHEDULER_REGISTRY, SchedulerWorker
 from armory.serving.schemas import (
@@ -126,11 +127,11 @@ class _SpyScheduler:
 class _ReplacementScheduler(_SpyScheduler):
     instances: list[_ReplacementScheduler] = []
 
-    def __init__(self, batch_queue: object, max_batch_size: int, marker: int) -> None:
+    def __init__(self, config: SchedulerConfig, batch_queue: object, max_batch_size: int) -> None:
         super().__init__()
         self.batch_queue = batch_queue
         self.max_batch_size = max_batch_size
-        self.marker = marker
+        self.config = config
         self._drain_fn = None
         type(self).instances.append(self)
 
@@ -139,6 +140,19 @@ def test_scheduler_registry_names_classes_and_order_are_stable() -> None:
     assert {name: cls.__name__ for name, cls in SCHEDULER_REGISTRY.items()} == EXPECTED_SCHEDULERS
     assert list(SCHEDULER_REGISTRY) == list(EXPECTED_SCHEDULERS)
     assert all(issubclass(cls, RequestScheduler) for cls in SCHEDULER_REGISTRY.values())
+
+
+def test_schedulers_read_their_own_knobs_from_the_config() -> None:
+    config = SchedulerConfig(alpha=0.25, action_horizon_multipliers={1: 0.5, 4: 1.0})
+    batch_queue = object()
+
+    dynamic = SCHEDULER_REGISTRY["dynamic-action"](config, batch_queue, max_batch_size=2)
+    lookahead = SCHEDULER_REGISTRY["lookahead-actions"](config, batch_queue, max_batch_size=2)
+    greedy = SCHEDULER_REGISTRY["greedy-deadline"](config, batch_queue, max_batch_size=2)
+
+    assert dynamic._alpha == 0.25
+    assert lookahead.action_horizon_multipliers == {1: 0.5, 4: 1.0}
+    assert greedy._config is config
 
 
 def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
@@ -154,8 +168,7 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=None,
         max_batch_size=4,
-        algorithm="max-batch",
-        scheduler_kwargs={"old": True},
+        config=SchedulerConfig(scheduling_algorithm="max-batch"),
         ready_event=object(),  # type: ignore[arg-type]
     )
     original = _SpyScheduler()
@@ -177,7 +190,7 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         [
             ResetRequest(robot_id="robot-old"),
             ResetAll(),
-            Reconfigure(algorithm=replacement_name, scheduler_kwargs={"marker": 7}),
+            Reconfigure(config=SchedulerConfig(scheduling_algorithm=replacement_name, alpha=0.25)),
             request,
             ack,
             WarmupSeed(
@@ -194,10 +207,10 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
     assert len(_ReplacementScheduler.instances) == 1
     replacement = _ReplacementScheduler.instances[0]
     assert worker._current_scheduler is replacement
-    assert worker.algorithm == replacement_name
-    assert worker.scheduler_kwargs == {"marker": 7}
+    assert worker.config.scheduling_algorithm == replacement_name
+    assert worker.config.alpha == 0.25
     assert replacement.max_batch_size == 4
-    assert replacement.marker == 7
+    assert replacement.config.alpha == 0.25
     assert replacement.calls == [
         ("update", "robot-new", 11),
         ("update_ack", "robot-new", 11),
@@ -230,8 +243,7 @@ def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.Monk
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=None,
         max_batch_size=2,
-        algorithm="max-batch",
-        scheduler_kwargs={"original": True},
+        config=SchedulerConfig(scheduling_algorithm="max-batch"),
         ready_event=object(),  # type: ignore[arg-type]
     )
     original = _SpyScheduler()
@@ -240,12 +252,11 @@ def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.Monk
     worker._result_sock = _MessageSocket()
 
     worker._handle_reconfigure(
-        Reconfigure(algorithm=replacement_name, scheduler_kwargs={"unused": True})
+        Reconfigure(config=SchedulerConfig(scheduling_algorithm=replacement_name))
     )
 
     assert worker._current_scheduler is original
-    assert worker.algorithm == "max-batch"
-    assert worker.scheduler_kwargs == {"original": True}
+    assert worker.config.scheduling_algorithm == "max-batch"
 
 
 def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
@@ -267,8 +278,7 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=None,
         max_batch_size=2,
-        algorithm="max-batch",
-        scheduler_kwargs=None,
+        config=SchedulerConfig(scheduling_algorithm="max-batch"),
         ready_event=object(),  # type: ignore[arg-type]
     )
 
@@ -288,8 +298,10 @@ def test_worker_tick_processes_engine_then_server_then_schedules(
             events.append(("seed", batch_size, latency))
 
     class _LoopScheduler:
-        def __init__(self, batch_queue: object, max_batch_size: int) -> None:
-            del batch_queue, max_batch_size
+        def __init__(
+            self, config: SchedulerConfig, batch_queue: object, max_batch_size: int
+        ) -> None:
+            del config, batch_queue, max_batch_size
             self.latency_tracker = _LoopLatencyTracker()
             self._drain_fn = None
 
@@ -344,8 +356,7 @@ def test_worker_tick_processes_engine_then_server_then_schedules(
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=_MetricsQueue(),  # type: ignore[arg-type]
         max_batch_size=2,
-        algorithm=algorithm,
-        scheduler_kwargs=None,
+        config=SchedulerConfig(scheduling_algorithm=algorithm),
         ready_event=_ReadyEvent(),  # type: ignore[arg-type]
     )
     monkeypatch.setattr(worker, "_recv_batch_profile", lambda socket: {1: 0.01, 2: 0.02})

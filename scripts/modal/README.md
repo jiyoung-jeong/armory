@@ -88,8 +88,8 @@ artifacts under `--output-dir`, then prints the `plot_sweep.py` command.
 
 `gen_configs.py` collapses variants a scheduler would ignore — `--alphas 0 0.5 1`
 yields three `dynamic-action` configs but only one `greedy-deadline`, because
-`SchedulerConfig.to_scheduler_kwargs` says `alpha` never reaches it. That is why
-the sweeper can stay a dumb product.
+`gen_configs.SCHEDULER_AXES` says `alpha` never reaches it. That is why the
+sweeper can stay a dumb product.
 
 ### Config schemas
 
