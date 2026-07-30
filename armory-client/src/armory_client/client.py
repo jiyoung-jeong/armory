@@ -38,11 +38,6 @@ def _parse_ws_url(host: str, port: int | None) -> str:
 
 
 class BidirectionalWebsocket:
-    """Implements the Policy interface by communicating with a server over websocket.
-
-    See WebsocketPolicyServer for a corresponding server implementation.
-    """
-
     def __init__(
         self,
         robot_id: str,
