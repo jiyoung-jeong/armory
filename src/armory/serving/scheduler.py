@@ -18,7 +18,7 @@ from armory.scheduling.baselines import (
 )
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
-from armory.serving.protocol import SchedulerConfig
+from armory.serving.config import ServerConfig
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -57,8 +57,7 @@ class SchedulerWorker:
         result_ep: str,
         batch_queue: mp.Queue,
         scheduler_metrics_queue: mp.Queue | None,
-        max_batch_size: int,
-        config: SchedulerConfig,
+        config: ServerConfig,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
     ) -> None:
@@ -66,7 +65,6 @@ class SchedulerWorker:
         self.result_ep = result_ep
         self.batch_queue = batch_queue
         self.scheduler_metrics_queue = scheduler_metrics_queue
-        self.max_batch_size = max_batch_size
         self.config = config
         self.ready_event = ready_event
         self.log_queue = log_queue
@@ -80,9 +78,9 @@ class SchedulerWorker:
 
         logger.info("Scheduler starting (%s)", self.config)
 
-        if self.config.scheduling_algorithm not in SCHEDULER_REGISTRY:
+        if self.config.scheduler.scheduling_algorithm not in SCHEDULER_REGISTRY:
             raise ValueError(
-                f"Unknown scheduling algorithm {self.config.scheduling_algorithm!r}. "
+                f"Unknown scheduling algorithm {self.config.scheduler.scheduling_algorithm!r}. "
                 f"Available: {sorted(SCHEDULER_REGISTRY)}"
             )
 
@@ -204,18 +202,18 @@ class SchedulerWorker:
         # mid-search still drains into the active instance.
         return lambda: self._process_engine_messages(self._current_scheduler, self._result_sock)
 
-    def _build_scheduler(self, config: SchedulerConfig) -> RequestScheduler:
-        cls = SCHEDULER_REGISTRY[config.scheduling_algorithm]
-        scheduler = cls(config, self.batch_queue, max_batch_size=self.max_batch_size)
+    def _build_scheduler(self, config: ServerConfig) -> RequestScheduler:
+        cls = SCHEDULER_REGISTRY[config.scheduler.scheduling_algorithm]
+        scheduler = cls(config.scheduler, self.batch_queue, max_batch_size=config.max_batch_size)
         scheduler._drain_fn = self._make_drain_fn()
         return scheduler
 
     def _handle_reconfigure(self, msg: Reconfigure) -> None:
-        if msg.config.scheduling_algorithm not in SCHEDULER_REGISTRY:
+        if msg.config.scheduler.scheduling_algorithm not in SCHEDULER_REGISTRY:
             # WS main validates before publishing; this branch is defence-in-depth.
             logger.error(
                 "Reconfigure ignored: unknown algorithm %r (available: %s)",
-                msg.config.scheduling_algorithm,
+                msg.config.scheduler.scheduling_algorithm,
                 sorted(SCHEDULER_REGISTRY),
             )
             return

@@ -12,10 +12,12 @@ import zmq
 
 from armory.backends.types import PolicyFactory, PolicyResult, ServingPolicy
 from armory.scheduling.latency import EMALatencyTracker
+from armory.serving.config import ServerConfig
 from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
+    Reconfigure,
     RequestBatch,
     ResetAll,
     ResponseBatch,
@@ -46,7 +48,7 @@ class GpuWorker:
     def __init__(
         self,
         policy_factory: PolicyFactory,
-        max_batch_size: int,
+        config: ServerConfig,
         slots: RobotSlots,
         batch_queue: mp.Queue,
         server_out_ep: str,
@@ -55,7 +57,7 @@ class GpuWorker:
         log_queue: mp.Queue | None = None,
     ) -> None:
         self.policy_factory = policy_factory
-        self.max_batch_size = max_batch_size
+        self.config = config
         self.slots = slots
         self.batch_queue = batch_queue
         self.server_out_ep = server_out_ep
@@ -73,7 +75,7 @@ class GpuWorker:
         logger.info("GPU worker starting")
 
         policy = self.policy_factory()
-        policy.warmup(self.max_batch_size)
+        policy.warmup(self.config.max_batch_size)
 
         ctx = zmq.Context()
 
@@ -208,10 +210,10 @@ class GpuWorker:
         )
 
     def _profile_and_send(self, policy: ServingPolicy, notify_sock: zmq.Socket) -> None:
-        logger.info("Profiling batch latency for sizes 1..%d", self.max_batch_size)
+        logger.info("Profiling batch latency for sizes 1..%d", self.config.max_batch_size)
         profile: dict[int, float] = {}
         request = policy.make_infer_request()
-        for batch_size in range(1, self.max_batch_size + 1):
+        for batch_size in range(1, self.config.max_batch_size + 1):
             latencies = []
             for _ in range(PROFILE_ITERATIONS):
                 start = time.perf_counter()
@@ -236,6 +238,9 @@ class GpuWorker:
                 self._last_served_action_index.clear()
                 self._prev_actions.clear()
                 logger.info("Received ResetAll: cleared engine RTC state (latency preserved)")
+            elif isinstance(msg, Reconfigure):
+                self.config = msg.config
+                logger.info("Received Reconfigure: %s", msg.config)
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
                     msg.robot_id, msg.arrival_timestamp, msg.request_timestamp

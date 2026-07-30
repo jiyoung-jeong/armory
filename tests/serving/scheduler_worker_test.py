@@ -6,6 +6,7 @@ import pytest
 
 import armory.serving.scheduler as scheduler_module
 from armory.scheduling.base import RequestScheduler
+from armory.serving.config import ServerConfig
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType
 from armory.serving.scheduler import SCHEDULER_REGISTRY, SchedulerWorker
@@ -167,8 +168,10 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=None,
-        max_batch_size=4,
-        config=SchedulerConfig(scheduling_algorithm="max-batch"),
+        config=ServerConfig(
+            max_batch_size=4,
+            scheduler=SchedulerConfig(scheduling_algorithm="max-batch"),
+        ),
         ready_event=object(),  # type: ignore[arg-type]
     )
     original = _SpyScheduler()
@@ -190,7 +193,12 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
         [
             ResetRequest(robot_id="robot-old"),
             ResetAll(),
-            Reconfigure(config=SchedulerConfig(scheduling_algorithm=replacement_name, alpha=0.25)),
+            Reconfigure(
+                config=ServerConfig(
+                    max_batch_size=4,
+                    scheduler=SchedulerConfig(scheduling_algorithm=replacement_name, alpha=0.25),
+                )
+            ),
             request,
             ack,
             WarmupSeed(
@@ -207,8 +215,8 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
     assert len(_ReplacementScheduler.instances) == 1
     replacement = _ReplacementScheduler.instances[0]
     assert worker._current_scheduler is replacement
-    assert worker.config.scheduling_algorithm == replacement_name
-    assert worker.config.alpha == 0.25
+    assert worker.config.scheduler.scheduling_algorithm == replacement_name
+    assert worker.config.scheduler.alpha == 0.25
     assert replacement.max_batch_size == 4
     assert replacement.config.alpha == 0.25
     assert replacement.calls == [
@@ -242,8 +250,10 @@ def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.Monk
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=None,
-        max_batch_size=2,
-        config=SchedulerConfig(scheduling_algorithm="max-batch"),
+        config=ServerConfig(
+            max_batch_size=2,
+            scheduler=SchedulerConfig(scheduling_algorithm="max-batch"),
+        ),
         ready_event=object(),  # type: ignore[arg-type]
     )
     original = _SpyScheduler()
@@ -252,11 +262,16 @@ def test_failed_reconfigure_keeps_the_current_scheduler(monkeypatch: pytest.Monk
     worker._result_sock = _MessageSocket()
 
     worker._handle_reconfigure(
-        Reconfigure(config=SchedulerConfig(scheduling_algorithm=replacement_name))
+        Reconfigure(
+            config=ServerConfig(
+                max_batch_size=2,
+                scheduler=SchedulerConfig(scheduling_algorithm=replacement_name),
+            )
+        )
     )
 
     assert worker._current_scheduler is original
-    assert worker.config.scheduling_algorithm == "max-batch"
+    assert worker.config.scheduler.scheduling_algorithm == "max-batch"
 
 
 def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
@@ -277,8 +292,10 @@ def test_engine_completion_messages_are_fully_drained_in_fifo_order() -> None:
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=None,
-        max_batch_size=2,
-        config=SchedulerConfig(scheduling_algorithm="max-batch"),
+        config=ServerConfig(
+            max_batch_size=2,
+            scheduler=SchedulerConfig(scheduling_algorithm="max-batch"),
+        ),
         ready_event=object(),  # type: ignore[arg-type]
     )
 
@@ -355,8 +372,10 @@ def test_worker_tick_processes_engine_then_server_then_schedules(
         result_ep="results",
         batch_queue=object(),  # type: ignore[arg-type]
         scheduler_metrics_queue=_MetricsQueue(),  # type: ignore[arg-type]
-        max_batch_size=2,
-        config=SchedulerConfig(scheduling_algorithm=algorithm),
+        config=ServerConfig(
+            max_batch_size=2,
+            scheduler=SchedulerConfig(scheduling_algorithm=algorithm),
+        ),
         ready_event=_ReadyEvent(),  # type: ignore[arg-type]
     )
     monkeypatch.setattr(worker, "_recv_batch_profile", lambda socket: {1: 0.01, 2: 0.02})

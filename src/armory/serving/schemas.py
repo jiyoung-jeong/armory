@@ -5,7 +5,7 @@ from typing import Any, NamedTuple, TypeAlias
 
 import numpy as np
 
-from armory.serving.protocol import SchedulerConfig
+from armory.serving.config import ServerConfig
 from armory.serving.rtc import InferType, RTCParams
 from armory_client.messages import InferResponse, ResponseAck
 
@@ -90,16 +90,20 @@ class ResetAll:
 
 @dataclass(frozen=True, slots=True)
 class Reconfigure:
-    """Server-internal: rebuild the scheduler in-place from a new SchedulerConfig.
+    """Server-internal: adopt a new ServerConfig in both subprocesses.
 
-    Published from the WS main process on POST /reconfigure. The scheduler
-    subprocess constructs a fresh ``RequestScheduler`` from
-    ``SCHEDULER_REGISTRY[config.scheduling_algorithm]`` and swaps it in. The
-    previously-seeded batch latency profile is re-applied to the new instance;
-    per-robot latency state is left to be re-seeded by the next warmup phase.
+    Published from the WS main process on POST /reconfigure; the scheduler and
+    the GPU worker both subscribe, and each applies the part it owns. The
+    scheduler constructs a fresh ``RequestScheduler`` from
+    ``SCHEDULER_REGISTRY[config.scheduler.scheduling_algorithm]`` and swaps it
+    in. The previously-seeded batch latency profile is re-applied to the new
+    instance; per-robot latency state is left to be re-seeded by the next
+    warmup phase. The GPU worker records the config; its own knobs
+    (``max_batch_size``, ``engine.num_steps``) are consumed at warmup and
+    policy-construction time, so a change to them needs a restart.
     """
 
-    config: SchedulerConfig
+    config: ServerConfig
 
 
 # TODO: this is the server-side version of ActionChunk that I think is used
