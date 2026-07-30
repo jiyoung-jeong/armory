@@ -1,4 +1,4 @@
-"""Submit Slurm scheduler sweeps using the current serve.py/run-libero JSON flow."""
+"""Submit Slurm scheduler sweeps using the current serve.py/run.py JSON flow."""
 
 from __future__ import annotations
 
@@ -268,7 +268,7 @@ def _make_cases(
                         for alpha in alphas:
                             # scheduling_algorithm used to live on the server
                             # config, but it is now hot-swappable via POST
-                            # /reconfigure (issued by run_libero on startup).
+                            # /reconfigure (issued by run.py on startup).
                             # Keeping it server-side too would force the
                             # interactive sweep driver to restart the server for
                             # every case that varies it. ``max_batch_size`` and

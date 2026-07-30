@@ -102,9 +102,6 @@ dev = [
     "ruff>=0.15",
 ]
 
-[project.scripts]
-run-libero = "evaluation.sims.libero.run:cli"
-
 [dependency-groups]
 dev = [
     "modal>=1.4",
