@@ -12,8 +12,7 @@
 import json
 import logging
 import pathlib
-from collections.abc import Callable
-from dataclasses import asdict
+from collections.abc import Callable, Iterator
 
 import matplotlib
 import matplotlib.colors as mcolors
@@ -54,7 +53,7 @@ def load_episodes(output_path: pathlib.Path) -> pd.DataFrame:
         return pd.DataFrame()
 
     results: list[Result] = [Result.from_json(f) for f in metadata_files]
-    return pd.DataFrame([asdict(result) for result in results])
+    return pd.DataFrame([result.model_dump() for result in results])
 
 
 def completed_episodes(df: pd.DataFrame) -> pd.DataFrame:
@@ -66,46 +65,38 @@ def completed_episodes(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df["truncated"].astype(bool)]
 
 
+def iter_steps(output_path: pathlib.Path) -> Iterator[tuple[pathlib.Path, pd.DataFrame]]:
+    """Yield each episode directory under ``output_path`` with its per-step table.
+
+    Episodes are saved with at least one step, so every table has rows.
+    """
+    for steps_file in sorted(output_path.glob("**/steps.parquet")):
+        yield steps_file.parent, pd.read_parquet(steps_file, engine="pyarrow")
+
+
 def load_actions_left(
     output_path: pathlib.Path,
 ) -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
-    """Load actions_left.npy files grouped by robot_idx, with per-step timestamps.
+    """Load per-episode ``actions_left`` traces grouped by robot_idx.
 
     Returns:
-        ``{robot_idx_str: [(timestamps, episode_array), ...]}`` sorted by episode
-        order. ``timestamps`` is a 1-D float array, one wall-clock value per step
-        from ``timestamps.csv`` (matching ``len(episode_array)``). When the
-        timestamps file is missing or shorter than the array, falls back to a
-        synthetic series starting at 0 with 1-step spacing — callers that align
-        episodes onto a wall-clock grid will produce a degenerate but
-        non-crashing result in that case.
+        ``{robot_idx_str: [(timestamps, actions_left), ...]}`` sorted by episode
+        order, both arrays 1-D and the same length. Agents that keep no action
+        queue (the mock smoke test) contribute empty arrays.
     """
-    files = sorted(output_path.glob("**/actions_left.npy"))
     by_robot: dict[str, list[tuple[int, np.ndarray, np.ndarray]]] = {}
-    for f in files:
-        # path: <out_dir>/<robot_idx>/<ep_idx>_<suite>_<task>_<result>/actions_left.npy
-        parts = f.parts
-        robot_idx = parts[-3]  # e.g. "0"
-        ep_prefix = parts[-2]  # e.g. "0_libero_10_0_success"
-        ep_idx = int(ep_prefix.split("_")[0])
-        arr = np.load(f)
-        ts_file = f.parent / "timestamps.csv"
-        if ts_file.exists():
-            ts = pd.read_csv(ts_file)["timestamp"].to_numpy(dtype=float)
-            if len(ts) < len(arr):
-                # Pad with linear extrapolation at the trailing cadence so we
-                # never index past the array.
-                if len(ts) >= 2:
-                    dt = float(np.median(np.diff(ts)))
-                else:
-                    dt = 0.0
-                pad = ts[-1] + dt * np.arange(1, len(arr) - len(ts) + 1)
-                ts = np.concatenate([ts, pad])
-            elif len(ts) > len(arr):
-                ts = ts[: len(arr)]
-        else:
-            ts = np.arange(len(arr), dtype=float)
-        by_robot.setdefault(robot_idx, []).append((ep_idx, ts, arr))
+    for episode_dir, steps in iter_steps(output_path):
+        # path: <out_dir>/<robot_idx>/<ep_idx>_<suite>_<task>_<result>/
+        robot_idx = episode_dir.parent.name
+        ep_idx = int(episode_dir.name.split("_")[0])
+        traced = steps.dropna(subset=["actions_left"])
+        by_robot.setdefault(robot_idx, []).append(
+            (
+                ep_idx,
+                traced["timestamp"].to_numpy(dtype=float),
+                traced["actions_left"].to_numpy(dtype=int),
+            )
+        )
 
     return {
         robot: [(ts, arr) for _, ts, arr in sorted(eps, key=lambda x: x[0])]
@@ -326,23 +317,16 @@ def compute_fairness_metrics(output_path: pathlib.Path) -> dict | None:
 
 
 def load_experiment_duration(output_path: pathlib.Path) -> float | None:
-    """Compute total experiment wall-clock duration from timestamps.csv files.
+    """Compute total experiment wall-clock duration from per-step timestamps.
 
     Returns the span from the earliest first-step timestamp to the latest
     last-step timestamp across all episodes, or None if no timestamps exist.
     """
-    ts_files = list(output_path.glob("**/timestamps.csv"))
-    if not ts_files:
-        return None
-
     t_min = float("inf")
     t_max = float("-inf")
-    for f in ts_files:
-        df = pd.read_csv(f, usecols=["timestamp"])
-        if df.empty:
-            continue
-        t_min = min(t_min, float(df["timestamp"].iloc[0]))
-        t_max = max(t_max, float(df["timestamp"].iloc[-1]))
+    for _, steps in iter_steps(output_path):
+        t_min = min(t_min, float(steps["timestamp"].iloc[0]))
+        t_max = max(t_max, float(steps["timestamp"].iloc[-1]))
 
     if t_min == float("inf"):
         return None
@@ -399,11 +383,11 @@ def _server_clock_t0(output_path: pathlib.Path) -> float | None:
 def _server_to_perf_offset(output_path: pathlib.Path) -> float | None:
     """Return ``time.time() - time.perf_counter()`` offset, derived from saved data.
 
-    server_metrics_history.json holds time.time() values; timestamps.csv holds
-    time.perf_counter() values. Within the libero sim driver these clocks live
-    in the same process so the offset is approximately constant. We match the
-    earliest first-request timestamp on the server side with the earliest first
-    perf_counter from timestamps.csv to estimate it.
+    server_metrics_history.json holds time.time() values; the per-step table
+    holds time.perf_counter() values. Within the libero sim driver these clocks
+    live in the same process so the offset is approximately constant. We match
+    the earliest first-request timestamp on the server side with the earliest
+    first per-step timestamp to estimate it.
     """
     history_path = output_path / "server_metrics_history.json"
     if not history_path.exists():
@@ -423,11 +407,8 @@ def _server_to_perf_offset(output_path: pathlib.Path) -> float | None:
         return None
 
     earliest_perf: float | None = None
-    for ts_file in output_path.glob("**/timestamps.csv"):
-        df = pd.read_csv(ts_file, usecols=["timestamp"], nrows=1)
-        if df.empty:
-            continue
-        first = float(df["timestamp"].iloc[0])
+    for _, steps in iter_steps(output_path):
+        first = float(steps["timestamp"].iloc[0])
         if earliest_perf is None or first < earliest_perf:
             earliest_perf = first
     if earliest_perf is None:
@@ -436,28 +417,21 @@ def _server_to_perf_offset(output_path: pathlib.Path) -> float | None:
 
 
 def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
-    """Load per-episode no-action metrics from saved cost histories.
+    """Load per-episode no-action metrics from the per-step tables.
 
-    Uses obs cost: A NaN in cost_history means the runtime executed a null action for that
-    control step.
+    A step with no ``action_chunk_index`` is one where the runtime executed a
+    null action, i.e. the robot had nothing fresh to run.
     """
     ec = _load_experiment_config(output_path)
     assert ec, f"experiment_args.json not found or empty in {output_path}"
     control_hz = _load_control_hz(output_path)
 
     rows = []
-    for cost_history_file in sorted(output_path.glob("**/cost_history.npy")):
-        episode_dir = cost_history_file.parent
-        metadata_file = episode_dir / "metadata.json"
-        if not metadata_file.exists():
-            print(f"Warning: metadata.json not found in {episode_dir}, skipping")
-            continue
-
-        result = Result.from_json(metadata_file)
-        costs = np.load(cost_history_file)
-        nan_mask = np.isnan(costs)
-        starvation_steps = int(nan_mask.sum())
-        total_steps = int(costs.shape[0])
+    for episode_dir, steps in iter_steps(output_path):
+        result = Result.from_json(episode_dir / "metadata.json")
+        starved_mask = steps["action_chunk_index"].isna().to_numpy()
+        starvation_steps = int(starved_mask.sum())
+        total_steps = int(starved_mask.shape[0])
         if total_steps == 0:
             # A fleet-level deadline can expire after an episode directory is
             # created but before that robot gets its first control step.
@@ -465,12 +439,12 @@ def load_planner_starvation_metrics(output_path: pathlib.Path) -> pd.DataFrame:
             continue
         assert control_hz is not None and control_hz > 0
 
-        # Starvation excluding leading NaNs (before the robot's first action).
-        non_nan_idx = np.flatnonzero(~nan_mask)
-        if non_nan_idx.size > 0:
-            first = int(non_nan_idx[0])
+        # Starvation excluding the leading run before the robot's first action.
+        served_idx = np.flatnonzero(~starved_mask)
+        if served_idx.size > 0:
+            first = int(served_idx[0])
             post_first_observed = total_steps - first
-            post_first_starvation = int(nan_mask[first:].sum())
+            post_first_starvation = int(starved_mask[first:].sum())
         else:
             post_first_observed = 0
             post_first_starvation = 0
@@ -769,12 +743,12 @@ def plot_task_breakdown(
 def generate_client_step_intervals_plot(output_path: pathlib.Path) -> None:
     """Plot saved client control-loop intervals, with episodes concatenated per robot."""
     intervals_by_robot: dict[str, list[np.ndarray]] = {}
-    for timestamp_file in sorted(output_path.glob("**/timestamps.csv")):
-        timestamps = pd.read_csv(timestamp_file)["timestamp"].to_numpy(dtype=float)
-        if len(timestamps) < 2:
+    for episode_dir, steps in iter_steps(output_path):
+        if len(steps) < 2:
             continue
-        # Output layout is <output>/<robot_idx>/<episode>/timestamps.csv.
-        robot = timestamp_file.parent.parent.name
+        timestamps = steps["timestamp"].to_numpy(dtype=float)
+        # Output layout is <output>/<robot_idx>/<episode>/.
+        robot = episode_dir.parent.name
         intervals_by_robot.setdefault(robot, []).append(np.diff(timestamps) * 1000.0)
 
     if not intervals_by_robot:
@@ -980,7 +954,7 @@ def generate_actions_left_heatmap(
         output_path, control_hz
     )
     if matrix.size == 0:
-        logger.warning("No actions_left.npy data found")
+        logger.warning("No actions_left data found")
         return
 
     n_robots = len(robots)
@@ -1310,7 +1284,7 @@ def generate_starvation_variance_plot(
     """Plot cumulative starvation rate per robot and its cross-robot variance."""
     series = compute_starvation_variance_series(output_path, control_hz)
     if series is None:
-        logger.warning("No actions_left.npy data found for starvation variance plot")
+        logger.warning("No actions_left data found for starvation variance plot")
         return
     robots = series["robots"]
     cumulative_rates = series["cumulative_rates"]
@@ -1397,7 +1371,7 @@ def generate_per_robot_starvation_rate_gif(
     """
     series = compute_starvation_variance_series(output_path, control_hz)
     if series is None:
-        logger.warning("No actions_left.npy data found for per-robot starvation GIF")
+        logger.warning("No actions_left data found for per-robot starvation GIF")
         return
     import matplotlib.animation as animation  # noqa: PLC0415
 
@@ -1599,7 +1573,7 @@ def generate_batch_size_plot(output_path: pathlib.Path) -> None:
     with open(history_path) as f:
         data = json.load(f)
 
-    # FIXME: should use JSONDataclass loading
+    # FIXME: should use JSONBaseModel loading
     batch_sizes = [_server_batch_fields(batch)[5] for batch in data["batches"]]
 
     fig, ax = plt.subplots(figsize=(8, 5))

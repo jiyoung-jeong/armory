@@ -1,7 +1,6 @@
-import csv
 import json
 import pathlib
-from dataclasses import asdict, dataclass, fields
+from dataclasses import MISSING, dataclass, fields
 from enum import Enum
 from typing import Any, Self, TypeVar
 
@@ -11,61 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from evaluation.envs.config import EnvironmentConfig, MockConfig
 
-T = TypeVar("T", bound="CSVDataclass")
-J = TypeVar("J", bound="JSONDataclass")
+J = TypeVar("J", bound="JSONBaseModel")
 P = TypeVar("P", bound="ParquetDataclass")
-
-
-class CSVDataclass:
-    """Mixin that adds CSV serialization to dataclasses."""
-
-    @classmethod
-    def to_csv(cls: type[T], instances: list[T], filepath: pathlib.Path) -> None:
-        if not instances:
-            return
-        with open(filepath, "w", newline="") as f:
-            allowed_fields = [f for f in fields(cls) if f.type in (int, float, bool, str)]
-            fieldnames = [f.name for f in allowed_fields]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            for instance in instances:
-                writer.writerow(
-                    {field.name: getattr(instance, field.name) for field in allowed_fields}
-                )
-
-    @classmethod
-    def from_csv(cls: type[T], filepath: pathlib.Path) -> list[T]:
-        instances = []
-        allowed_fields = [f for f in fields(cls) if f.type in (int, float, bool, str)]
-        with open(filepath) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                kwargs = {}
-                for field in allowed_fields:
-                    value = row[field.name]
-                    if field.type in (int, "int"):
-                        kwargs[field.name] = int(value)
-                    elif field.type in (float, "float"):
-                        kwargs[field.name] = float(value)
-                    elif field.type in (bool, "bool"):
-                        kwargs[field.name] = value.lower() in ("true", "1", "yes")
-                    else:
-                        kwargs[field.name] = value
-                instances.append(cls(**kwargs))
-        return instances
-
-
-class JSONDataclass:
-    """Mixin that adds JSON serialization to dataclasses."""
-
-    def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
-        with open(filepath, "w") as f:
-            json.dump(asdict(self), f, indent=indent)
-
-    @classmethod
-    def from_json(cls: type[J], filepath: pathlib.Path) -> J:
-        with open(filepath) as f:
-            return cls(**json.load(f))
 
 
 class JSONBaseModel(BaseModel):
@@ -107,9 +53,9 @@ class ParquetDataclass:
             kwargs = {}
             for f in fields(cls):
                 if f.name not in row:
-                    if f.default is not None:
+                    if f.default is not MISSING:
                         kwargs[f.name] = f.default
-                    elif f.default_factory is not None:
+                    elif f.default_factory is not MISSING:
                         kwargs[f.name] = f.default_factory()
                     continue
                 value = row[f.name]
@@ -127,16 +73,16 @@ class ParquetDataclass:
         return instances
 
 
-# TODO: Turn this into a ParqueDataclass and save additional per-step data like actions_left along with. we can also delete CSVDataclass then.
 @dataclass(frozen=True)
-class Timestamp(CSVDataclass):
+class StepRecord(ParquetDataclass):
+    """One control step of an episode, the row type of ``steps.parquet``."""
+
     timestamp: float
     env_step: int
     action_chunk_index: int | None
     action_index: int | None
-
-
-# TODO: discuss with me, why do have both JSONDataclass and JSONBaseModel?
+    # None for agents that keep no action queue, e.g. the mock agent.
+    actions_left: int | None = None
 
 
 class EnvironmentType(str, Enum):

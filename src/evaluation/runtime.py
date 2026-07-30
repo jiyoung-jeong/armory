@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import time
@@ -12,7 +13,7 @@ import numpy as np
 from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent
 from evaluation.envs.base import Environment
-from evaluation.types import Timestamp
+from evaluation.types import StepRecord
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +34,31 @@ def _has_time_for_step(deadline: float, step_time: float) -> bool:
 class Rollout:
     """The product of running one episode: everything needed to log/save it.
 
-    Per-step data is captured live (``observations`` and ``timestamps``); the
+    Per-step data is captured live (``observations`` and ``steps``); the
     outcome is read from the env at episode end. Agent diagnostics are captured
     at the same boundary, before the next episode's reset clears them.
     """
 
     observations: tuple[Observation, ...]
-    timestamps: tuple[Timestamp, ...]
+    steps: tuple[StepRecord, ...]
     success: bool
     truncated: bool
     initial_state: np.ndarray | None
     action_chunks: tuple[ActionChunk, ...]
-    actions_left: tuple[int, ...]
+
+
+def _with_actions_left(
+    steps: list[StepRecord], actions_left: tuple[int, ...]
+) -> tuple[StepRecord, ...]:
+    """Fold the agent's queue-depth history into the per-step records.
+
+    The agent records one entry per ``get_action`` call, so it can be longer
+    than the steps recorded here; steps with no entry keep ``None``.
+    """
+    return tuple(
+        dataclasses.replace(step, actions_left=actions_left[i]) if i < len(actions_left) else step
+        for i, step in enumerate(steps)
+    )
 
 
 # TODO: episode sink pattern is weird, just return rollout and send function call to ThreadPoolExecutor
@@ -106,7 +120,7 @@ class Runtime:
             record a step — the caller should stop looping.
         """
         observations: list[Observation] = []
-        timestamps: list[Timestamp] = []
+        steps: list[StepRecord] = []
 
         last_step_time = time.perf_counter()
 
@@ -118,8 +132,8 @@ class Runtime:
             if time.monotonic() > deadline:
                 break
             observations.append(observation)
-            timestamps.append(
-                Timestamp(
+            steps.append(
+                StepRecord(
                     timestamp=step_timestamp,
                     env_step=observation.step,
                     action_chunk_index=action.action_chunk_index,
@@ -128,7 +142,7 @@ class Runtime:
             )
             last_step_time = self._pace(last_step_time, self._step_time)
 
-        if not timestamps:
+        if not steps:
             return None
 
         episode_data = self._agent.snapshot_episode_data()
@@ -136,14 +150,11 @@ class Runtime:
         logger.info("Episode truncated by deadline." if truncated else "Episode completed.")
         rollout = Rollout(
             observations=tuple(observations),
-            timestamps=tuple(timestamps),
+            steps=_with_actions_left(steps, tuple(episode_data.actions_left)),
             success=self._environment.current_success,
             truncated=truncated,
             initial_state=self._environment.current_initial_state,
             action_chunks=tuple(episode_data.action_chunks),
-            # The agent records one entry per get_action call, including a step
-            # dropped above for landing past the deadline.
-            actions_left=tuple(episode_data.actions_left[: len(timestamps)]),
         )
         if self._episode_sink is not None:
             assert self._save_executor is not None
