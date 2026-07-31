@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 app = modal.App("armory-serve")
 
 GPU = "l40s"
-REGION = None
+REGION = "us"
 ENV_MODE = "LIBERO"
 MAX_BATCH_SIZE = 5
 PORT = 8080
@@ -39,7 +39,7 @@ image = gpu_server_image
     gpu=GPU,
     image=image,
     volumes={CHECKPOINT_VOLUME_PATH: checkpoint_volume},
-    region=[REGION],
+    region=REGION,
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * 60,  # seconds, time to wait before scaling down

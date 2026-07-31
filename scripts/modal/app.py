@@ -3,9 +3,11 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import os
 import pathlib
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -29,12 +31,20 @@ CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
 SERVER_GPU = "L40S"
 LIBERO_GPU = "T4"
+REGION = "us"
 TIMEOUT_S = 2 * 60 * 60
+POOL_TIMEOUT_S = 12 * 60 * 60
 # Safety net on the client subprocess; the container `timeout` is the real cap.
 CLIENT_TIMEOUT_S = 90 * 60
+# The CaseRunner is already executing while its child L40S call is queued, so
+# this application-level deadline (unlike Modal's function timeout) includes
+# GPU scheduling delay. Keep policy startup as a separate, shorter phase.
+SERVER_START_TIMEOUT_S = 60 * 60
+SERVER_READY_TIMEOUT_S = 10 * 60
 
-# One CPU per robot process, so a fleet does not contend for the single-robot
-# default. Modal caps a single function at 16 CPUs; larger fleets share those.
+# One CPU per robot process plus a small orchestration/rendering buffer. Modal
+# caps a single function at 16 CPUs; larger fleets share those.
+CLIENT_CPU_BUFFER = 2
 MAX_CLIENT_CPUS = 16
 # A 20-robot LIBERO run used ~44 GiB while holding the 16 GiB single-robot
 # reservation, so ask for 3 GiB per allocated CPU (48 GiB at the cap).
@@ -62,20 +72,37 @@ def _popen_logged(
         shell_cmd = (
             f"{shlex.join(cmd)} 2>&1 | sed -u 's#^#[{tag}] #' | tee {shlex.quote(str(log_path))}"
         )
-        return subprocess.Popen(shell_cmd, shell=True, cwd=str(REMOTE_ROOT))
+        return subprocess.Popen(
+            ["bash", "-o", "pipefail", "-c", shell_cmd],
+            cwd=str(REMOTE_ROOT),
+            start_new_session=True,
+        )
     return subprocess.Popen(
-        cmd, cwd=str(REMOTE_ROOT), stdout=log_path.open("w"), stderr=subprocess.STDOUT
+        cmd,
+        cwd=str(REMOTE_ROOT),
+        stdout=log_path.open("w"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
     )
 
 
 def _terminate(proc: subprocess.Popen | None) -> None:
     if proc is None or proc.poll() is not None:
         return
-    proc.terminate()
+    # scripts.run owns one process per robot. Signal the subprocess's isolated
+    # process group so a timed-out client cannot leave robot connections alive
+    # when the next pooled case calls /prepare.
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
     try:
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         proc.wait(timeout=30)
 
 
@@ -103,6 +130,7 @@ def _prepare(
     src ``utils``/``logging_config`` win over the shadowing scripts/utils.py.
     """
     staging = STAGING_ROOT / name
+    shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     args_path = staging / f"{name}_args.json"
     args_path.write_text(args_json)
@@ -158,13 +186,14 @@ def _run(
     args_json: str,
     run_id: str,
     stream_logs: bool,
-    shutdown: modal.Dict,
+    shutdown: modal.Dict | None,
 ) -> dict[str, Any]:
     """Run the client to completion, summarize its metrics, ship the run dir."""
     directory, staging, argv = _prepare(
         run_dir, name="client", module="scripts.run", args_json=args_json
     )
     result: dict[str, Any] = {"run_id": run_id}
+    proc: subprocess.Popen | None = None
     try:
         proc = _popen_logged(
             argv, log_path=staging / "client.log", tag=f"client/{run_id}", stream_logs=stream_logs
@@ -177,7 +206,11 @@ def _run(
     except Exception as exc:  # noqa: BLE001
         result.update(status="failed", error=repr(exc))
     finally:
-        shutdown[run_id] = True  # always release the server
+        # A timed-out client must not survive into the next pooled case with
+        # the same robot IDs and global scheduler state.
+        _terminate(proc)
+        if shutdown is not None:
+            shutdown[run_id] = True  # release a single-case server
     result["artifact_remote_path"] = _ship(directory, staging)
     return result
 
@@ -187,6 +220,7 @@ def _run(
 # --------------------------------------------------------------------------
 @app.cls(
     image=gpu_server_image,
+    region=REGION,
     timeout=TIMEOUT_S,
     cpu=4,
     memory=16384,
@@ -206,6 +240,7 @@ class GpuServer:
 
 @app.cls(
     image=cpu_mock_image,
+    region=REGION,
     timeout=TIMEOUT_S,
     cpu=2,
     memory=8192,
@@ -223,6 +258,7 @@ class CpuMockServer:
 # (see `_client_worker`); the values here are the single-robot defaults.
 @app.cls(
     image=gpu_libero_client_image,
+    region=REGION,
     timeout=TIMEOUT_S,
     cpu=1,
     memory=MIN_LIBERO_MEMORY_MIB,
@@ -239,6 +275,7 @@ class LiberoClient:
 
 @app.cls(
     image=cpu_mock_image,
+    region=REGION,
     timeout=TIMEOUT_S,
     cpu=1,
     memory=8192,
@@ -276,7 +313,7 @@ MOCK_POLICY = {"action_horizon": 50, "action_dim": 14, "gpu": "l40s"}
 
 
 def _client_worker(mode: Mode, num_robots: int) -> Any:
-    cpus = min(num_robots, MAX_CLIENT_CPUS)
+    cpus = min(num_robots + CLIENT_CPU_BUFFER, MAX_CLIENT_CPUS)
     if mode.client is LiberoClient:
         memory = max(MIN_LIBERO_MEMORY_MIB, cpus * LIBERO_MEMORY_PER_CPU_MIB)
         return mode.client.with_options(cpu=cpus, memory=memory)()
@@ -306,12 +343,18 @@ def _num_robots(client_config: dict) -> int:
     return len(client_config.get("experiment_config", {}).get("robots", [{}]))
 
 
-def _await_server(urls: modal.Dict, run_id: str) -> tuple[str, int]:
+def _await_server(
+    urls: modal.Dict,
+    run_id: str,
+    *,
+    start_timeout_s: float = SERVER_START_TIMEOUT_S,
+    ready_timeout_s: float = SERVER_READY_TIMEOUT_S,
+) -> tuple[str, int]:
     """Block until the server publishes its tunnel and /metadata answers.
 
     Returns ``("", 0)`` if the server posted the poison address after failing.
     """
-    deadline = time.time() + 15 * 60
+    deadline = time.time() + start_timeout_s
     while run_id not in urls:
         if time.time() > deadline:
             raise RuntimeError(f"server never published tunnel for {run_id}")
@@ -319,7 +362,7 @@ def _await_server(urls: modal.Dict, run_id: str) -> tuple[str, int]:
     host, port = urls[run_id]
     if not host:
         return "", 0
-    ready = time.time() + 10 * 60
+    ready = time.time() + ready_timeout_s
     while True:
         try:
             with urllib.request.urlopen(f"http://{host}:{port}/metadata", timeout=5):
@@ -338,6 +381,7 @@ def launch(
     server_config: dict[str, Any],
     client_config: dict[str, Any],
     stream_logs: bool = False,
+    server_start_timeout_s: float = SERVER_START_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Run one case end to end; return the client's result row.
 
@@ -349,10 +393,10 @@ def launch(
     spec = MODES[mode]
     server_config, client_config = copy.deepcopy(server_config), copy.deepcopy(client_config)
     _apply_mode(spec, server_config, client_config, run_dir)
-    client = _client_worker(spec, _num_robots(client_config))
 
     with modal.Dict.ephemeral() as urls, modal.Dict.ephemeral() as shutdown:
         if spec.server is None:
+            client = _client_worker(spec, _num_robots(client_config))
             return client.run.remote(
                 run_dir=run_dir,
                 args_json=json.dumps(client_config),
@@ -372,7 +416,11 @@ def launch(
         )
         print(f"[{run_id}] server spawned; waiting for tunnel + /metadata", flush=True)
         try:
-            host, port = _await_server(urls, run_id)
+            host, port = _await_server(
+                urls,
+                run_id,
+                start_timeout_s=server_start_timeout_s,
+            )
             if not host:
                 return {
                     "run_id": run_id,
@@ -381,6 +429,7 @@ def launch(
                 }
             client_config["host"], client_config["port"] = host, port
             print(f"[{run_id}] server ready at {host}:{port}; launching client", flush=True)
+            client = _client_worker(spec, _num_robots(client_config))
             return client.run.remote(
                 run_dir=run_dir,
                 args_json=json.dumps(client_config),
@@ -399,8 +448,23 @@ def launch(
                 pass
 
 
+def _run_case(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep one failed allocation/startup from aborting an entire mapped sweep."""
+    try:
+        return launch(**payload)
+    except Exception as exc:  # noqa: BLE001
+        run_id = str(payload.get("run_id", ""))
+        print(f"[{run_id}] case failed before producing a result: {exc!r}", flush=True)
+        return {
+            "run_id": run_id,
+            "status": "failed",
+            "error": repr(exc),
+        }
+
+
 @app.cls(
     image=cpu_mock_image,  # cheap: only spawns the server/client and hands off URLs
+    region=REGION,
     timeout=TIMEOUT_S,
     volumes={str(REMOTE_ARTIFACTS_ROOT): artifacts_volume},
 )
@@ -409,4 +473,325 @@ class CaseRunner:
 
     @modal.method()
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return launch(**payload)
+        return _run_case(payload)
+
+
+def server_reuse_key(server_config: dict[str, Any]) -> str:
+    """Canonical key for settings that require a policy-server restart.
+
+    The algorithm and lookahead horizon weights are deliberately absent: the
+    client applies them between cases through the server control plane. This is
+    the same boundary used by the main-branch interactive runner.
+    """
+    config = copy.deepcopy(server_config)
+    config.pop("log_dir", None)
+    scheduler = config.get("scheduler") or {}
+    config["scheduler"] = {"alpha": float(scheduler.get("alpha", 1.0))}
+    return json.dumps(config, sort_keys=True, separators=(",", ":"))
+
+
+def _wait_for_pooled_server(
+    host: str,
+    port: int,
+    proc: subprocess.Popen,
+    *,
+    timeout_s: float,
+) -> None:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if proc.poll() is not None:
+            raise RuntimeError(f"pooled server exited during startup (code={proc.returncode})")
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/metadata", timeout=5):
+                return
+        except Exception as exc:  # noqa: BLE001
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"pooled server /metadata never came up: {exc!r}") from exc
+            time.sleep(5)
+
+
+class _PooledServerSession:
+    """One persistent serve.py process and tunnel inside an L40S lane."""
+
+    def __init__(
+        self,
+        *,
+        argv: list[str],
+        staging: pathlib.Path,
+        port: int,
+        pool_id: str,
+        stream_logs: bool,
+        startup_timeout_s: float,
+    ) -> None:
+        self.argv = argv
+        self.staging = staging
+        self.port = port
+        self.pool_id = pool_id
+        self.stream_logs = stream_logs
+        self.startup_timeout_s = startup_timeout_s
+        self.proc: subprocess.Popen | None = None
+        self._tunnel_context: Any = None
+        self.host = ""
+        self.forwarded_port = 0
+        self.restarts = 0
+
+    def ensure_started(self) -> tuple[str, int]:
+        if self.proc is not None and self.proc.poll() is None and self.host:
+            return self.host, self.forwarded_port
+        self.close()
+        self.restarts += 1
+        log_path = self.staging / f"server_{self.restarts:02d}.log"
+        self.proc = _popen_logged(
+            self.argv,
+            log_path=log_path,
+            tag=f"server-pool/{self.pool_id}",
+            stream_logs=self.stream_logs,
+        )
+        try:
+            self._tunnel_context = modal.forward(self.port, unencrypted=True)
+            tunnel = self._tunnel_context.__enter__()
+            self.host, self.forwarded_port = tunnel.tcp_socket
+            _wait_for_pooled_server(
+                self.host,
+                self.forwarded_port,
+                self.proc,
+                timeout_s=self.startup_timeout_s,
+            )
+        except Exception:
+            self.close()
+            raise
+        print(
+            f"[server-pool/{self.pool_id}] ready at {self.host}:{self.forwarded_port}",
+            flush=True,
+        )
+        return self.host, self.forwarded_port
+
+    def close(self) -> None:
+        _terminate(self.proc)
+        self.proc = None
+        if self._tunnel_context is not None:
+            try:
+                self._tunnel_context.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+            self._tunnel_context = None
+        self.host = ""
+        self.forwarded_port = 0
+
+
+def _run_pooled_case(
+    payload: dict[str, Any], *, host: str, port: int, pool_id: str, reused: bool
+) -> dict[str, Any]:
+    run_id = str(payload["run_id"])
+    try:
+        spec = MODES["gpu"]
+        client_config = copy.deepcopy(payload["client_config"])
+        _apply_mode(
+            spec, copy.deepcopy(payload["server_config"]), client_config, payload["run_dir"]
+        )
+        client_config["host"], client_config["port"] = host, port
+        print(f"[{run_id}] using server pool {pool_id}; launching client", flush=True)
+        client = _client_worker(spec, _num_robots(client_config))
+        result = client.run.remote(
+            run_dir=payload["run_dir"],
+            args_json=json.dumps(client_config),
+            run_id=run_id,
+            stream_logs=bool(payload.get("stream_logs", False)),
+            shutdown=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        result = {"run_id": run_id, "status": "failed", "error": repr(exc)}
+    result.update(server_pool_id=pool_id, server_reused=reused)
+    return result
+
+
+def _load_pool_progress(path: pathlib.Path, run_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Recover successful cases if Modal replays a preempted shard input."""
+    if not path.exists():
+        return {}
+    try:
+        rows = json.loads(path.read_text())
+        return {
+            row["run_id"]: row
+            for row in rows
+            if isinstance(row, dict) and row.get("run_id") in run_ids and row.get("status") == "ok"
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"Ignoring unreadable server-pool checkpoint {path}: {exc!r}", flush=True)
+        return {}
+
+
+def _save_pool_progress(
+    path: pathlib.Path,
+    cases: list[dict[str, Any]],
+    results: dict[str, dict[str, Any]],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [results[case["run_id"]] for case in cases if case["run_id"] in results]
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(rows, indent=2))
+    temporary.replace(path)
+    artifacts_volume.commit()
+
+
+def _run_pooled_shard(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run a cold-compatible sequence of cases on one persistent L40S."""
+    cases: list[dict[str, Any]] = payload["cases"]
+    if not cases:
+        return []
+    pool_id = str(payload["pool_id"])
+    expected_key = server_reuse_key(cases[0]["server_config"])
+    if payload.get("server_reuse_key") != expected_key:
+        raise ValueError(f"server pool shard {pool_id} has an invalid reuse key")
+    if any(server_reuse_key(case["server_config"]) != expected_key for case in cases[1:]):
+        raise ValueError(f"server pool shard {pool_id} mixes restart-required configurations")
+
+    server_config = copy.deepcopy(cases[0]["server_config"])
+    pool_run_dir = str(payload["pool_run_dir"])
+    server_config["log_dir"] = str(pathlib.Path(pool_run_dir) / "internal_logs")
+    directory, staging, argv = _prepare(
+        pool_run_dir,
+        name=f"server_pool_{pool_id}",
+        module="scripts.serve",
+        args_json=json.dumps(server_config),
+    )
+    (staging / "pool_manifest.json").write_text(
+        json.dumps(
+            {
+                "pool_id": pool_id,
+                "run_ids": [case["run_id"] for case in cases],
+                "server_reuse_key": expected_key,
+            },
+            indent=2,
+        )
+    )
+    artifact_dir = REMOTE_ARTIFACTS_ROOT / directory.relative_to(REMOTE_ROOT)
+    progress_path = artifact_dir / "pool_results.json"
+    run_ids = {str(case["run_id"]) for case in cases}
+    try:
+        artifacts_volume.reload()
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not refresh server-pool checkpoints: {exc!r}", flush=True)
+    results_by_id = _load_pool_progress(progress_path, run_ids)
+    if results_by_id:
+        print(
+            f"[server-pool/{pool_id}] resuming after {len(results_by_id)} completed case(s)",
+            flush=True,
+        )
+
+    session = _PooledServerSession(
+        argv=argv,
+        staging=staging,
+        port=int(server_config["port"]),
+        pool_id=pool_id,
+        stream_logs=bool(payload.get("stream_logs", False)),
+        startup_timeout_s=float(payload.get("server_start_timeout_s", SERVER_START_TIMEOUT_S)),
+    )
+    try:
+        for index, case in enumerate(cases):
+            run_id = str(case["run_id"])
+            if run_id in results_by_id:
+                continue
+
+            startup_error: Exception | None = None
+            for attempt in range(2):
+                restart_count = session.restarts
+                try:
+                    host, port = session.ensure_started()
+                    startup_error = None
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    startup_error = exc
+                    print(
+                        f"[server-pool/{pool_id}] server start attempt {attempt + 1}/2 "
+                        f"failed: {exc!r}",
+                        flush=True,
+                    )
+                    session.close()
+
+            if startup_error is not None:
+                error = f"server failed to start after 2 attempts: {startup_error!r}"
+                for remaining in cases[index:]:
+                    remaining_id = str(remaining["run_id"])
+                    if remaining_id in results_by_id:
+                        continue
+                    results_by_id[remaining_id] = {
+                        "run_id": remaining_id,
+                        "status": "failed",
+                        "error": error,
+                        "server_pool_id": pool_id,
+                        "server_reused": False,
+                    }
+                try:
+                    _save_pool_progress(progress_path, cases, results_by_id)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"Could not save server-pool progress: {exc!r}", flush=True)
+                break
+
+            result = _run_pooled_case(
+                case,
+                host=host,
+                port=port,
+                pool_id=pool_id,
+                reused=index > 0 and session.restarts == restart_count,
+            )
+            results_by_id[run_id] = result
+            if result.get("status") != "ok":
+                # A failed/terminated client may leave control state in an
+                # uncertain phase; recover with a clean process next case.
+                session.close()
+            try:
+                _save_pool_progress(progress_path, cases, results_by_id)
+            except Exception as exc:  # noqa: BLE001
+                print(f"Could not save server-pool progress: {exc!r}", flush=True)
+    finally:
+        session.close()
+        try:
+            artifact_path = _ship(directory, staging)
+        except Exception as exc:  # noqa: BLE001
+            artifact_path = ""
+            for result in results_by_id.values():
+                result["server_artifact_error"] = repr(exc)
+
+    for result in results_by_id.values():
+        result["server_artifact_remote_path"] = artifact_path
+    try:
+        _save_pool_progress(progress_path, cases, results_by_id)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not finalize server-pool progress: {exc!r}", flush=True)
+    return [results_by_id[str(case["run_id"])] for case in cases]
+
+
+@app.cls(
+    image=gpu_server_image,
+    region=REGION,
+    timeout=POOL_TIMEOUT_S,
+    startup_timeout=SERVER_START_TIMEOUT_S,
+    cpu=4,
+    memory=16384,
+    gpu=SERVER_GPU,
+    volumes={
+        str(REMOTE_ARTIFACTS_ROOT): artifacts_volume,
+        CHECKPOINT_VOLUME_PATH: checkpoint_volume,
+    },
+)
+class PooledGpuServer:
+    """Run one cold-compatible case shard on a persistent policy server."""
+
+    @modal.method()
+    def run(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        try:
+            return _run_pooled_shard(payload)
+        except Exception as exc:  # noqa: BLE001
+            pool_id = str(payload.get("pool_id", ""))
+            print(f"[server-pool/{pool_id}] shard failed: {exc!r}", flush=True)
+            return [
+                {
+                    "run_id": str(case.get("run_id", "")),
+                    "status": "failed",
+                    "error": repr(exc),
+                    "server_pool_id": pool_id,
+                    "server_reused": False,
+                }
+                for case in payload.get("cases", [])
+            ]

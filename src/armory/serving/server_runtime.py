@@ -27,7 +27,7 @@ from armory.backends.types import PolicyFactory
 from armory.serving.engine import GpuWorker
 from armory.serving.protocol import ServerMetadata
 from armory.serving.scheduler import SchedulerWorker
-from armory.serving.schemas import BatchProfile, ResponseBatch
+from armory.serving.schemas import BatchProfile, GpuPrepared, PrepareAck, ResponseBatch
 from armory.serving.slots import RobotSlots
 from armory_client.messages import ConnectRequest
 
@@ -49,10 +49,12 @@ class ServerState:
     response_queues: dict[str, asyncio.Queue]
     slots: RobotSlots  # WS manages slot allocation
     robot_metadata: dict[str, ConnectRequest]
-    batch_queue: mp.Queue  # exposed so /reset can drain stale work between trials
-    # Current effective scheduler config. Mutated by POST /reconfigure so
-    # /metadata always reports what the scheduler subprocess is actually using.
-    # boot_alpha is preserved across reconfigures (alpha is server-startup-only).
+    batch_queue: mp.Queue  # control routes drain stale work between trials
+    control_ack_queue: mp.Queue
+    control_lock: asyncio.Lock
+    # Current effective scheduler config. Mutated by the control routes so
+    # /metadata reports what the scheduler subprocess is actually using.
+    # Plain reconfigure preserves boot_alpha; acknowledged prepare can override it.
     current_algorithm: str
     current_scheduler_kwargs: dict[str, Any]
     boot_alpha: float
@@ -62,13 +64,20 @@ class ServerState:
 async def _router_task(
     response_sock: zmq.asyncio.Socket,
     response_queues: dict[str, asyncio.Queue],
+    control_ack_queue: mp.Queue | None = None,
 ) -> None:
     """Dispatch GPU response batches to their per-robot queues."""
     logger.info("Router task starting")
     while True:
         try:
-            msg: ResponseBatch | BatchProfile = await response_sock.recv_pyobj()
+            msg: ResponseBatch | BatchProfile | GpuPrepared = await response_sock.recv_pyobj()
             if isinstance(msg, BatchProfile):
+                continue
+            if isinstance(msg, GpuPrepared):
+                if control_ack_queue is not None:
+                    control_ack_queue.put_nowait(
+                        PrepareAck(operation_id=msg.operation_id, worker="router")
+                    )
                 continue
             assert isinstance(msg, ResponseBatch)
             logger.debug("Received response batch: %s", msg)
@@ -111,6 +120,7 @@ BackendResources: TypeAlias = tuple[
     Event,
     Event,
     mp.Queue,
+    mp.Queue,
 ]
 
 
@@ -135,6 +145,7 @@ def _start_backend(
 ) -> BackendResources:
     slots = RobotSlots(max_robots=MAX_ROBOTS)
     batch_queue: mp.Queue = mp.Queue()
+    control_ack_queue: mp.Queue = mp.Queue()
     gpu_ready = mp.Event()
     sched_ready = mp.Event()
 
@@ -148,6 +159,7 @@ def _start_backend(
             socket_addresses["gpu_out_ep"],
             gpu_ready,
             log_queue,
+            control_ack_queue,
         ).run,
         daemon=True,
     )
@@ -163,6 +175,7 @@ def _start_backend(
             scheduler_kwargs,
             sched_ready,
             log_queue,
+            control_ack_queue,
         ).run,
         daemon=True,
     )
@@ -179,6 +192,7 @@ def _start_backend(
         sched_ready,
         gpu_ready,
         batch_queue,
+        control_ack_queue,
     )
 
 
@@ -201,6 +215,7 @@ def create_lifespan(
             sched_ready,
             gpu_ready,
             batch_queue,
+            control_ack_queue,
         ) = start_backend(
             metadata,
             policy_factory,
@@ -208,12 +223,9 @@ def create_lifespan(
             log_queue,
         )
 
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, sched_ready.wait)
-        logger.info("Scheduler ready")
-        await loop.run_in_executor(None, gpu_ready.wait)
-        logger.info("GPU worker ready")
-
+        # The worker processes have already forked, so creating ZMQ state here
+        # is safe. Bind before waiting for their readiness events so their SUB
+        # sockets have the whole model/profile startup window to connect.
         zmq_ctx = zmq.asyncio.Context()
 
         scheduler_sock = zmq_ctx.socket(zmq.PUB)
@@ -222,6 +234,12 @@ def create_lifespan(
         response_sock = zmq_ctx.socket(zmq.SUB)
         response_sock.setsockopt(zmq.SUBSCRIBE, b"")
         response_sock.connect(socket_addresses["gpu_out_ep"])
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, sched_ready.wait)
+        logger.info("Scheduler ready")
+        await loop.run_in_executor(None, gpu_ready.wait)
+        logger.info("GPU worker ready")
 
         response_queues: dict[str, asyncio.Queue] = {}
 
@@ -237,13 +255,17 @@ def create_lifespan(
             slots=slots,
             robot_metadata={},
             batch_queue=batch_queue,
+            control_ack_queue=control_ack_queue,
+            control_lock=asyncio.Lock(),
             current_algorithm=metadata.scheduling_algorithm,
             current_scheduler_kwargs=dict(boot_kwargs),
             boot_alpha=boot_alpha,
             boot_action_horizon_multipliers=boot_multipliers,
         )
 
-        router = asyncio.create_task(_router_task(response_sock, response_queues))
+        router = asyncio.create_task(
+            _router_task(response_sock, response_queues, control_ack_queue)
+        )
         watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
 
         yield

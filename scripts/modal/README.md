@@ -24,12 +24,20 @@ backend, so the configs can't contradict it:
 ``gpu`` is the real experiment.
 ``mock`` is for quick experiments.
 ``runtime`` is for debugging the simulation.
-Client CPUs scale with fleet size (1 per robot process, capped at Modal's 16); LIBERO clients also get 3 GiB per CPU.
+Client CPUs scale with fleet size (1 per robot process plus 2 buffer CPUs, capped
+at Modal's 16); LIBERO clients also get 3 GiB per allocated CPU.
+
+All workers are pinned to Modal's `us` region. For a real GPU case, the
+server container requests one L40S, 4 CPUs, and 16 GiB of host memory. The single
+LIBERO client container for the whole fleet requests one T4, one CPU per robot
+plus 2 buffer CPUs (capped at 16), and `max(16 GiB, 3 GiB × CPUs)` of host memory. Single-case
+workers have a two-hour Modal timeout, pooled L40S shards have a 12-hour timeout,
+and the client subprocess has a separate 90-minute safety timeout.
 
 Two entrypoints, same modes:
 - **`run.py`** — one case (one fleet, one scheduler).
-- **`sweep.py`** — fans a scheduler/seed/alpha grid out over `CaseRunner.run.map`.
-  `runtime` is rejected here: a sweep with no server has no scheduler to sweep.
+- **`sweep.py`** — runs GPU cases through persistent L40S server lanes; mock
+  cases still fan out through `CaseRunner.run.map`. `runtime` is rejected here.
 
 ## Single cases — `run.py`
 
@@ -59,35 +67,77 @@ uv sync --extra evaluation --extra serving-web
 
 ```bash
 uv run modal run scripts/modal/sweep.py \
-  --mode mock \
-  --server-config <server.json> \
-  --client-config <experiment.json | dir/> \
-  --schedulers greedy-deadline,lookahead-actions \
-  --seeds 7 \
-  --output-dir experiments/sweeps/smoke \
-  --stream-logs
+  --mode gpu \
+  --server-config configs/server/libero.json \
+  --client-config configs/modal_sweep \
+  --schedulers round-robin,max-batch,lookahead-actions \
+  --seeds 1,2,3 \
+  --max-batch-size 5 \
+  --action-horizon-multiplier 1,3,5 \
+  --server-pool-size 6 \
+  --server-start-timeout-minutes 60 \
+  --stamp libero_5min_paper \
+  --output-dir experiments/sweeps/libero_5min
 ```
 
 `--client-config` may be a directory, in which case every `.json`/`.jsonc` under it
 becomes a fleet shape. `--server-config` takes a comma-separated list; with several,
 config-sensitive schedulers (`lookahead-actions`) run once per config while ordinary
-baselines run only against the first. Writes `cases_<stamp>.csv`,
-`sweep_results_<stamp>.csv`, and plots under `--output-dir`.
+baselines run only against the first. `--action-horizon-multiplier` is a
+comma-separated sweep used only by `lookahead-actions`: each value replaces the
+shortest key in the server config's `action_horizon_multipliers`, leaving longer
+horizons unchanged. The example therefore runs lookahead with `{6: 1, 10: 1}`,
+`{6: 3, 10: 1}`, and `{6: 5, 10: 1}`, while each baseline runs once per fleet and
+seed. The sweep writes `cases_<stamp>.csv`, `sweep_results_<stamp>.csv`, and plots
+under `--output-dir`. Pass `--stamp <name>` to use a stable run root; rerunning
+the same grid and stamp resumes successful pooled cases from their checkpoints.
+
+GPU sweeps group cases by settings that require a server restart (including
+model/checkpoint, seed, max batch size, sampling steps, and alpha), then split
+large compatible groups into balanced persistent-server shards. Each L40S loads
+the policy once, runs one T4 client at a time, and hot-swaps the scheduler and
+action-horizon multipliers between clients. `--server-pool-size` is an elastic
+upper bound, defaults to 6, and has no all-workers-ready barrier: any L40S Modal
+can allocate begins its shard immediately while the other shards remain queued.
+For the paper grid, three seed groups become six shards of 37 or 38 cases.
+
+The client is launched only after its lane answers `/metadata`, and the next case
+does not start until that client exits. Before each client connects, `/prepare`
+hot-swaps the scheduler and acknowledges that the scheduler, GPU, and response
+router have crossed the previous run boundary. Successful cases are checkpointed
+to the artifacts volume as they finish, so a Modal replay after preemption skips
+them. A server gets two startup attempts before its remaining shard is failed.
+
+`--server-start-timeout-minutes` is the deadline for model/server startup after
+an L40S is allocated; time waiting in Modal's GPU queue does not consume it.
+`--max-concurrent-cases` applies only to CPU mock sweeps. Within a lane, policy
+RNG continuity matches the persistent main-branch runner. Using six lanes splits
+each of the three seed groups across two independently seeded servers; use
+`--server-pool-size 3` if exact one-server-per-seed RNG ordering matters more than
+the extra parallelism.
+
+`configs/modal_sweep` contains the paper's three fleet shapes (homogeneous,
+one-fast, and half-fast/half-slow) at 2, 4, 6, 8, and 10 robots. Each is a
+five-minute run. They retain the paper task protocol as well: seeds 1, 2, and 3
+select LIBERO-10 task pairs `[0, 1]`, `[2, 3]`, and `[4, 5]`, respectively, and
+assign robots to the selected pair round-robin.
 
 ### Config schemas
 
-> **The files under `configs/` are still the pre-refactor schema and will fail
-> validation.** They need porting to the shapes below.
+Some older files under `configs/` still use the pre-refactor schema and need
+porting to the shapes below.
 
 ```jsonc
 // server config  ->  scripts/serve.py Args
 // `scheduler` is nested; in mock mode `policy` is overwritten with the mock.
 {"model": "pi05", "env": "libero", "max_batch_size": 5, "port": 8080,
- "scheduler": {"scheduling_algorithm": "lookahead-actions", "alpha": 1.0}}
+ "scheduler": {"scheduling_algorithm": "lookahead-actions", "alpha": 1.0,
+               "action_horizon_multipliers": {"6": 1.0, "10": 1.0}}}
 
 // client config  ->  evaluation.types.ExperimentConfig
-// robots is a list (len = fleet size); LIBERO assigns distinct tasks from its suite.
-{"environment": {"kind": "libero", "task_suite_name": "libero_10"},
+// robots is a list (len = fleet size); task_subset_size pins a fleet to a seeded subset.
+{"environment": {"kind": "libero", "task_suite_name": "libero_10",
+                 "task_subset_size": 2},
  "seed": 7, "time_limit": 60.0, "robots": [{}, {}]}
 ```
 

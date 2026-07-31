@@ -16,6 +16,14 @@ NUM_STEPS_WAIT = 10
 LIBERO_ENV_RESOLUTION = 256
 RESIZE_SIZE = 224
 
+_LIBERO_10_SEED_PAIRS: dict[int, list[int]] = {
+    1: [0, 1],
+    2: [2, 3],
+    3: [4, 5],
+    4: [6, 7],
+    5: [8, 9],
+}
+
 
 @dataclass
 class LiberoObservation(Observation):
@@ -39,19 +47,72 @@ def plan_robot_specs(
 ) -> list[LiberoRobotSpec]:
     """Assign reproducible tasks to every robot in a fleet.
 
-    Planning happens once in the parent process. Tasks are sampled without
-    replacement within each pass through a suite; fleets larger than the suite
-    begin a freshly shuffled pass, so every task is covered before any repeat.
+    Planning happens once in the parent process. By default, tasks are sampled
+    without replacement within each pass through a suite. When
+    ``task_subset_size`` is positive, one seeded subset is selected and assigned
+    round-robin instead, matching the paper experiments.
     """
     from libero.libero.benchmark import get_benchmark_dict
 
     task_suite = get_benchmark_dict()[config.task_suite_name]()
     seed = experiment_seed if config.task_seed is None else config.task_seed
-    task_ids = sample_task_ids(num_tasks=task_suite.n_tasks, num_robots=num_robots, seed=seed)
+    task_ids = plan_task_ids(
+        task_suite_name=config.task_suite_name,
+        num_tasks=task_suite.n_tasks,
+        num_robots=num_robots,
+        seed=seed,
+        task_subset_size=config.task_subset_size,
+    )
     return [
         LiberoRobotSpec(task_suite_name=config.task_suite_name, task_id=task_id)
         for task_id in task_ids
     ]
+
+
+def plan_task_ids(
+    *,
+    task_suite_name: str,
+    num_tasks: int,
+    num_robots: int,
+    seed: int,
+    task_subset_size: int = 0,
+) -> list[int]:
+    """Plan task IDs, optionally repeating a seeded task subset round-robin.
+
+    A zero subset size retains the cleaned evaluator's balanced shuffled-pass
+    behavior. Positive sizes reproduce the legacy paper setup: select the
+    subset once, then cycle through it when assigning robots.
+    """
+    if task_subset_size < 0:
+        raise ValueError("task_subset_size must be nonnegative")
+    if task_subset_size == 0:
+        return sample_task_ids(num_tasks=num_tasks, num_robots=num_robots, seed=seed)
+
+    subset = _sample_task_subset_ids(
+        task_suite_name=task_suite_name,
+        num_tasks=num_tasks,
+        subset_size=task_subset_size,
+        seed=seed,
+    )
+    return [subset[robot_idx % len(subset)] for robot_idx in range(num_robots)]
+
+
+def _sample_task_subset_ids(
+    *, task_suite_name: str, num_tasks: int, subset_size: int, seed: int
+) -> list[int]:
+    """Select the legacy task subset for one experiment."""
+    if num_tasks <= 0:
+        raise ValueError("Cannot assign robots from a suite with no tasks.")
+    if (
+        task_suite_name == "libero_10"
+        and num_tasks == 10
+        and subset_size == 2
+        and seed in _LIBERO_10_SEED_PAIRS
+    ):
+        return list(_LIBERO_10_SEED_PAIRS[seed])
+    if subset_size >= num_tasks:
+        return list(range(num_tasks))
+    return sorted(random.Random(seed).sample(range(num_tasks), subset_size))
 
 
 def sample_task_ids(*, num_tasks: int, num_robots: int, seed: int) -> list[int]:

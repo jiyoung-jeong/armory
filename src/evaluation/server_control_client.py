@@ -64,3 +64,24 @@ class ServerControlClient:
         )
         if not resp.ok:
             raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
+
+    def prepare_server(
+        self,
+        config: SchedulerConfig,
+        *,
+        active_session_timeout_s: float = 30.0,
+    ) -> None:
+        """Atomically configure and reset a server before starting a run."""
+        deadline = time.monotonic() + active_session_timeout_s
+        while True:
+            resp = requests.post(
+                f"{self._http_base}/prepare",
+                json=config.to_prepare_body(),
+                timeout=75.0,
+            )
+            if resp.ok:
+                return
+            if resp.status_code != 409 or time.monotonic() >= deadline:
+                raise RuntimeError(f"POST /prepare {resp.status_code}: {resp.text}")
+            logger.info("Waiting for previous robot sessions to disconnect before prepare")
+            time.sleep(0.25)

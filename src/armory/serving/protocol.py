@@ -10,11 +10,12 @@ class SchedulerConfig(BaseModel):
     """Scheduler configuration shared between server boot and client reconfigure.
 
     The server consumes it at startup (scripts/serve.py) and accepts it via
-    POST /reconfigure; clients send it to override scheduling per run.
+    POST /reconfigure or POST /prepare; clients send it per run.
     """
 
     scheduling_algorithm: str = "greedy-deadline"
-    # Server-startup-only: POST /reconfigure preserves the boot-time alpha.
+    # POST /reconfigure preserves boot alpha; acknowledged POST /prepare may
+    # change it between runs.
     alpha: float = 1.0
     action_horizon_multipliers: dict[int, float] = {}
 
@@ -33,6 +34,10 @@ class SchedulerConfig(BaseModel):
                 str(k): float(v) for k, v in self.action_horizon_multipliers.items()
             },
         }
+
+    def to_prepare_body(self) -> dict:
+        """JSON body for the acknowledged POST /prepare run boundary."""
+        return {**self.to_reconfigure_body(), "alpha": float(self.alpha)}
 
 
 @dataclass

@@ -204,8 +204,7 @@ def main(args: Args) -> None:
 
     if args.agent == AgentType.POLICY:
         control_client = ServerControlClient(host=args.host, port=args.port)
-        control_client.reconfigure_server(args.scheduler_config)
-        control_client.reset_server()
+        control_client.prepare_server(args.scheduler_config)
 
     args.to_json(args.output_dir / "experiment_args.json")
 

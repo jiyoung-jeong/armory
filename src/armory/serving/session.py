@@ -37,7 +37,7 @@ logger = logging.getLogger("armory.serving.server")
 async def _handshake(
     websocket: WebSocket,
     state: ServerState,
-) -> tuple[str, int, ConnectRequest] | None:
+) -> tuple[RobotID, int, ConnectRequest, asyncio.Queue[InferResponse]] | None:
     """Receive and confirm the client-provided robot identity."""
     raw = await websocket.receive_bytes()
     msg = msgpack_numpy.unpackb(raw)
@@ -48,12 +48,41 @@ async def _handshake(
 
     robot_id = connect_req.robot_id
     slot_index = state.slots.register(robot_id)
-    state.response_queues[robot_id] = asyncio.Queue()
-    state.robot_metadata[robot_id] = connect_req
+    response_queue: asyncio.Queue[InferResponse] = asyncio.Queue()
+    try:
+        state.response_queues[robot_id] = response_queue
+        state.robot_metadata[robot_id] = connect_req
 
-    await websocket.send_bytes(msgpack_numpy.packb(ConnectResponse()))
+        await websocket.send_bytes(msgpack_numpy.packb(ConnectResponse()))
+    except BaseException:
+        _release_registration(
+            state,
+            robot_id=robot_id,
+            slot_index=slot_index,
+            response_queue=response_queue,
+            connect_req=connect_req,
+        )
+        raise
     logger.info("Robot %s connected (control_hz=%.1f)", robot_id, connect_req.control_hz)
-    return robot_id, slot_index, connect_req
+    return robot_id, slot_index, connect_req, response_queue
+
+
+def _release_registration(
+    state: ServerState,
+    *,
+    robot_id: RobotID,
+    slot_index: int,
+    response_queue: asyncio.Queue[InferResponse],
+    connect_req: ConnectRequest,
+) -> bool:
+    """Release this connection without disturbing a newer one with the same ID."""
+    is_current = state.response_queues.get(robot_id) is response_queue
+    state.slots.free(robot_id, expected_idx=slot_index)
+    if is_current:
+        state.response_queues.pop(robot_id, None)
+    if state.robot_metadata.get(robot_id) is connect_req:
+        state.robot_metadata.pop(robot_id, None)
+    return is_current
 
 
 async def _warmup(
@@ -111,6 +140,7 @@ async def _receive_loop(
     *,
     robot_id: RobotID,
     slot_index: int,
+    control_hz: float,
     pending_responses: dict[int, InferResponse],
     request_ids: Iterator[int],
 ) -> None:
@@ -179,7 +209,7 @@ async def _receive_loop(
                     infer_type=InferType.SYNC,
                     params=None,
                     noise=req.noise,
-                    control_hz=state.robot_metadata[robot_id].control_hz,
+                    control_hz=control_hz,
                 ),
             )
 
@@ -197,7 +227,7 @@ async def _receive_loop(
                 infer_type=InferType.SYNC,
                 params=None,
                 noise=req.noise,
-                control_hz=state.robot_metadata[robot_id].control_hz,
+                control_hz=control_hz,
             )
             await state.scheduler_sock.send_pyobj(slot_req)
     except WebSocketDisconnect:
@@ -229,28 +259,47 @@ async def serve_websocket_session(
     result = await _handshake(websocket, state)
     if result is None:
         return
-    robot_id, slot_index, _connect_req = result
+    robot_id, slot_index, connect_req, response_queue = result
 
-    await _warmup(websocket, state, robot_id, action_payload_size, num_warmup)
-
-    response_queue: asyncio.Queue[InferResponse] = state.response_queues[robot_id]
-    pending_responses: dict[int, InferResponse] = {}
-
-    recv_task = asyncio.create_task(
-        _receive_loop(
-            websocket,
-            state,
-            robot_id=robot_id,
-            slot_index=slot_index,
-            pending_responses=pending_responses,
-            request_ids=request_ids,
-        )
-    )
-    send_task = asyncio.create_task(_send_loop(websocket, response_queue, pending_responses))
     try:
-        await recv_task
+        await _warmup(websocket, state, robot_id, action_payload_size, num_warmup)
+
+        pending_responses: dict[int, InferResponse] = {}
+        recv_task = asyncio.create_task(
+            _receive_loop(
+                websocket,
+                state,
+                robot_id=robot_id,
+                slot_index=slot_index,
+                control_hz=connect_req.control_hz,
+                pending_responses=pending_responses,
+                request_ids=request_ids,
+            )
+        )
+        send_task = asyncio.create_task(_send_loop(websocket, response_queue, pending_responses))
+        try:
+            await recv_task
+        finally:
+            send_task.cancel()
+            try:
+                await asyncio.gather(send_task, return_exceptions=True)
+            except asyncio.CancelledError:
+                # ASGI shutdown may cancel this handler while it is already
+                # unwinding. The send task has still been cancelled; continue
+                # through the registration/reset teardown below.
+                pass
     finally:
-        send_task.cancel()
-        await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
-        state.slots.free(robot_id, expected_idx=slot_index)
-        state.response_queues.pop(robot_id, None)
+        # Keep the registration visible until its reset is published so a
+        # concurrent /prepare cannot overtake this session's teardown.
+        is_current = state.response_queues.get(robot_id) is response_queue
+        try:
+            if is_current:
+                await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
+        finally:
+            _release_registration(
+                state,
+                robot_id=robot_id,
+                slot_index=slot_index,
+                response_queue=response_queue,
+                connect_req=connect_req,
+            )

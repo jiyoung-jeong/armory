@@ -21,6 +21,10 @@ from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
+    GpuPrepared,
+    PrepareAck,
+    PrepareGpu,
+    PrepareScheduler,
     Reconfigure,
     ResetAll,
     ResponseBatch,
@@ -61,6 +65,7 @@ class SchedulerWorker:
         scheduler_kwargs: dict | None,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
+        control_ack_queue: mp.Queue | None = None,
     ) -> None:
         self.sched_in_ep = sched_in_ep
         self.result_ep = result_ep
@@ -71,6 +76,8 @@ class SchedulerWorker:
         self.scheduler_kwargs = scheduler_kwargs
         self.ready_event = ready_event
         self.log_queue = log_queue
+        self.control_ack_queue = control_ack_queue
+        self._pending_prepares: dict[str, tuple[RequestScheduler, str, dict]] = {}
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -141,7 +148,10 @@ class SchedulerWorker:
             self._process_server_messages(req_sock)
 
             # logger.debug("tick=%d stage=schedule_begin", tick)
-            decisions = self._current_scheduler.schedule()
+            # PrepareGpu is already in the work queue. Do not let the old
+            # scheduler enqueue anything behind that barrier while the GPU and
+            # result-stream acknowledgments are still in flight.
+            decisions = [] if self._pending_prepares else self._current_scheduler.schedule()
 
             if self.scheduler_metrics_queue is not None:
                 try:
@@ -170,8 +180,19 @@ class SchedulerWorker:
         # process new requests and decide whether to schedule.
         while result_sock.poll(0):
             msg = result_sock.recv_pyobj(zmq.NOBLOCK)
-            assert isinstance(msg, ResponseBatch), f"Unexpected message: {type(msg).__name__}"
-            scheduler.on_batch_completed(msg)
+            if isinstance(msg, ResponseBatch):
+                scheduler.on_batch_completed(msg)
+            elif isinstance(msg, GpuPrepared):
+                pending = self._pending_prepares.pop(msg.operation_id, None)
+                if pending is None:
+                    logger.warning("Ignoring unexpected GPU prepare ack: %s", msg.operation_id)
+                    continue
+                replacement, algorithm, scheduler_kwargs = pending
+                self._install_scheduler(replacement, algorithm, scheduler_kwargs)
+                self._send_prepare_ack(msg.operation_id)
+                logger.info("Run prepare complete: operation_id=%s", msg.operation_id)
+            else:
+                raise AssertionError(f"Unexpected message: {type(msg).__name__}")
 
     def _process_server_messages(self, req_sock: zmq.Socket) -> None:
         while req_sock.poll(0):
@@ -185,6 +206,8 @@ class SchedulerWorker:
                 logger.info("Received ResetAll: cleared scheduler + mirror state")
             elif isinstance(msg, Reconfigure):
                 self._handle_reconfigure(msg)
+            elif isinstance(msg, PrepareScheduler):
+                self._handle_prepare(msg)
             elif isinstance(msg, SlotRequest):
                 scheduler.update(msg)
                 logger.debug("Received slot request: %s", msg)
@@ -213,36 +236,86 @@ class SchedulerWorker:
         return lambda: self._process_engine_messages(self._current_scheduler, self._result_sock)
 
     def _handle_reconfigure(self, msg: Reconfigure) -> None:
-        cls = SCHEDULER_REGISTRY.get(msg.algorithm)
+        self._replace_scheduler(msg.algorithm, msg.scheduler_kwargs)
+
+    def _handle_prepare(self, msg: PrepareScheduler) -> None:
+        replacement, error = self._build_scheduler(msg.algorithm, msg.scheduler_kwargs)
+        if error is not None:
+            self._send_prepare_ack(msg.operation_id, error=error)
+            return
+        assert replacement is not None
+
+        self._pending_prepares[msg.operation_id] = (
+            replacement,
+            msg.algorithm,
+            dict(msg.scheduler_kwargs or {}),
+        )
+        try:
+            # This worker is the sole RequestBatch producer, so the barrier is
+            # ordered after every old batch even if the mp.Queue feeder thread
+            # has not flushed them yet.
+            self.batch_queue.put_nowait(PrepareGpu(msg.operation_id))
+        except Exception as exc:
+            self._pending_prepares.pop(msg.operation_id, None)
+            logger.exception("Could not enqueue GPU prepare barrier")
+            self._send_prepare_ack(msg.operation_id, error=repr(exc))
+            return
+        logger.info("Run prepare waiting for GPU: operation_id=%s", msg.operation_id)
+
+    def _replace_scheduler(self, algorithm: str, scheduler_kwargs: dict) -> str | None:
+        replacement, error = self._build_scheduler(algorithm, scheduler_kwargs)
+        if error is not None:
+            return error
+        assert replacement is not None
+        self._install_scheduler(replacement, algorithm, scheduler_kwargs)
+        return None
+
+    def _build_scheduler(
+        self, algorithm: str, scheduler_kwargs: dict
+    ) -> tuple[RequestScheduler | None, str | None]:
+        cls = SCHEDULER_REGISTRY.get(algorithm)
         if cls is None:
             # WS main validates before publishing; this branch is defence-in-depth.
-            logger.error(
-                "Reconfigure ignored: unknown algorithm %r (available: %s)",
-                msg.algorithm,
-                sorted(SCHEDULER_REGISTRY),
-            )
-            return
+            error = f"unknown algorithm {algorithm!r} (available: {sorted(SCHEDULER_REGISTRY)})"
+            logger.error("Scheduler replacement ignored: %s", error)
+            return None, error
         try:
             new_scheduler = cls(
                 self.batch_queue,
                 max_batch_size=self.max_batch_size,
-                **dict(msg.scheduler_kwargs or {}),
+                **dict(scheduler_kwargs or {}),
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "Reconfigure failed to construct %s with kwargs=%s; keeping current scheduler",
-                msg.algorithm,
-                msg.scheduler_kwargs,
+                algorithm,
+                scheduler_kwargs,
             )
-            return
+            return None, repr(exc)
         new_scheduler._drain_fn = self._make_drain_fn()
         for batch_size, latency in self._batch_profile.items():
             new_scheduler.latency_tracker.update_infer(batch_size, latency)
-        self._current_scheduler = new_scheduler
-        self.algorithm = msg.algorithm
-        self.scheduler_kwargs = dict(msg.scheduler_kwargs or {})
+        return new_scheduler, None
+
+    def _install_scheduler(
+        self,
+        scheduler: RequestScheduler,
+        algorithm: str,
+        scheduler_kwargs: dict,
+    ) -> None:
+        self._current_scheduler = scheduler
+        self.algorithm = algorithm
+        self.scheduler_kwargs = dict(scheduler_kwargs or {})
         logger.info(
             "Reconfigured scheduler: algorithm=%s kwargs=%s",
-            msg.algorithm,
-            msg.scheduler_kwargs,
+            algorithm,
+            scheduler_kwargs,
+        )
+
+    def _send_prepare_ack(self, operation_id: str, *, error: str | None = None) -> None:
+        if self.control_ack_queue is None:
+            logger.error("No control ack queue for prepare operation %s", operation_id)
+            return
+        self.control_ack_queue.put_nowait(
+            PrepareAck(operation_id=operation_id, worker="scheduler", error=error)
         )

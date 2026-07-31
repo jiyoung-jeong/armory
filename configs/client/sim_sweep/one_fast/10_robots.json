@@ -1,0 +1,22 @@
+{
+  "environment": {
+    "kind": "libero",
+    "task_suite_name": "libero_10",
+    "max_steps_per_episode": 600,
+    "task_subset_size": 2
+  },
+  "seed": 7,
+  "time_limit": 300.0,
+  "robots": [
+    {"execution_horizon": {"min": 1, "max": 6}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20},
+    {"execution_horizon": {"min": 1, "max": 10}, "control_hz": 20}
+  ]
+}

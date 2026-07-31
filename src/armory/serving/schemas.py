@@ -99,6 +99,38 @@ class Reconfigure:
     scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class PrepareScheduler:
+    """Start an acknowledged, between-run scheduler transition."""
+
+    operation_id: str
+    algorithm: str
+    scheduler_kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class PrepareGpu:
+    """GPU queue barrier inserted after all work from the previous run."""
+
+    operation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class GpuPrepared:
+    """GPU→scheduler barrier acknowledgment, ordered after old completions."""
+
+    operation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PrepareAck:
+    """Worker acknowledgment returned to the HTTP process."""
+
+    operation_id: str
+    worker: Literal["scheduler", "gpu", "router"]
+    error: str | None = None
+
+
 # TODO: this is the server-side version of ActionChunk that I think is used
 # for the mirror. Remind me to discuss and also mention where it is used.
 @dataclass(frozen=True, slots=True)

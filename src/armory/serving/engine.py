@@ -15,7 +15,11 @@ from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
+    GpuPrepared,
     InternalRequest,
+    PrepareAck,
+    PrepareGpu,
+    PrepareScheduler,
     RequestBatch,
     ResetAll,
     ResponseBatch,
@@ -33,6 +37,7 @@ from armory_client.messages import (
 logger = logging.getLogger(__name__)
 
 PROFILE_ITERATIONS = 5
+PREPARE_MARKER_TIMEOUT_S = 60.0
 
 
 class GpuWorker:
@@ -52,6 +57,7 @@ class GpuWorker:
         gpu_out_ep: str,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
+        control_ack_queue: mp.Queue | None = None,
     ) -> None:
         self.policy_factory = policy_factory
         self.max_batch_size = max_batch_size
@@ -61,6 +67,8 @@ class GpuWorker:
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
         self.log_queue = log_queue
+        self.control_ack_queue = control_ack_queue
+        self._seen_prepare_markers: set[str] = set()
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -98,7 +106,11 @@ class GpuWorker:
         while True:
             self._process_server_messages(req_sock)
 
-            batch: RequestBatch = self.batch_queue.get()  # blocking
+            work: RequestBatch | PrepareGpu = self.batch_queue.get()  # blocking
+            if isinstance(work, PrepareGpu):
+                self._prepare_for_run(work, req_sock, result_sock)
+                continue
+            batch = work
 
             # Synthetic idle batch: occupy the GPU for the requested duration
             # (no inference), then report an empty completion so the scheduler's
@@ -241,6 +253,10 @@ class GpuWorker:
                 self._last_served_action_index.clear()
                 self._prev_actions.clear()
                 logger.info("Received ResetAll: cleared engine RTC state (latency preserved)")
+            elif isinstance(msg, PrepareScheduler):
+                # This is the ordered marker for the WS→GPU PUB stream. The
+                # PrepareGpu queue item remains the work-completion barrier.
+                self._seen_prepare_markers.add(msg.operation_id)
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
                     msg.robot_id, msg.arrival_timestamp, msg.request_timestamp
@@ -266,6 +282,54 @@ class GpuWorker:
                 )
             else:
                 logger.warning("Unknown message type: %s", type(msg).__name__)
+
+    def _prepare_for_run(
+        self,
+        msg: PrepareGpu,
+        req_sock: zmq.Socket,
+        result_sock: zmq.Socket,
+    ) -> None:
+        try:
+            self._wait_for_prepare_marker(req_sock, msg.operation_id)
+        except TimeoutError as exc:
+            if self.control_ack_queue is not None:
+                self.control_ack_queue.put_nowait(
+                    PrepareAck(
+                        operation_id=msg.operation_id,
+                        worker="gpu",
+                        error=str(exc),
+                    )
+                )
+            logger.error("GPU prepare failed: %s", exc)
+            return
+
+        self._last_served_action_index.clear()
+        self._prev_actions.clear()
+        self._latency_tracker.clear_all()
+
+        # This shares the GPU's ResponseBatch PUB stream, so the scheduler sees
+        # every old completion before it sees GpuPrepared.
+        result_sock.send_pyobj(GpuPrepared(msg.operation_id))
+        if self.control_ack_queue is not None:
+            self.control_ack_queue.put_nowait(
+                PrepareAck(operation_id=msg.operation_id, worker="gpu")
+            )
+        else:
+            logger.error("No control ack queue for prepare operation %s", msg.operation_id)
+        logger.info("GPU prepared for next run: operation_id=%s", msg.operation_id)
+
+    def _wait_for_prepare_marker(self, req_sock: zmq.Socket, operation_id: str) -> None:
+        """Fence old WS→GPU messages before clearing per-run engine state."""
+        deadline = time.monotonic() + PREPARE_MARKER_TIMEOUT_S
+        while operation_id not in self._seen_prepare_markers:
+            self._process_server_messages(req_sock)
+            if operation_id in self._seen_prepare_markers:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out waiting for PrepareScheduler marker {operation_id}")
+            req_sock.poll(timeout=max(1, min(1000, int(remaining * 1000))))
+        self._seen_prepare_markers.remove(operation_id)
 
     def _make_params(self, slot_data: SlotData, batch_size: int) -> RTCParams | None:
         if (
