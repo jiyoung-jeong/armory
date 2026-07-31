@@ -56,7 +56,7 @@ def _drain_batches(state: ServerState) -> int:
 
 
 async def _wait_for_reset(state: ServerState, operation_id: str) -> list[str]:
-    pending = {"scheduler", "gpu", "router"}
+    pending = {"scheduler", "router"}
     deadline = asyncio.get_running_loop().time() + RESET_TIMEOUT_S
     while pending:
         remaining = deadline - asyncio.get_running_loop().time()
@@ -79,7 +79,7 @@ async def _wait_for_reset(state: ServerState, operation_id: str) -> list[str]:
                 detail=f"{ack.worker} failed reset operation {operation_id}: {ack.error}",
             )
         pending.discard(ack.worker)
-    return ["scheduler", "gpu", "router"]
+    return ["scheduler", "router"]
 
 
 def register_routes(

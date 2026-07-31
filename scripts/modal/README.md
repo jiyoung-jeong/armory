@@ -184,8 +184,8 @@ When advancing LIBERO, update both the `third_party/libero` gitlink and
 
 - Only JSON and primitive values cross the Modal boundary. Do not pass pydantic
   `serve.Args` objects to a Modal method.
-- Workers invoke `python -m scripts.serve` and `python -m scripts.run`; module
-  invocation keeps package imports stable inside the image.
+- Workers invoke `scripts/serve.py` and `scripts/run.py` directly, matching the
+  local and Slurm entrypoints.
 - The first image build and checkpoint load are slow. Cached mock runs typically
   finish in a few minutes; a cold real-policy server can take about ten minutes.
 - `scripts/modal/serve.py` is a separate long-lived, memory-snapshotted service

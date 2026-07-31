@@ -132,7 +132,7 @@ def _finalize_artifact(artifact_dir: pathlib.Path) -> dict[str, Any]:
 
 
 def _prepare(
-    run_dir: str, *, name: str, module: str, args_json: str
+    run_dir: str, *, name: str, script: str, args_json: str
 ) -> tuple[pathlib.Path, pathlib.Path, list[str]]:
     """Write a subprocess's args + command manifest; return run dir, staging dir, argv.
 
@@ -140,15 +140,15 @@ def _prepare(
     ``_ship``: the client's own ``--overwrite`` rmtree's its output dir at
     startup, which is the same directory, and would take them with it.
 
-    ``-m scripts.<module>`` (not the file path) so package imports resolve from
-    the repository root consistently.
+    The entrypoints are scripts rather than importable application modules, so
+    invoke them by path just like the local and Slurm launchers do.
     """
     staging = STAGING_ROOT / name
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     args_path = staging / f"{name}_args.json"
     args_path.write_text(args_json)
-    argv = [sys.executable, "-m", module, "--json-path", str(args_path)]
+    argv = [sys.executable, str(REMOTE_ROOT / "scripts" / script), "--json-path", str(args_path)]
     manifest = {"cwd": str(REMOTE_ROOT), "argv": argv, "shell": shlex.join(argv)}
     (staging / f"{name}_command.json").write_text(json.dumps(manifest, indent=2))
     return pathlib.Path(run_dir), staging, argv
@@ -166,7 +166,7 @@ def _serve(
 ) -> dict[str, Any]:
     """Start the policy server, forward its port, hold until the client is done."""
     directory, staging, argv = _prepare(
-        run_dir, name="server", module="scripts.serve", args_json=args_json
+        run_dir, name="server", script="serve.py", args_json=args_json
     )
     status, error, proc = "ok", None, None
     try:
@@ -206,7 +206,7 @@ def _run(
 ) -> dict[str, Any]:
     """Run the client to completion, summarize its metrics, ship the run dir."""
     directory, staging, argv = _prepare(
-        run_dir, name="client", module="scripts.run", args_json=args_json
+        run_dir, name="client", script="run.py", args_json=args_json
     )
     result: dict[str, Any] = {"run_id": run_id}
     proc: subprocess.Popen | None = None
@@ -778,7 +778,7 @@ def _run_pooled_shard(payload: dict[str, Any]) -> list[dict[str, Any]]:
     directory, staging, argv = _prepare(
         pool_run_dir,
         name=f"server_pool_{pool_id}",
-        module="scripts.serve",
+        script="serve.py",
         args_json=json.dumps(server_config),
     )
     (staging / "pool_manifest.json").write_text(

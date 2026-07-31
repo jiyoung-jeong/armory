@@ -4,16 +4,10 @@ import logging
 import multiprocessing as mp
 import pathlib
 import socket
-import sys
 from dataclasses import field
 from typing import Literal
 
-# Keep direct ``python scripts/serve.py`` invocation compatible with the
-# package imports used when the server is launched as ``python -m scripts.serve``.
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
-from scripts.utils import JsonArgs
+from utils import JsonArgs
 
 from armory.backends.registry import resolve_policy
 from armory.backends.types import EnvMode, ModelFamily

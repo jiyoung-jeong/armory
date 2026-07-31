@@ -332,12 +332,6 @@ class GpuWorker:
         # This shares the GPU's ResponseBatch PUB stream, so the scheduler sees
         # every old completion before it sees GpuPrepared.
         result_sock.send_pyobj(GpuPrepared(msg.operation_id))
-        if self.control_ack_queue is not None:
-            self.control_ack_queue.put_nowait(
-                PrepareAck(operation_id=msg.operation_id, worker="gpu")
-            )
-        else:
-            logger.error("No control ack queue for prepare operation %s", msg.operation_id)
         logger.info("GPU prepared for next run: operation_id=%s", msg.operation_id)
 
     def _wait_for_prepare_marker(self, req_sock: zmq.Socket, operation_id: str) -> None:

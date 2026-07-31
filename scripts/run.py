@@ -9,13 +9,8 @@ from enum import Enum
 from multiprocessing.queues import Queue
 from multiprocessing.synchronize import Barrier
 
-# Keep direct ``python scripts/run.py`` invocation compatible with the package
-# imports used when the runner is launched as ``python -m scripts.run``.
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
 from pydantic import model_validator
-from scripts.utils import JsonArgs
+from utils import JsonArgs
 
 from armory.serving.protocol import SchedulerConfig
 from armory.utils import seed_everything
