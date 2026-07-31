@@ -287,7 +287,7 @@ async def serve_websocket_session(
                 pass
     finally:
         # Keep the registration visible until its reset is published. Sharing
-        # the control lock with /prepare also prevents a new registration from
+        # the control lock with /reset also prevents a new registration from
         # entering halfway through a run-boundary transition.
         async with state.control_lock:
             is_current = state.response_queues.get(robot_id) is response_queue

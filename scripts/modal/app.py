@@ -94,7 +94,7 @@ def _terminate(proc: subprocess.Popen | None) -> None:
         return
     # scripts.run owns one process per robot. Signal the subprocess's isolated
     # process group so a timed-out client cannot leave robot connections alive
-    # when the next pooled case calls /prepare.
+    # when the next pooled case calls /reset.
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -516,8 +516,8 @@ def server_reuse_key(server_config: dict[str, Any]) -> str:
     """Canonical key for settings that require a policy-server restart.
 
     Scheduler configuration is deliberately absent: the client applies it at
-    the acknowledged ``/prepare`` boundary between cases. This is the same
-    boundary used by the main-branch interactive runner.
+    the acknowledged ``/reset`` boundary between cases. This is the same
+    reset-before-run lifecycle used by the main-branch interactive runner.
     """
     config = copy.deepcopy(server_config)
     config.pop("log_dir", None)
@@ -696,17 +696,17 @@ def _run_pooled_case(
     fenced = False
     try:
         # Fence the final in-flight batch before slicing the shared pool logs.
-        # The next client performs its own prepare, so this extra boundary only
+        # The next client performs its own reset, so this extra boundary only
         # finalizes telemetry and guarantees a clean server state after failures.
         scheduler = SchedulerConfig.model_validate(payload["client_config"]["scheduler_config"])
-        ServerControlClient(host=host, port=port).prepare_server(
+        ServerControlClient(host=host, port=port).reset_server(
             scheduler,
             active_session_timeout_s=60.0,
         )
         fenced = True
     except Exception as exc:  # noqa: BLE001
         previous = result.get("error")
-        detail = f"post-run server prepare failed: {exc!r}"
+        detail = f"post-run server reset failed: {exc!r}"
         result.update(status="failed", error=f"{previous}; {detail}" if previous else detail)
 
     if fenced:

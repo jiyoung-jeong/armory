@@ -267,7 +267,7 @@ def _make_cases(
                     for max_batch_size in max_batch_sizes:
                         for alpha in scheduler_alphas:
                             # This launcher starts one server per case, so give
-                            # startup and the client's acknowledged /prepare the
+                            # startup and the client's acknowledged /reset the
                             # same scheduler config. Only max_batch_size remains
                             # a restart-required server setting.
                             server = copy.deepcopy(server_args)

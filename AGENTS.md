@@ -63,9 +63,9 @@ docstring at the top of `server.py` before touching it, the topology is non-obvi
 2. **Scheduler** — collects per-robot `SlotRequest`s, runs the scheduling algorithm, dispatches batches.
 3. **GPU** — loads weights, runs batched inference, sends responses straight back to WS main.
 
-The server accepts `POST /reconfigure` to swap the scheduling algorithm without restart. It rebuilds
-the scheduler from scratch, so only issue it while no robots are connected (`scripts/run.py` calls it
-at startup, before the fleet dials in).
+The server accepts an optional scheduler config on `POST /reset`. This is the acknowledged between-run
+boundary used by `scripts/run.py`: it waits for old GPU work and excludes robot sessions before clearing
+state. `POST /reconfigure` remains available for an algorithm-only hot swap without a reset.
 
 Serving responsibilities are split without changing that topology:
 - `server.py` is the stable composition facade (`create_app`, `PolicyServer`).

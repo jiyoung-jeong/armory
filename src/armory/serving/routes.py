@@ -13,12 +13,12 @@ from fastapi import FastAPI, HTTPException, Request
 
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY
-from armory.serving.schemas import PrepareAck, PrepareScheduler, Reconfigure, ResetAll
+from armory.serving.schemas import PrepareAck, PrepareScheduler, Reconfigure
 from armory.serving.server_runtime import ServerState, write_metadata
 
 # Keep existing log attribution while this code moves out of server.py.
 logger = logging.getLogger("armory.serving.server")
-PREPARE_TIMEOUT_S = 60.0
+RESET_TIMEOUT_S = 60.0
 
 
 def _resolve_scheduler_config(
@@ -55,15 +55,15 @@ def _drain_batches(state: ServerState) -> int:
             return drained
 
 
-async def _wait_for_prepare(state: ServerState, operation_id: str) -> list[str]:
+async def _wait_for_reset(state: ServerState, operation_id: str) -> list[str]:
     pending = {"scheduler", "gpu", "router"}
-    deadline = asyncio.get_running_loop().time() + PREPARE_TIMEOUT_S
+    deadline = asyncio.get_running_loop().time() + RESET_TIMEOUT_S
     while pending:
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
             raise HTTPException(
                 status_code=504,
-                detail=f"Prepare operation {operation_id} timed out waiting for {sorted(pending)}",
+                detail=f"Reset operation {operation_id} timed out waiting for {sorted(pending)}",
             )
         try:
             ack = state.control_ack_queue.get_nowait()
@@ -71,12 +71,12 @@ async def _wait_for_prepare(state: ServerState, operation_id: str) -> list[str]:
             await asyncio.sleep(min(0.05, remaining))
             continue
         if not isinstance(ack, PrepareAck) or ack.operation_id != operation_id:
-            logger.warning("Discarding stale prepare acknowledgment: %r", ack)
+            logger.warning("Discarding stale reset acknowledgment: %r", ack)
             continue
         if ack.error is not None:
             raise HTTPException(
                 status_code=500,
-                detail=f"{ack.worker} failed prepare operation {operation_id}: {ack.error}",
+                detail=f"{ack.worker} failed reset operation {operation_id}: {ack.error}",
             )
         pending.discard(ack.worker)
     return ["scheduler", "gpu", "router"]
@@ -123,9 +123,9 @@ def register_routes(
             "scheduler": config.scheduler.model_dump(),
         }
 
-    @app.post("/prepare")
-    async def prepare_run(request: Request) -> dict:
-        """Reconfigure and clear all between-run state with worker acknowledgments."""
+    @app.post("/reset")
+    async def reset_server(request: Request) -> dict:
+        """Clear all run state and optionally reconfigure, with worker acknowledgments."""
         state: ServerState = request.app.state.server
         body = await request.json() if await request.body() else {}
         if not isinstance(body, dict):
@@ -135,7 +135,7 @@ def register_routes(
             if state.response_queues:
                 raise HTTPException(
                     status_code=409,
-                    detail="Cannot prepare while robot sessions are active: "
+                    detail="Cannot reset while robot sessions are active: "
                     f"{sorted(state.response_queues)}",
                 )
             scheduler_config = _resolve_scheduler_config(body, state, allow_alpha=True)
@@ -148,12 +148,12 @@ def register_routes(
                     config=config,
                 )
             )
-            acknowledged = await _wait_for_prepare(state, operation_id)
+            acknowledged = await _wait_for_reset(state, operation_id)
             state.config = config
             write_metadata(state, metadata)
 
         logger.info(
-            "Prepared next run: operation_id=%s scheduler=%s",
+            "Reset server for next run: operation_id=%s scheduler=%s",
             operation_id,
             scheduler_config,
         )
@@ -165,14 +165,3 @@ def register_routes(
             "drained_batches": drained,
             "acknowledged": acknowledged,
         }
-
-    @app.post("/reset")
-    async def reset_server(request: Request) -> dict:
-        state: ServerState = request.app.state.server
-        async with state.control_lock:
-            # Drain queued GPU work before clearing scheduler in-flight state.
-            drained = _drain_batches(state)
-            await state.scheduler_sock.send_pyobj(ResetAll())
-        if drained:
-            logger.info("Reset: drained %d pending batches from queue", drained)
-        return {"status": "ok", "drained_batches": drained}

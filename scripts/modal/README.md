@@ -118,7 +118,7 @@ most 6), not an all-workers-ready barrier: each allocated L40S starts its shard
 while other shards remain queued.
 
 A client is launched only after its lane answers `/metadata`. Before it
-connects, `/prepare` establishes a clean run boundary and swaps the scheduler.
+connects, `/reset` establishes a clean run boundary and swaps the scheduler.
 The next case waits for the current client to exit. Completed cases are
 fenced again, given their own slice of the pooled server telemetry, and have all
 plots regenerated before they are checkpointed to the artifacts volume. Replaying
