@@ -1,29 +1,33 @@
 """Multiprocess and IPC lifecycle for the policy server.
 
-The order in this module is intentional: fork workers first, wait for the
-scheduler and GPU readiness events, and only then create main-process ZMQ
-state. ZMQ contexts are not fork-safe.
+The order in this module is intentional: fork workers first, create the
+main-process ZMQ state, and then wait for the scheduler and GPU readiness
+events. ZMQ contexts are not fork-safe, and binding before the waits gives
+worker subscribers their whole startup window to connect.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import multiprocessing as mp
 import os
+import pathlib
 import signal
 import uuid
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from multiprocessing.synchronize import Event
-from typing import Any, Protocol, TypeAlias
+from typing import Protocol, TextIO, TypeAlias
 
 import zmq.asyncio
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 
 from armory.backends.types import PolicyFactory
+from armory.serving.config import ServerConfig
 from armory.serving.engine import GpuWorker
 from armory.serving.protocol import ServerMetadata
 from armory.serving.scheduler import SchedulerWorker
@@ -52,13 +56,24 @@ class ServerState:
     batch_queue: mp.Queue  # control routes drain stale work between trials
     control_ack_queue: mp.Queue
     control_lock: asyncio.Lock
-    # Current effective scheduler config. Mutated by the control routes so
-    # /metadata reports what the scheduler subprocess is actually using.
-    # Plain reconfigure preserves boot_alpha; acknowledged prepare can override it.
-    current_algorithm: str
-    current_scheduler_kwargs: dict[str, Any]
-    boot_alpha: float
-    boot_action_horizon_multipliers: dict[int, float]
+    # Current effective server config. Mutated by POST /reconfigure so
+    # /metadata always reports what the subprocesses are actually using.
+    config: ServerConfig
+    metrics_dir: pathlib.Path
+    events_log: TextIO
+
+
+def metrics_dir(config: ServerConfig) -> pathlib.Path:
+    path = config.output_dir / "server"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_metadata(state: ServerState, metadata: ServerMetadata) -> None:
+    payload = asdict(metadata)
+    payload["scheduling_algorithm"] = state.config.scheduler.scheduling_algorithm
+    payload["scheduler"] = state.config.scheduler.model_dump()
+    (state.metrics_dir / "metadata.json").write_text(json.dumps(payload, indent=2))
 
 
 async def _router_task(
@@ -129,7 +144,7 @@ class BackendStarter(Protocol):
         self,
         metadata: ServerMetadata,
         policy_factory: PolicyFactory,
-        scheduler_kwargs: dict[str, object] | None,
+        config: ServerConfig,
         log_queue: mp.Queue | None,
     ) -> BackendResources: ...
 
@@ -140,7 +155,7 @@ Lifespan: TypeAlias = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 def _start_backend(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler_kwargs: dict[str, object] | None,
+    config: ServerConfig,
     log_queue: mp.Queue | None,
 ) -> BackendResources:
     slots = RobotSlots(max_robots=MAX_ROBOTS)
@@ -152,12 +167,13 @@ def _start_backend(
     gpu_proc = mp.Process(
         target=GpuWorker(
             policy_factory,
-            metadata.max_batch_size,
+            config,
             slots,
             batch_queue,
             socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
             gpu_ready,
+            metrics_dir(config),
             log_queue,
             control_ack_queue,
         ).run,
@@ -169,10 +185,8 @@ def _start_backend(
             socket_addresses["server_out_ep"],
             socket_addresses["gpu_out_ep"],
             batch_queue,
-            None,
-            metadata.max_batch_size,
-            metadata.scheduling_algorithm,
-            scheduler_kwargs,
+            metrics_dir(config),
+            config,
             sched_ready,
             log_queue,
             control_ack_queue,
@@ -199,7 +213,7 @@ def _start_backend(
 def create_lifespan(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
-    scheduler_kwargs: dict[str, object] | None,
+    config: ServerConfig,
     log_queue: mp.Queue | None,
     *,
     start_backend: BackendStarter = _start_backend,
@@ -219,7 +233,7 @@ def create_lifespan(
         ) = start_backend(
             metadata,
             policy_factory,
-            scheduler_kwargs,
+            config,
             log_queue,
         )
 
@@ -243,13 +257,8 @@ def create_lifespan(
 
         response_queues: dict[str, asyncio.Queue] = {}
 
-        boot_kwargs = dict(scheduler_kwargs or {})
-        boot_alpha = float(boot_kwargs.get("alpha", 1.0))
-        boot_multipliers = {
-            int(k): float(v)
-            for k, v in (boot_kwargs.get("action_horizon_multipliers") or {}).items()
-        }
-        app.state.server = ServerState(
+        record_dir = metrics_dir(config)
+        state = ServerState(
             scheduler_sock=scheduler_sock,
             response_queues=response_queues,
             slots=slots,
@@ -257,11 +266,12 @@ def create_lifespan(
             batch_queue=batch_queue,
             control_ack_queue=control_ack_queue,
             control_lock=asyncio.Lock(),
-            current_algorithm=metadata.scheduling_algorithm,
-            current_scheduler_kwargs=dict(boot_kwargs),
-            boot_alpha=boot_alpha,
-            boot_action_horizon_multipliers=boot_multipliers,
+            config=config,
+            metrics_dir=record_dir,
+            events_log=open(record_dir / "events.jsonl", "w"),
         )
+        app.state.server = state
+        write_metadata(state, metadata)
 
         router = asyncio.create_task(
             _router_task(response_sock, response_queues, control_ack_queue)
@@ -272,6 +282,7 @@ def create_lifespan(
 
         watchdog.cancel()
         router.cancel()
+        state.events_log.close()
         gpu_proc.terminate()
         scheduler_proc.terminate()
 

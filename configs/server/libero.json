@@ -5,14 +5,14 @@
   "policy": {
     "type": "default"
   },
-  "max_batch_size": 3,
-  "num_steps": 10,
-  "scheduler": {
-    "scheduling_algorithm": "lookahead-actions",
-    "alpha": 1.0,
-    "action_horizon_multipliers": {
-      "6": 1.0,
-      "10": 1.0
+  "server": {
+    "max_batch_size": 3,
+    "scheduler": {
+      "scheduling_algorithm": "lookahead-actions",
+      "alpha": 1.0
+    },
+    "engine": {
+      "num_steps": 10
     }
   },
   "log_level": "INFO"

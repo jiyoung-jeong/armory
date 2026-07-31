@@ -1,8 +1,9 @@
-"""Submit Slurm scheduler sweeps using the current serve.py/run-libero JSON flow."""
+"""Submit Slurm scheduler sweeps using the current serve.py/run.py JSON flow."""
 
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as dt
 import json
 import math
@@ -15,11 +16,17 @@ from typing import Any
 _HERE = pathlib.Path(__file__).resolve().parent
 SCRIPTS_DIR = _HERE.parent
 REPO_ROOT = SCRIPTS_DIR.parent
-sys.path.insert(0, str(SCRIPTS_DIR / "modal"))
+sys.path.insert(0, str(REPO_ROOT))
 
-from _utils import write_rows  # noqa: E402
+from scripts.modal.utils import write_rows  # noqa: E402
+from scripts.run import Args as RunArgs  # noqa: E402
+from scripts.serve import Args as ServeArgs  # noqa: E402
+
+from armory.serving.scheduler import SCHEDULER_REGISTRY  # noqa: E402
+from evaluation.types import ExperimentConfig  # noqa: E402
 
 SERVER_CONFIG_SWEEP_SCHEDULERS = {"lookahead-actions"}
+ALPHA_SWEEP_SCHEDULERS = {"dynamic-action"}
 
 EXAMPLES = """examples:
   # 1. Dry-run a tiny sweep. Writes case dirs + jobs CSV but submits nothing.
@@ -40,7 +47,7 @@ EXAMPLES = """examples:
   #    enough V100s to satisfy the CPU:GPU<12 rule.
   uv run python scripts/sbatch/launch_sweep.py \
       --server-config configs/server/mock.json \
-      --client-config configs/client/libero/half_fast_half_slow \
+      --client-config configs/client/sim_sweep/half_fast_half_slow \
       --output-dir experiments/sweeps/slurm_libero \
       --schedulers max-batch,dynamic-action \
       --seeds 7,42 \
@@ -51,17 +58,17 @@ EXAMPLES = """examples:
   uv run python scripts/sbatch/launch_sweep.py \
       --account gts-dxu345-rl2 \
       --server-config configs/server/mock.json \
-      --client-config configs/client/libero/half_fast_half_slow \
+      --client-config configs/client/sim_sweep/half_fast_half_slow \
       --output-dir experiments/sweeps/slurm_alpha \
-      --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
+      --schedulers max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
       --seeds 7,42 \
       --alpha 0.0,0.25,0.5,0.75,1.0 \
       --submit-collector
 
-  # 4. Preserve the server config policy exactly, useful for mock/smoke tests.
+  # 4. Preserve the server config policy exactly.
   uv run python scripts/sbatch/launch_sweep.py \
       --server-config configs/server/mock.json \
-      --client-config configs/client/mock/short.json \
+      --client-config configs/client/libero/short.json \
       --server-policy config \
       --schedulers greedy-deadline \
       --seeds 7 \
@@ -114,7 +121,6 @@ class Case:
         max_batch_size: int,
         alpha: float,
         server_variant: str = "",
-        action_horizon_multiplier: float = 0.0,
     ) -> None:
         self.server_args = server_args
         self.client_args = client_args
@@ -126,11 +132,10 @@ class Case:
         self.max_batch_size = max_batch_size
         self.alpha = alpha
         self.server_variant = server_variant
-        self.action_horizon_multiplier = action_horizon_multiplier
 
     @property
     def num_robots(self) -> int:
-        return int(self.experiment_config["experiment"]["num_robots"])
+        return len(self.experiment_config["robots"])
 
     @property
     def run_id(self) -> str:
@@ -144,8 +149,6 @@ class Case:
         ]
         if self.server_variant:
             parts.append(f"server={self.server_variant}")
-        if self.action_horizon_multiplier:
-            parts.append(f"ahm={self.action_horizon_multiplier}")
         return "__".join(parts)
 
 
@@ -184,10 +187,10 @@ def _client_config_paths(path: str) -> list[pathlib.Path]:
     if candidate.is_file():
         return [candidate]
     if candidate.is_dir():
-        paths = sorted([*candidate.rglob("*.json"), *candidate.rglob("*.jsonc")])
+        paths = sorted(candidate.rglob("*.json"))
         if paths:
             return paths
-    raise SystemExit(f"--client-config must be a JSON/JSONC file or directory: {path}")
+    raise SystemExit(f"--client-config must be a JSON file or directory: {path}")
 
 
 def _experiment_name(path: pathlib.Path, *, root: pathlib.Path | None = None) -> str:
@@ -196,31 +199,13 @@ def _experiment_name(path: pathlib.Path, *, root: pathlib.Path | None = None) ->
 
 
 def _read_experiment_config(path: pathlib.Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    experiment = data["experiment"]
-    robots = data["robots"]
-    for key in (
-        "env",
-        "task_suite_name",
-        "action_chunk_broker_type",
-        "num_robots",
-        "max_steps",
-        "control_hz",
-    ):
-        if key not in experiment:
-            raise ValueError(f"{path}: missing experiment.{key}")
-    # Either legacy-mode (trials_per_robot) or trial-mode
-    # (wall_clock_time_limit_s) must specify how a run terminates.
-    if "trials_per_robot" not in experiment and not experiment.get("wall_clock_time_limit_s"):
-        raise ValueError(
-            f"{path}: experiment must set either 'trials_per_robot' or 'wall_clock_time_limit_s'."
-        )
-    for idx in range(int(experiment["num_robots"])):
-        robot = robots[f"robot_{idx}"]
-        for key in ("min_execution_horizon", "max_execution_horizon"):
-            if key not in robot:
-                raise ValueError(f"{path}: missing robots.robot_{idx}.{key}")
-    return data
+    return ExperimentConfig.model_validate_json(path.read_text()).model_dump(mode="json")
+
+
+def _read_server_args(path: pathlib.Path) -> dict[str, Any]:
+    return ServeArgs.model_validate_json(path.read_text()).model_dump(
+        mode="json", exclude={"json_path"}
+    )
 
 
 def _write_json(path: pathlib.Path, data: dict[str, Any]) -> None:
@@ -247,130 +232,111 @@ def _make_cases(
     seeds: list[int],
     max_batch_sizes: list[int],
     alphas: list[float],
-    action_horizon_multipliers: list[float] | None = None,
     stamp: str,
 ) -> list[Case]:
     if max_batch_sizes and alphas:
         raise SystemExit("Sweep only one of --max-batch-size or --alpha at a time.")
     if not server_variants:
         raise SystemExit("At least one server config is required.")
+    unknown_schedulers = sorted(set(schedulers) - set(SCHEDULER_REGISTRY))
+    if unknown_schedulers:
+        raise SystemExit(
+            f"Unknown scheduler(s) {unknown_schedulers}; available: {sorted(SCHEDULER_REGISTRY)}"
+        )
+    base_server = server_variants[0][1]["server"]
+    base_alpha = float(base_server["scheduler"]["alpha"])
+    alpha_sweep = bool(alphas)
     if not max_batch_sizes:
-        max_batch_sizes = [int(server_variants[0][1].get("max_batch_size", 1))]
+        max_batch_sizes = [int(base_server["max_batch_size"])]
     if not alphas:
-        alphas = [float(server_variants[0][1].get("alpha", 1.0))]
-    action_horizon_multipliers = action_horizon_multipliers or []
+        alphas = [base_alpha]
 
     cases: list[Case] = []
     for seed in seeds:
         for scheduler in schedulers:
+            scheduler_alphas = (
+                alphas if alpha_sweep and scheduler in ALPHA_SWEEP_SCHEDULERS else [base_alpha]
+            )
             active_server_variants = (
                 server_variants
                 if scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
                 else server_variants[:1]
             )
-            # The shortest-horizon multiplier override only affects the
-            # config-sensitive lookahead schedulers; other schedulers ignore
-            # action_horizon_multipliers, so sweeping them would just create
-            # duplicate baseline cases.
-            scheduler_ahms: list[float | None] = (
-                action_horizon_multipliers
-                if action_horizon_multipliers and scheduler in SERVER_CONFIG_SWEEP_SCHEDULERS
-                else [None]
-            )
             for server_variant, server_args in active_server_variants:
                 for experiment_name, experiment_config in experiment_configs:
                     for max_batch_size in max_batch_sizes:
-                        for alpha in alphas:
-                            for ahm in scheduler_ahms:
-                                # scheduling_algorithm and
-                                # action_horizon_multipliers used to live on the
-                                # server config, but they are now hot-swappable
-                                # via POST /reconfigure (issued by run_libero on
-                                # startup). Keeping them server-side too would
-                                # force the interactive sweep driver to restart
-                                # the server for every case that varies them.
-                                # ``max_batch_size`` and ``alpha`` stay
-                                # server-startup-only.
-                                server = {
-                                    **server_args,
-                                    "seed": seed,
-                                    "max_batch_size": max_batch_size,
-                                    "alpha": alpha,
-                                }
-                                server.pop("scheduling_algorithm", None)
-                                server.pop("action_horizon_multipliers", None)
-                                if ahm is not None:
-                                    case_multipliers = _override_shortest_horizon(
-                                        server_args.get("action_horizon_multipliers"),
-                                        ahm,
-                                    )
-                                else:
-                                    case_multipliers = dict(
-                                        server_args.get("action_horizon_multipliers") or {}
-                                    )
-                                client = {
-                                    **client_args,
-                                    "seed": seed,
-                                    "progress_type": "logging",
-                                    "overwrite": True,
+                        for alpha in scheduler_alphas:
+                            # This launcher starts one server per case, so give
+                            # startup and the client's acknowledged /prepare the
+                            # same scheduler config. Only max_batch_size remains
+                            # a restart-required server setting.
+                            server = copy.deepcopy(server_args)
+                            server["seed"] = seed
+                            server["server"]["max_batch_size"] = max_batch_size
+                            server["server"]["scheduler"] = {
+                                **server["server"]["scheduler"],
+                                "scheduling_algorithm": scheduler,
+                                "alpha": alpha,
+                            }
+                            experiment = copy.deepcopy(experiment_config)
+                            experiment["seed"] = seed
+                            client = {
+                                **copy.deepcopy(client_args),
+                                "experiment_config": experiment,
+                                "scheduler_config": {
                                     "scheduling_algorithm": scheduler,
-                                    "action_horizon_multipliers": case_multipliers,
-                                }
-                                cases.append(
-                                    Case(
-                                        server_args=server,
-                                        client_args=client,
-                                        experiment_config=experiment_config,
-                                        experiment_name=experiment_name,
-                                        stamp=stamp,
-                                        scheduler=scheduler,
-                                        seed=seed,
-                                        max_batch_size=max_batch_size,
-                                        alpha=alpha,
-                                        server_variant=(
-                                            server_variant if len(server_variants) > 1 else ""
-                                        ),
-                                        action_horizon_multiplier=(ahm or 0.0),
-                                    )
+                                    "alpha": alpha,
+                                },
+                                "overwrite": True,
+                            }
+                            cases.append(
+                                Case(
+                                    server_args=server,
+                                    client_args=client,
+                                    experiment_config=experiment,
+                                    experiment_name=experiment_name,
+                                    stamp=stamp,
+                                    scheduler=scheduler,
+                                    seed=seed,
+                                    max_batch_size=max_batch_size,
+                                    alpha=alpha,
+                                    server_variant=(
+                                        server_variant if len(server_variants) > 1 else ""
+                                    ),
                                 )
+                            )
     return cases
-
-
-def _override_shortest_horizon(base: dict[str, Any] | None, multiplier: float) -> dict[str, Any]:
-    """Override only the shortest-horizon key of ``base`` with ``multiplier``.
-
-    Keys are horizon lengths (as strings); longer-horizon weights are left at
-    their base values. With no base dict the multiplier can't be placed, so the
-    result is empty.
-    """
-    result = dict(base or {})
-    if not result:
-        return result
-    shortest_key = min(result, key=lambda k: float(k))
-    result[shortest_key] = multiplier
-    return result
 
 
 def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
     case_dir = run_root / case.run_id
-    output_dir = case_dir
-    log_dir = case_dir
-    log_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = case_dir / "output"
+    logs_dir = case_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_json(
-        case_dir / "server_args.json", {**case.server_args, "log_dir": str(log_dir / "server")}
+    server_payload = copy.deepcopy(case.server_args)
+    server_payload["log_dir"] = str(logs_dir / "server")
+    # Server telemetry is produced before the client starts. Keep it outside
+    # the client's overwrite target, then run_case.sh folds it into output/.
+    server_payload["server"]["output_dir"] = str(case_dir)
+    client_payload = {
+        **copy.deepcopy(case.client_args),
+        "output_dir": str(output_dir),
+    }
+
+    # A dry run should prove that the exact files a Slurm job will consume
+    # validate against today's entrypoint schemas, not merely serialize JSON.
+    server_payload = ServeArgs.model_validate(server_payload).model_dump(
+        mode="json", exclude={"json_path"}
     )
+    client_payload = RunArgs.model_validate(client_payload).model_dump(
+        mode="json", exclude={"json_path"}
+    )
+
+    _write_json(case_dir / "server_args.json", server_payload)
     experiment_config_path = case_dir / "experiment_config.json"
-    _write_json(experiment_config_path, case.experiment_config)
-    _write_json(
-        case_dir / "client_args.json",
-        {
-            **case.client_args,
-            "experiment_config": str(experiment_config_path),
-            "output_dir": str(output_dir),
-            "log_dir": str(log_dir / "client"),
-        },
-    )
+    _write_json(experiment_config_path, client_payload["experiment_config"])
+    _write_json(case_dir / "client_args.json", client_payload)
     _write_json(
         case_dir / "case.json",
         {
@@ -383,10 +349,9 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
             "max_batch_size": case.max_batch_size,
             "alpha": case.alpha,
             "server_variant": case.server_variant,
-            "action_horizon_multiplier": case.action_horizon_multiplier,
-            "action_horizon_multipliers": case.client_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "output_dir": str(output_dir),
+            "server_metrics_dir": str(case_dir / "server"),
         },
     )
     return case_dir
@@ -582,7 +547,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--client-config",
         default="",
-        help="Experiment config JSON/JSONC file, or a directory whose JSON/JSONC files become cases.",
+        help="Experiment config JSON file, or a directory whose JSON files become cases.",
     )
     parser.add_argument(
         "--requeue",
@@ -599,7 +564,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="experiments/sweeps/slurm")
     parser.add_argument(
         "--schedulers",
-        default="fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action",
+        default="max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action",
     )
     parser.add_argument("--seeds", default="7")
     parser.add_argument("--max-batch-size", default="")
@@ -632,6 +597,9 @@ def main() -> None:
     args = parse_args()
     if args.requeue:
         run_root = pathlib.Path(args.requeue)
+        if not run_root.is_absolute():
+            run_root = REPO_ROOT / run_root
+        run_root = run_root.resolve()
         if not run_root.is_dir():
             raise SystemExit(f"--requeue path is not a directory: {run_root}")
         _requeue_run(run_root, dry_run=args.dry_run)
@@ -641,12 +609,17 @@ def main() -> None:
         raise SystemExit("--client-config is required (unless --requeue is set).")
 
     stamp = args.stamp or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")  # noqa: UP017
-    run_root = pathlib.Path(args.output_dir) / stamp
+    output_root = pathlib.Path(args.output_dir)
+    if not output_root.is_absolute():
+        output_root = REPO_ROOT / output_root
+    output_root = output_root.resolve()
+    args.output_dir = str(output_root)
+    run_root = output_root / stamp
     run_root.mkdir(parents=True, exist_ok=True)
 
     server_paths = _server_config_paths(args.server_config)
     server_variants = [
-        (_server_variant_name(path), json.loads(path.read_text())) for path in server_paths
+        (_server_variant_name(path), _read_server_args(path)) for path in server_paths
     ]
     client_paths = _client_config_paths(args.client_config)
     resolved_client_config = _resolve_path(args.client_config)
@@ -655,11 +628,7 @@ def main() -> None:
         (_experiment_name(path, root=config_root), _read_experiment_config(path))
         for path in client_paths
     ]
-    client_args = {
-        "experiment_config": "",
-        "progress_type": "logging",
-        "overwrite": True,
-    }
+    client_args: dict[str, Any] = {}
     if args.server_policy == "default":
         server_variants = [
             (variant, {**server_args, "policy": {"type": "default"}})
@@ -689,8 +658,6 @@ def main() -> None:
             "max_batch_size": case.max_batch_size,
             "alpha": case.alpha,
             "server_variant": case.server_variant,
-            "action_horizon_multiplier": case.action_horizon_multiplier,
-            "action_horizon_multipliers": case.client_args.get("action_horizon_multipliers", {}),
             "case_dir": str(case_dir),
             "status": "dry_run" if args.dry_run else "submitted",
             "job_id": "",

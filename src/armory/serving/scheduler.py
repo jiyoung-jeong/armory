@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import multiprocessing as mp
+import pathlib
 import signal
+from dataclasses import asdict
 from multiprocessing.synchronize import Event
 
 import zmq
@@ -18,6 +21,7 @@ from armory.scheduling.baselines import (
 )
 from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
+from armory.serving.config import ServerConfig
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
@@ -59,10 +63,8 @@ class SchedulerWorker:
         sched_in_ep: str,
         result_ep: str,
         batch_queue: mp.Queue,
-        scheduler_metrics_queue: mp.Queue | None,
-        max_batch_size: int,
-        algorithm: str,
-        scheduler_kwargs: dict | None,
+        metrics_dir: pathlib.Path,
+        config: ServerConfig,
         ready_event: Event,
         log_queue: mp.Queue | None = None,
         control_ack_queue: mp.Queue | None = None,
@@ -70,14 +72,12 @@ class SchedulerWorker:
         self.sched_in_ep = sched_in_ep
         self.result_ep = result_ep
         self.batch_queue = batch_queue
-        self.scheduler_metrics_queue = scheduler_metrics_queue
-        self.max_batch_size = max_batch_size
-        self.algorithm = algorithm
-        self.scheduler_kwargs = scheduler_kwargs
+        self.metrics_dir = metrics_dir
+        self.config = config
         self.ready_event = ready_event
         self.log_queue = log_queue
         self.control_ack_queue = control_ack_queue
-        self._pending_prepares: dict[str, tuple[RequestScheduler, str, dict]] = {}
+        self._pending_prepares: dict[str, tuple[RequestScheduler, ServerConfig]] = {}
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -86,14 +86,15 @@ class SchedulerWorker:
         if self.log_queue is not None:
             logging_config.setup_worker_logging(self.log_queue, process_name="scheduler")
 
-        logger.info("Scheduler starting (algorithm=%s)", self.algorithm)
+        logger.info("Scheduler starting (%s)", self.config)
 
-        cls = SCHEDULER_REGISTRY.get(self.algorithm)
-        if cls is None:
+        if self.config.scheduler.scheduling_algorithm not in SCHEDULER_REGISTRY:
             raise ValueError(
-                f"Unknown scheduling algorithm {self.algorithm!r}. "
+                f"Unknown scheduling algorithm {self.config.scheduler.scheduling_algorithm!r}. "
                 f"Available: {sorted(SCHEDULER_REGISTRY)}"
             )
+
+        decisions_log = open(self.metrics_dir / "scheduler_decisions.jsonl", "w")
 
         ctx = zmq.Context()
 
@@ -105,14 +106,8 @@ class SchedulerWorker:
         result_sock.setsockopt(zmq.SUBSCRIBE, b"")
         result_sock.connect(self.result_ep)  # GPU connects
 
-        extra_kwargs: dict = dict(self.scheduler_kwargs or {})
-        self._current_scheduler: RequestScheduler = cls(
-            self.batch_queue,
-            max_batch_size=self.max_batch_size,
-            **extra_kwargs,
-        )
         self._result_sock = result_sock
-        self._current_scheduler._drain_fn = self._make_drain_fn()
+        self._current_scheduler: RequestScheduler = self._build_scheduler(self.config)
 
         batch_profile = self._recv_batch_profile(result_sock)
         self._batch_profile: dict[int, float] = dict(batch_profile)
@@ -153,11 +148,13 @@ class SchedulerWorker:
             # result-stream acknowledgments are still in flight.
             decisions = [] if self._pending_prepares else self._current_scheduler.schedule()
 
-            if self.scheduler_metrics_queue is not None:
+            if decisions:
                 try:
-                    self.scheduler_metrics_queue.put_nowait(decisions)
+                    for decision in decisions:
+                        decisions_log.write(json.dumps(asdict(decision), default=float) + "\n")
+                    decisions_log.flush()
                 except Exception:
-                    logger.exception("tick=%d failed to enqueue scheduler decisions", tick)
+                    logger.exception("tick=%d failed to record scheduler decisions", tick)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -187,8 +184,8 @@ class SchedulerWorker:
                 if pending is None:
                     logger.warning("Ignoring unexpected GPU prepare ack: %s", msg.operation_id)
                     continue
-                replacement, algorithm, scheduler_kwargs = pending
-                self._install_scheduler(replacement, algorithm, scheduler_kwargs)
+                replacement, config = pending
+                self._install_scheduler(replacement, config)
                 self._send_prepare_ack(msg.operation_id)
                 logger.info("Run prepare complete: operation_id=%s", msg.operation_id)
             else:
@@ -235,21 +232,27 @@ class SchedulerWorker:
         # mid-search still drains into the active instance.
         return lambda: self._process_engine_messages(self._current_scheduler, self._result_sock)
 
+    def _build_scheduler(self, config: ServerConfig) -> RequestScheduler:
+        cls = SCHEDULER_REGISTRY[config.scheduler.scheduling_algorithm]
+        scheduler = cls(config.scheduler, self.batch_queue, max_batch_size=config.max_batch_size)
+        scheduler._drain_fn = self._make_drain_fn()
+        return scheduler
+
     def _handle_reconfigure(self, msg: Reconfigure) -> None:
-        self._replace_scheduler(msg.algorithm, msg.scheduler_kwargs)
+        replacement, error = self._build_replacement(msg.config)
+        if error is not None:
+            return
+        assert replacement is not None
+        self._install_scheduler(replacement, msg.config)
 
     def _handle_prepare(self, msg: PrepareScheduler) -> None:
-        replacement, error = self._build_scheduler(msg.algorithm, msg.scheduler_kwargs)
+        replacement, error = self._build_replacement(msg.config)
         if error is not None:
             self._send_prepare_ack(msg.operation_id, error=error)
             return
         assert replacement is not None
 
-        self._pending_prepares[msg.operation_id] = (
-            replacement,
-            msg.algorithm,
-            dict(msg.scheduler_kwargs or {}),
-        )
+        self._pending_prepares[msg.operation_id] = (replacement, msg.config)
         try:
             # This worker is the sole RequestBatch producer, so the barrier is
             # ordered after every old batch even if the mp.Queue feeder thread
@@ -262,37 +265,23 @@ class SchedulerWorker:
             return
         logger.info("Run prepare waiting for GPU: operation_id=%s", msg.operation_id)
 
-    def _replace_scheduler(self, algorithm: str, scheduler_kwargs: dict) -> str | None:
-        replacement, error = self._build_scheduler(algorithm, scheduler_kwargs)
-        if error is not None:
-            return error
-        assert replacement is not None
-        self._install_scheduler(replacement, algorithm, scheduler_kwargs)
-        return None
-
-    def _build_scheduler(
-        self, algorithm: str, scheduler_kwargs: dict
+    def _build_replacement(
+        self, config: ServerConfig
     ) -> tuple[RequestScheduler | None, str | None]:
-        cls = SCHEDULER_REGISTRY.get(algorithm)
-        if cls is None:
+        algorithm = config.scheduler.scheduling_algorithm
+        if algorithm not in SCHEDULER_REGISTRY:
             # WS main validates before publishing; this branch is defence-in-depth.
             error = f"unknown algorithm {algorithm!r} (available: {sorted(SCHEDULER_REGISTRY)})"
             logger.error("Scheduler replacement ignored: %s", error)
             return None, error
         try:
-            new_scheduler = cls(
-                self.batch_queue,
-                max_batch_size=self.max_batch_size,
-                **dict(scheduler_kwargs or {}),
-            )
+            new_scheduler = self._build_scheduler(config)
         except Exception as exc:
             logger.exception(
-                "Reconfigure failed to construct %s with kwargs=%s; keeping current scheduler",
-                algorithm,
-                scheduler_kwargs,
+                "Reconfigure failed to construct %s; keeping current scheduler",
+                config,
             )
             return None, repr(exc)
-        new_scheduler._drain_fn = self._make_drain_fn()
         for batch_size, latency in self._batch_profile.items():
             new_scheduler.latency_tracker.update_infer(batch_size, latency)
         return new_scheduler, None
@@ -300,17 +289,11 @@ class SchedulerWorker:
     def _install_scheduler(
         self,
         scheduler: RequestScheduler,
-        algorithm: str,
-        scheduler_kwargs: dict,
+        config: ServerConfig,
     ) -> None:
         self._current_scheduler = scheduler
-        self.algorithm = algorithm
-        self.scheduler_kwargs = dict(scheduler_kwargs or {})
-        logger.info(
-            "Reconfigured scheduler: algorithm=%s kwargs=%s",
-            algorithm,
-            scheduler_kwargs,
-        )
+        self.config = config
+        logger.info("Reconfigured scheduler: %s", config)
 
     def _send_prepare_ack(self, operation_id: str, *, error: str | None = None) -> None:
         if self.control_ack_queue is None:

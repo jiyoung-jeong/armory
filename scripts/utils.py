@@ -8,6 +8,7 @@ from typing import Any, NamedTuple, Self
 
 import numpy as np
 import tyro
+from pydantic import ConfigDict
 
 from armory.backends.mock import INFERENCE_PROFILES
 from armory.checkpoints import OPENPI_CHECKPOINT
@@ -25,6 +26,8 @@ from openpi_adapter.serve_factory import EnvMode, create_policy, get_model_dims
 
 class JsonArgs(JSONBaseModel):
     """Pydantic args base that supports `--json-path` defaults overlaid by tyro CLI flags."""
+
+    model_config = ConfigDict(extra="forbid")
 
     json_path: pathlib.Path | None = None
 

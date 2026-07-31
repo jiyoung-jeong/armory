@@ -2,20 +2,21 @@ import json
 import logging
 import pathlib
 import subprocess
+import sys
 import threading
 import time
 
 import modal
 import modal.experimental
 import requests
-from scripts.modal.images import REMOTE_ROOT, gpu_server_image
+from scripts.modal.images import gpu_server_image
 
 log = logging.getLogger(__name__)
 
 app = modal.App("armory-serve")
 
 GPU = "l40s"
-REGION = "us"
+REGION = "us-east"
 ENV_MODE = "LIBERO"
 MAX_BATCH_SIZE = 5
 PORT = 8080
@@ -23,11 +24,6 @@ MODEL = "PI05"
 SCHEDULING_ALGORITHM = "lookahead-actions"
 ALPHA = 2.0
 MIN_OBSERVATION_STEP_DIFF = 12
-
-ACTION_HORIZON_MULTIPLIERS = {
-    10: 1.0,
-    20: 1.0,
-}
 
 checkpoint_volume = modal.Volume.from_name("openpi-checkpoints", create_if_missing=True)
 CHECKPOINT_VOLUME_PATH = "/checkpoints"
@@ -68,21 +64,21 @@ class ModalPolicyServer:
                 {
                     "model": MODEL.lower(),
                     "env": ENV_MODE.lower(),
-                    "max_batch_size": MAX_BATCH_SIZE,
                     "port": PORT,
-                    "scheduler": {
-                        "scheduling_algorithm": SCHEDULING_ALGORITHM,
-                        "alpha": ALPHA,
-                        "action_horizon_multipliers": {
-                            str(k): v for k, v in ACTION_HORIZON_MULTIPLIERS.items()
+                    "server": {
+                        "max_batch_size": MAX_BATCH_SIZE,
+                        "scheduler": {
+                            "scheduling_algorithm": SCHEDULING_ALGORITHM,
+                            "alpha": ALPHA,
                         },
                     },
                 }
             )
         )
         cmd = [
-            "python",
-            str(REMOTE_ROOT / "scripts/serve.py"),
+            sys.executable,
+            "-m",
+            "scripts.serve",
             "--json-path",
             str(args_path),
         ]

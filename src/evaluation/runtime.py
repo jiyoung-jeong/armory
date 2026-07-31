@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
@@ -12,7 +10,7 @@ import numpy as np
 from armory_client.schemas import Action, ActionChunk, Observation
 from evaluation.agents.base import Agent
 from evaluation.envs.base import Environment
-from evaluation.types import Timestamp
+from evaluation.types import StepRecord
 
 logger = logging.getLogger(__name__)
 
@@ -33,43 +31,29 @@ def _has_time_for_step(deadline: float, step_time: float) -> bool:
 class Rollout:
     """The product of running one episode: everything needed to log/save it.
 
-    Per-step data is captured live (``observations`` and ``timestamps``); the
+    Per-step data is captured live (``observations`` and ``steps``); the
     outcome is read from the env at episode end. Agent diagnostics are captured
     at the same boundary, before the next episode's reset clears them.
     """
 
     observations: tuple[Observation, ...]
-    timestamps: tuple[Timestamp, ...]
+    steps: tuple[StepRecord, ...]
     success: bool
     truncated: bool
     initial_state: np.ndarray | None
     action_chunks: tuple[ActionChunk, ...]
-    actions_left: tuple[int, ...]
 
 
-# TODO: episode sink pattern is weird, just return rollout and send function call to ThreadPoolExecutor
-# also don't have runtime own threadpoolexecutor, since close might be called before. when it comes time
-# we can discuss how to manage lifecycle. Maybe the caller should make sure ThreadPoolExecutor finishes.
 class Runtime:
     def __init__(
         self,
         environment: Environment,
         agent: Agent,
         control_hz: float = 0.0,
-        episode_sink: Callable[[Rollout], None] | None = None,
     ) -> None:
         self._environment = environment
         self._agent = agent
         self._step_time = 1 / control_hz if control_hz > 0 else 0.0
-        self._episode_sink = episode_sink
-        # A single worker preserves episode order for sinks that allocate output
-        # names sequentially, while allowing the next rollout to begin during IO.
-        self._save_executor = (
-            ThreadPoolExecutor(max_workers=1, thread_name_prefix="episode-save")
-            if episode_sink is not None
-            else None
-        )
-        self._save_futures: list[Future[None]] = []
 
     def has_time_to_step(self, deadline: float) -> bool:
         """Whether a step started now would land before ``deadline``.
@@ -106,7 +90,7 @@ class Runtime:
             record a step — the caller should stop looping.
         """
         observations: list[Observation] = []
-        timestamps: list[Timestamp] = []
+        steps: list[StepRecord] = []
 
         last_step_time = time.perf_counter()
 
@@ -118,51 +102,36 @@ class Runtime:
             if time.monotonic() > deadline:
                 break
             observations.append(observation)
-            timestamps.append(
-                Timestamp(
+            steps.append(
+                StepRecord(
                     timestamp=step_timestamp,
                     env_step=observation.step,
                     action_chunk_index=action.action_chunk_index,
                     action_index=action.index_in_chunk,
+                    actions_left=action.actions_left,
                 )
             )
             last_step_time = self._pace(last_step_time, self._step_time)
 
-        if not timestamps:
+        if not steps:
             return None
 
-        episode_data = self._agent.snapshot_episode_data()
         truncated = not self._environment.is_episode_complete()
         logger.info("Episode truncated by deadline." if truncated else "Episode completed.")
-        rollout = Rollout(
+        return Rollout(
             observations=tuple(observations),
-            timestamps=tuple(timestamps),
+            steps=tuple(steps),
             success=self._environment.current_success,
             truncated=truncated,
             initial_state=self._environment.current_initial_state,
-            action_chunks=tuple(episode_data.action_chunks),
-            # The agent records one entry per get_action call, including a step
-            # dropped above for landing past the deadline.
-            actions_left=tuple(episode_data.actions_left[: len(timestamps)]),
+            action_chunks=self._agent.action_chunks,
         )
-        if self._episode_sink is not None:
-            assert self._save_executor is not None
-            self._save_futures.append(self._save_executor.submit(self._episode_sink, rollout))
-        return rollout
 
     def close(self) -> None:
         try:
-            try:
-                self._environment.close()
-            finally:
-                self._agent.close()
+            self._environment.close()
         finally:
-            if self._save_executor is not None:
-                # Do not return until every accepted rollout is durable.
-                self._save_executor.shutdown(wait=True)
-                # ``shutdown`` waits but does not re-raise worker exceptions.
-                for save_future in self._save_futures:
-                    save_future.result()
+            self._agent.close()
 
     def _step(self) -> tuple[Observation, Action]:
         observation = self._environment.get_observation()

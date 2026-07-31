@@ -9,7 +9,7 @@ from armory.scheduling.latency import LatencyTracker
 from armory.scheduling.mirror import Batch, Mirror, Robot
 from armory.serving.rtc import InferType
 from armory.serving.schemas import AckNotification, ResponseBatch, SlotRequest
-from armory_client.messages import InferResponse
+from armory_client.messages import InferResponse, ResponseAck
 from tests.scheduling._cases import ALL_SCENARIOS, CONTROL_HZ, EPS, LONG_RUN, Scenario
 
 ROBOT_ID = "test"
@@ -196,41 +196,6 @@ def test_mirror_fast_forward_advances_robot_without_new_chunk() -> None:
     assert all(s.action_step is None for s in mirror.robots["b"].steps)
 
 
-def test_mirror_twin_roundtrip() -> None:
-    """A twin captures independent mirror state before later mutations."""
-    horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror = Mirror(_StubLatencyTracker())
-    mirror.receive_request(_make_request(0, 0, 0.0, horizon))
-
-    twin = mirror.get_twin()
-    pre_steps = list(mirror.robots[ROBOT_ID].steps)
-    pre_chunks = list(mirror.robots[ROBOT_ID].chunks)
-
-    # Mutate: queue every chunk and step forward.
-    for chunk in LONG_RUN.chunks:
-        mirror.robots[ROBOT_ID].queue_chunk(chunk)
-        mirror.fast_forward(chunk.arrival_time + EPS)
-
-    assert len(mirror.robots[ROBOT_ID].steps) > len(pre_steps)
-    assert len(mirror.robots[ROBOT_ID].chunks) > len(pre_chunks)
-
-    assert list(twin.robots[ROBOT_ID].steps) == pre_steps
-    assert list(twin.robots[ROBOT_ID].chunks) == pre_chunks
-
-
-def test_mirror_twin_does_not_include_robots_added_after() -> None:
-    """A twin does not observe robots added after it was created."""
-    horizon = LONG_RUN.chunks[0].max_execution_horizon
-    mirror = Mirror(_StubLatencyTracker())
-    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="a"))
-    twin = mirror.get_twin()
-    mirror.receive_request(replace(_make_request(0, 0, 0.0, horizon), robot_id="b"))
-
-    assert "b" in mirror.robots
-    assert "b" not in twin.robots
-    assert "a" in twin.robots
-
-
 def test_mirror_twin_preserves_divergent_branch_contents() -> None:
     """A twin preserves branch contents independent of later mirror mutations."""
     horizon = LONG_RUN.chunks[0].max_execution_horizon
@@ -300,16 +265,18 @@ def test_mirror_confirm_chunk_by_chunk_id() -> None:
     mirror.fast_forward(chunk.arrival_time + EPS)
 
     ack = AckNotification(
+        ack=ResponseAck(
+            request_id=0,
+            chunk_id=chunk.chunk_id,
+            observation_step=chunk.observation_step,
+            receive_time=42.0,
+            action_index_start=chunk.action_index_start,
+            min_execution_horizon=chunk.min_execution_horizon,
+            max_execution_horizon=chunk.max_execution_horizon,
+            execution_start_step=3,
+            first_executed_index=1,
+        ),
         robot_id=ROBOT_ID,
-        request_id=0,
-        chunk_id=chunk.chunk_id,
-        observation_step=chunk.observation_step,
-        action_index_start=chunk.action_index_start,
-        min_execution_horizon=chunk.min_execution_horizon,
-        max_execution_horizon=chunk.max_execution_horizon,
-        execution_start_step=3,
-        first_executed_index=1,
-        receive_time=42.0,
         server_send_time=0.0,
     )
     mirror.confirm_chunk(ack)

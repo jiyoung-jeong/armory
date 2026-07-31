@@ -4,15 +4,22 @@ import pathlib
 import shutil
 import sys
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
-from functools import partial
+from multiprocessing.queues import Queue
 from multiprocessing.synchronize import Barrier
+
+# Keep direct ``python scripts/run.py`` invocation compatible with the package
+# imports used when the runner is launched as ``python -m scripts.run``.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from pydantic import model_validator
 from scripts.utils import JsonArgs
 
-import logging_config
 from armory.serving.protocol import SchedulerConfig
+from armory.utils import seed_everything
+from armory.utils.logging_config import setup_logging, setup_worker_logging
 from armory_client.action_chunk_broker import ActionChunkBroker
 from armory_client.client import BidirectionalWebsocket
 from evaluation.agents.base import Agent
@@ -26,7 +33,6 @@ from evaluation.runtime import Runtime
 from evaluation.save import SaveMeta, save_episode
 from evaluation.server_control_client import ServerControlClient
 from evaluation.types import ExperimentConfig
-from utils import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +94,7 @@ def create_agent(args: Args, robot_idx: int, environment: _environment.Environme
         host=args.host,
         port=args.port,
         control_hz=robot.control_hz,
+        weight=robot.weight,
     )
     ws_client.connect()
 
@@ -107,6 +114,7 @@ def run_robot(
     robot_idx: int,
     start_barrier: Barrier,
     libero_spec: object | None = None,
+    log_queue: Queue | None = None,
 ) -> None:
     """One robot's whole life: seed, build env/agent, roll out, tear down.
 
@@ -114,6 +122,9 @@ def run_robot(
     multi-robot fleet; in the latter case the per-process isolation keeps heavy
     env state and the websocket receive thread separate per robot.
     """
+    if log_queue is not None:
+        setup_worker_logging(log_queue, process_name=f"robot_{robot_idx}")
+
     config = args.experiment_config
     seed_everything(config.seed + robot_idx)
 
@@ -131,12 +142,7 @@ def run_robot(
         save_video=not isinstance(config.environment, MockConfig),
     )
 
-    runtime = Runtime(
-        environment,
-        agent,
-        control_hz=meta.control_hz,
-        episode_sink=partial(save_episode, meta=meta),
-    )
+    runtime = Runtime(environment, agent, control_hz=meta.control_hz)
     # Held with the first episode reset and every robot ready to step, so the
     # fleet is whole for the entire deadline below rather than trickling in as
     # each environment finishes resetting.
@@ -144,19 +150,23 @@ def run_robot(
     start_barrier.wait(timeout=_FLEET_START_TIMEOUT_S)
 
     deadline = time.monotonic() + args.experiment_config.time_limit
-    try:
-        episode = 0
-        while runtime.run_episode(deadline) is not None:
-            episode += 1
-            runtime.start_episode()
+    # A single worker preserves episode order for the sequentially named output
+    # folders, while allowing the next rollout to begin during IO.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="episode-save") as save_executor:
+        saves: list[Future[None]] = []
+        try:
+            while (rollout := runtime.run_episode(deadline)) is not None:
+                saves.append(save_executor.submit(save_episode, rollout, meta))
+                runtime.start_episode()
+            logger.info("robot %d: ran %d episode(s)", meta.robot_idx, len(saves))
+        finally:
+            runtime.close()
+    # ``ThreadPoolExecutor.__exit__`` waits but does not re-raise worker exceptions.
+    for save in saves:
+        save.result()
 
-        logger.info("robot %d: ran %d episode(s)", meta.robot_idx, episode)
 
-    finally:
-        runtime.close()
-
-
-def run_fleet(args: Args) -> None:
+def run_fleet(args: Args, log_queue: Queue) -> None:
     num_robots = len(args.experiment_config.robots)
     start_barrier = multiprocessing.Barrier(num_robots)
     libero_specs: list[object | None]
@@ -180,7 +190,7 @@ def run_fleet(args: Args) -> None:
     processes = [
         multiprocessing.Process(
             target=run_robot,
-            args=(args, robot_idx, start_barrier, libero_specs[robot_idx]),
+            args=(args, robot_idx, start_barrier, libero_specs[robot_idx], log_queue),
             name=f"robot_{robot_idx}",
         )
         for robot_idx in range(num_robots)
@@ -200,18 +210,23 @@ def main(args: Args) -> None:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    logging_config.setup_logging(log_path=args.output_dir / "run.log", level=logging.INFO)
+    log_queue, log_listener = setup_logging(
+        log_path=args.output_dir / "run.log", level=logging.INFO
+    )
 
-    if args.agent == AgentType.POLICY:
-        control_client = ServerControlClient(host=args.host, port=args.port)
-        control_client.prepare_server(args.scheduler_config)
+    try:
+        if args.agent == AgentType.POLICY:
+            control_client = ServerControlClient(host=args.host, port=args.port)
+            control_client.prepare_server(args.scheduler_config)
 
-    args.to_json(args.output_dir / "experiment_args.json")
+        args.to_json(args.output_dir / "experiment_args.json")
 
-    run_fleet(args)
+        run_fleet(args, log_queue)
 
-    calculate_metrics(args.output_dir)
-    generate_all_plots(args.output_dir)
+        calculate_metrics(args.output_dir)
+        generate_all_plots(args.output_dir)
+    finally:
+        log_listener.stop()
 
 
 if __name__ == "__main__":

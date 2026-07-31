@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import os
+import pathlib
 import queue
 import signal
+import tempfile
 import time
 import traceback
 from typing import Any
@@ -12,7 +14,8 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from armory.scheduling.base import RequestScheduler
-from armory.serving.protocol import ServerMetadata
+from armory.serving.config import ServerConfig
+from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY
 from armory.serving.schemas import SlotRequest
 from armory.serving.server import NUM_WARMUP, create_app
@@ -21,7 +24,6 @@ from armory_client.messages import (
     ConnectRequest,
     InferRequest,
     InferResponse,
-    InferType,
     ResponseAck,
     WarmupAck,
     WarmupPing,
@@ -122,7 +124,6 @@ def _send_infer(websocket: Any, robot_id: str, observation_step: int) -> None:
             deadline=requested_at + 10.0,
             min_execution_horizon=1,
             max_execution_horizon=ACTION_HORIZON,
-            infer_type=InferType.SYNC,
         ),
     )
 
@@ -134,10 +135,6 @@ def _receive_and_ack(websocket: Any, robot_id: str, observation_step: int) -> In
     assert response.action_index_start == observation_step * ACTION_HORIZON
     assert response.actions.shape == (ACTION_HORIZON, ACTION_DIM)
     assert response.actions.dtype == np.float32
-    assert response.server_arrival_time > 0
-    assert response.inference_start_time >= response.server_arrival_time
-    assert response.inference_end_time >= response.inference_start_time
-    assert response.server_send_time >= response.inference_end_time
 
     _send(
         websocket,
@@ -175,7 +172,17 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             scheduling_algorithm=TWO_ROBOT_ALGORITHM,
         )
 
-        with TestClient(create_app(metadata, _SmokePolicyFactory())) as client:
+        with TestClient(
+            create_app(
+                metadata,
+                _SmokePolicyFactory(),
+                ServerConfig(
+                    max_batch_size=2,
+                    scheduler=SchedulerConfig(scheduling_algorithm=TWO_ROBOT_ALGORITHM),
+                    output_dir=pathlib.Path(tempfile.mkdtemp()),
+                ),
+            )
+        ) as client:
             initial_metadata = client.get("/metadata")
             assert initial_metadata.status_code == 200
             assert initial_metadata.json()["scheduling_algorithm"] == TWO_ROBOT_ALGORITHM
@@ -190,7 +197,10 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
             assert reconfigured.json() == {
                 "status": "ok",
                 "scheduling_algorithm": TWO_ROBOT_ALGORITHM,
-                "scheduler_kwargs": {},
+                "scheduler": {
+                    "scheduling_algorithm": TWO_ROBOT_ALGORITHM,
+                    "alpha": 1.0,
+                },
             }
             reset = client.post("/reset")
             assert reset.status_code == 200

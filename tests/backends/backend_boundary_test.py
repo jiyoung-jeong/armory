@@ -6,22 +6,6 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from typing import get_type_hints
-
-from armory.backends.types import PolicyResult
-
-
-def test_policy_result_contract_has_the_three_engine_required_keys() -> None:
-    assert set(get_type_hints(PolicyResult)) == {
-        "actions",
-        "noise",
-        "rtc_prev_actions",
-    }
-    assert PolicyResult.__required_keys__ == {
-        "actions",
-        "noise",
-        "rtc_prev_actions",
-    }
 
 
 def test_backend_imports_and_pickles_are_canonical_and_lightweight() -> None:

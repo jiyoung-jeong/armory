@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from armory.serving.protocol import SchedulerConfig, ServerMetadata
 from armory.serving.scheduler import SCHEDULER_REGISTRY
 from armory.serving.schemas import PrepareAck, PrepareScheduler, Reconfigure, ResetAll
-from armory.serving.server_runtime import ServerState
+from armory.serving.server_runtime import ServerState, write_metadata
 
 # Keep existing log attribution while this code moves out of server.py.
 logger = logging.getLogger("armory.serving.server")
@@ -23,42 +23,26 @@ PREPARE_TIMEOUT_S = 60.0
 
 def _resolve_scheduler_config(
     body: dict[str, Any], state: ServerState, *, allow_alpha: bool = False
-) -> tuple[str, dict[str, Any]]:
-    algorithm = body.get("scheduling_algorithm") or state.current_algorithm
-    if algorithm not in SCHEDULER_REGISTRY:
+) -> SchedulerConfig:
+    algorithm = body.get("scheduling_algorithm") or state.config.scheduler.scheduling_algorithm
+    if not isinstance(algorithm, str) or algorithm not in SCHEDULER_REGISTRY:
         raise HTTPException(
             status_code=400,
             detail=f"Unknown scheduling_algorithm {algorithm!r}; "
             f"available: {sorted(SCHEDULER_REGISTRY)}",
         )
 
-    if "action_horizon_multipliers" in body and body["action_horizon_multipliers"] is not None:
-        try:
-            multipliers = {int(k): float(v) for k, v in body["action_horizon_multipliers"].items()}
-        except (TypeError, ValueError, AttributeError) as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"action_horizon_multipliers must be a dict of int->float pairs ({exc})",
-            ) from exc
-    else:
-        multipliers = dict(
-            state.current_scheduler_kwargs.get("action_horizon_multipliers")
-            or state.boot_action_horizon_multipliers
-        )
-
-    alpha = state.boot_alpha
+    alpha = state.config.scheduler.alpha
     if allow_alpha:
         try:
-            alpha = float(body.get("alpha", state.current_scheduler_kwargs.get("alpha", alpha)))
+            alpha = float(body.get("alpha", alpha))
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=f"alpha must be a float ({exc})") from exc
 
-    config = SchedulerConfig(
+    return SchedulerConfig(
         scheduling_algorithm=algorithm,
         alpha=alpha,
-        action_horizon_multipliers=multipliers,
     )
-    return algorithm, dict(config.to_scheduler_kwargs() or {})
 
 
 def _drain_batches(state: ServerState) -> int:
@@ -110,17 +94,16 @@ def register_routes(
         state: ServerState | None = getattr(request.app.state, "server", None)
         payload = asdict(metadata)
         if state is not None:
-            payload["scheduling_algorithm"] = state.current_algorithm
-            payload["scheduler_kwargs"] = dict(state.current_scheduler_kwargs)
+            payload["scheduling_algorithm"] = state.config.scheduler.scheduling_algorithm
+            payload["scheduler"] = state.config.scheduler.model_dump()
         return payload
 
     @app.post("/reconfigure")
     async def reconfigure(request: Request) -> dict:
-        """Swap the scheduler's algorithm and/or multipliers in place.
+        """Swap the scheduler's algorithm in place.
 
-        Body: ``{"scheduling_algorithm": str?, "action_horizon_multipliers": dict?}``.
-        Either field is optional; omitted fields preserve the current value.
-        Returns the resulting effective scheduler_kwargs.
+        Body: ``{"scheduling_algorithm": str?}``, optional; an omitted field
+        preserves the current value. Returns the effective SchedulerConfig.
         """
         state: ServerState = request.app.state.server
         body = await request.json() if await request.body() else {}
@@ -128,21 +111,16 @@ def register_routes(
             raise HTTPException(status_code=400, detail="Request body must be a JSON object")
 
         async with state.control_lock:
-            algorithm, kwargs = _resolve_scheduler_config(body, state)
-            await state.scheduler_sock.send_pyobj(
-                Reconfigure(algorithm=algorithm, scheduler_kwargs=kwargs)
-            )
-            state.current_algorithm = algorithm
-            state.current_scheduler_kwargs = kwargs
-        logger.info(
-            "Reconfigure requested: algorithm=%s scheduler_kwargs=%s",
-            algorithm,
-            kwargs,
-        )
+            scheduler_config = _resolve_scheduler_config(body, state)
+            config = state.config.model_copy(update={"scheduler": scheduler_config})
+            await state.scheduler_sock.send_pyobj(Reconfigure(config=config))
+            state.config = config
+            write_metadata(state, metadata)
+        logger.info("Reconfigure requested: %s", config.scheduler)
         return {
             "status": "ok",
-            "scheduling_algorithm": algorithm,
-            "scheduler_kwargs": dict(kwargs),
+            "scheduling_algorithm": scheduler_config.scheduling_algorithm,
+            "scheduler": config.scheduler.model_dump(),
         }
 
     @app.post("/prepare")
@@ -160,31 +138,30 @@ def register_routes(
                     detail="Cannot prepare while robot sessions are active: "
                     f"{sorted(state.response_queues)}",
                 )
-            algorithm, kwargs = _resolve_scheduler_config(body, state, allow_alpha=True)
+            scheduler_config = _resolve_scheduler_config(body, state, allow_alpha=True)
+            config = state.config.model_copy(update={"scheduler": scheduler_config})
             operation_id = uuid.uuid4().hex
             drained = _drain_batches(state)
             await state.scheduler_sock.send_pyobj(
                 PrepareScheduler(
                     operation_id=operation_id,
-                    algorithm=algorithm,
-                    scheduler_kwargs=kwargs,
+                    config=config,
                 )
             )
             acknowledged = await _wait_for_prepare(state, operation_id)
-            state.current_algorithm = algorithm
-            state.current_scheduler_kwargs = kwargs
+            state.config = config
+            write_metadata(state, metadata)
 
         logger.info(
-            "Prepared next run: operation_id=%s algorithm=%s scheduler_kwargs=%s",
+            "Prepared next run: operation_id=%s scheduler=%s",
             operation_id,
-            algorithm,
-            kwargs,
+            scheduler_config,
         )
         return {
             "status": "ok",
             "operation_id": operation_id,
-            "scheduling_algorithm": algorithm,
-            "scheduler_kwargs": kwargs,
+            "scheduling_algorithm": scheduler_config.scheduling_algorithm,
+            "scheduler": scheduler_config.model_dump(),
             "drained_batches": drained,
             "acknowledged": acknowledged,
         }

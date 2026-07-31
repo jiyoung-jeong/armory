@@ -4,17 +4,23 @@ import logging
 import multiprocessing as mp
 import pathlib
 import socket
+import sys
 from dataclasses import field
 from typing import Literal
+
+# Keep direct ``python scripts/serve.py`` invocation compatible with the
+# package imports used when the server is launched as ``python -m scripts.serve``.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from scripts.utils import JsonArgs
 
 from armory.backends.registry import resolve_policy
 from armory.backends.types import EnvMode, ModelFamily
-from armory.serving.protocol import SchedulerConfig
+from armory.serving.config import ServerConfig
 from armory.serving.server import PolicyServer
+from armory.utils import seed_everything
 from armory.utils.logging_config import setup_logging
-from utils import seed_everything  # noqa: E402
 
 
 @dataclasses.dataclass
@@ -23,17 +29,21 @@ class Checkpoint:
 
     config: str
     dir: str
+    type: Literal["checkpoint"] = "checkpoint"
 
 
 @dataclasses.dataclass
 class Default:
     """Use the default checkpoint for the given --env."""
 
+    type: Literal["default"] = "default"
+
 
 @dataclasses.dataclass
 class Mock:
     """Use a lightweight mock policy that does not load weights or use a GPU."""
 
+    type: Literal["mock"] = "mock"
     action_horizon: int = 50
     action_dim: int = 14
     model: str = "pi05"
@@ -44,10 +54,7 @@ class Args(JsonArgs):
     env: EnvMode = EnvMode.LIBERO
     model: ModelFamily = ModelFamily.PI05
     policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
-    num_steps: int = 10
-
-    max_batch_size: int = 1
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    server: ServerConfig = field(default_factory=ServerConfig)
 
     port: int = 8080
     seed: int = 7
@@ -57,7 +64,6 @@ class Args(JsonArgs):
 
 def main(args: Args) -> None:
     seed_everything(args.seed)
-    # TODO: there are two logging_config files. Let's unify them into one file and prefer concise implementations
     log_path = (
         pathlib.Path(args.log_dir)
         / f"serve_{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d_%H%M%S')}.log"
@@ -76,9 +82,9 @@ def main(args: Args) -> None:
         env=args.env,
         policy_config=policy_config,
         policy_dir=policy_dir,
-        max_batch_size=args.max_batch_size,
-        num_steps=args.num_steps,
-        scheduling_algorithm=args.scheduler.scheduling_algorithm,
+        max_batch_size=args.server.max_batch_size,
+        num_steps=args.server.engine.num_steps,
+        scheduling_algorithm=args.server.scheduler.scheduling_algorithm,
         mock=mock,
     )
 
@@ -86,15 +92,10 @@ def main(args: Args) -> None:
     local_ip = socket.gethostbyname(hostname)
     logging.info("Creating server (host: %s, ip: %s)", hostname, local_ip)
 
-    # TODO: don't need to turn into kwargs anymore, just pass the pydantic BaseModel
-    # Can delete to_scheduler_kwargs() function definition after too.
-    scheduler_kwargs = args.scheduler.to_scheduler_kwargs()
-    resolved.metadata.scheduler_kwargs = scheduler_kwargs
-
     server = PolicyServer(
         metadata=resolved.metadata,
         policy_factory=resolved.factory,
-        scheduler_kwargs=scheduler_kwargs,
+        config=args.server,
         log_queue=log_queue,
     )
     try:

@@ -2,41 +2,12 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import pickle
-from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
-from armory.serving.schemas import RobotID
+from armory.serving.schemas import RobotID, SlotData
 
 MAX_OBS_BYTES = 10 * 1024 * 1024  # 10MB per slot, enough for a few 224x224 images
-
-
-@dataclass(slots=True)
-class SlotData:
-    """Observation and request metadata written together atomically into a slot.
-
-    This ensures that when the GPU worker reads a slot, the metadata (timestamps,
-    step, etc.) always corresponds to the observation being inferred, even if the
-    slot was overwritten by a newer request after the SlotRequest was enqueued.
-    """
-
-    robot_id: RobotID
-    obs: dict
-    request_id: int
-    arrival_timestamp: float
-    observation_step: int
-    action_index_start: int
-    request_timestamp: float
-    deadline: float
-    min_execution_horizon: int
-    max_execution_horizon: (
-        int  # how many steps of the predicted chunk the robot is willing to execute
-    )
-    infer_type: Any
-    params: Any
-    noise: Any  # np.ndarray | None
-    control_hz: float
 
 
 class RobotSlot:

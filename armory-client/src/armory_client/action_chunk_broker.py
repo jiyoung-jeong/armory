@@ -1,3 +1,4 @@
+import dataclasses
 from collections import deque
 
 from armory_client.messages import InferResponse
@@ -16,25 +17,21 @@ class ActionChunkBroker:
         self._action_chunks: list[ActionChunk] = []
         self._next_observation_step: int = 0  # next observation step to see
         self._next_action_step: int = 0  # next action step to execute
-        self._actions_left_history: list[int] = []
 
     def reset(self) -> None:
         self._next_observation_step = 0
         self._next_action_step = 0
         self._action_queue.clear()
         self._action_chunks = []
-        self._actions_left_history = []
 
     def get_action(self, observation_step: int) -> Action | None:
-        self._actions_left_history.append(len(self._action_queue))
         self._next_observation_step = observation_step + 1
-        if self._action_queue:
-            action = self._action_queue.popleft()
-            self._next_action_step += 1
-        else:
+        if not self._action_queue:
             return None
-
-        return action
+        self._next_action_step += 1
+        # Depth before the pop, so a starved step is the one that records 0.
+        actions_left = len(self._action_queue)
+        return dataclasses.replace(self._action_queue.popleft(), actions_left=actions_left)
 
     def receive_response(self, infer_response: InferResponse) -> ActionChunk:
         action_chunk = ActionChunk.from_infer_response(
@@ -69,11 +66,6 @@ class ActionChunkBroker:
     @property
     def current_action_chunk(self) -> ActionChunk | None:
         return self._action_chunks[-1] if self._action_chunks else None
-
-    @property
-    def actions_left_history(self) -> list[int]:
-        """Actions remaining in queue after each control step."""
-        return list(self._actions_left_history)
 
     @property
     def next_action_step(self) -> int:

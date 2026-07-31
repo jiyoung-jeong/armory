@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import multiprocessing as mp
+import pathlib
 import signal
 import time
+from dataclasses import replace
 from multiprocessing.synchronize import Event
 
 import numpy as np
@@ -11,23 +14,25 @@ import zmq
 
 from armory.backends.types import PolicyFactory, PolicyResult, ServingPolicy
 from armory.scheduling.latency import EMALatencyTracker
+from armory.serving.config import ServerConfig
 from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import (
     AckNotification,
     BatchProfile,
     GpuPrepared,
-    InternalRequest,
     PrepareAck,
     PrepareGpu,
     PrepareScheduler,
+    Reconfigure,
     RequestBatch,
     ResetAll,
     ResponseBatch,
     RobotID,
+    SlotData,
     SlotRequest,
     WarmupSeed,
 )
-from armory.serving.slots import RobotSlots, SlotData
+from armory.serving.slots import RobotSlots
 from armory.utils import logging_config
 from armory_client.messages import (
     InferResponse,
@@ -50,22 +55,24 @@ class GpuWorker:
     def __init__(
         self,
         policy_factory: PolicyFactory,
-        max_batch_size: int,
+        config: ServerConfig,
         slots: RobotSlots,
         batch_queue: mp.Queue,
         server_out_ep: str,
         gpu_out_ep: str,
         ready_event: Event,
+        metrics_dir: pathlib.Path,
         log_queue: mp.Queue | None = None,
         control_ack_queue: mp.Queue | None = None,
     ) -> None:
         self.policy_factory = policy_factory
-        self.max_batch_size = max_batch_size
+        self.config = config
         self.slots = slots
         self.batch_queue = batch_queue
         self.server_out_ep = server_out_ep
         self.gpu_out_ep = gpu_out_ep
         self.ready_event = ready_event
+        self.metrics_dir = metrics_dir
         self.log_queue = log_queue
         self.control_ack_queue = control_ack_queue
         self._seen_prepare_markers: set[str] = set()
@@ -80,7 +87,7 @@ class GpuWorker:
         logger.info("GPU worker starting")
 
         policy = self.policy_factory()
-        policy.warmup(self.max_batch_size)
+        policy.warmup(self.config.max_batch_size)
 
         ctx = zmq.Context()
 
@@ -97,6 +104,7 @@ class GpuWorker:
         self._latency_tracker = EMALatencyTracker()
         self._last_served_action_index: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
+        self._batches_log = open(self.metrics_dir / "batches.jsonl", "w")
 
         self._profile_and_send(policy, result_sock)
 
@@ -120,15 +128,15 @@ class GpuWorker:
                 end_time = time.perf_counter() + batch.idle_duration
                 while time.perf_counter() < end_time:
                     pass
-                result_sock.send_pyobj(
-                    ResponseBatch(
-                        responses=[],
-                        batch_id=batch.batch_id,
-                        batch_size=0,
-                        inference_start_time=t0,
-                        inference_duration=time.time() - t0,
-                    )
+                response_batch = ResponseBatch(
+                    responses=[],
+                    batch_id=batch.batch_id,
+                    batch_size=0,
+                    inference_start_time=t0,
+                    inference_duration=time.time() - t0,
                 )
+                result_sock.send_pyobj(response_batch)
+                self._log_batch(response_batch, [])
                 continue
 
             slot_reqs: list[SlotRequest] = batch.requests
@@ -150,22 +158,21 @@ class GpuWorker:
                     # logger.info("Dropping request %s because it's not schedulable", sr.robot_id)
 
             if len(slot_datas) == 0:
-                result_sock.send_pyobj(
-                    ResponseBatch(
-                        responses=[],
-                        batch_id=batch.batch_id,
-                        batch_size=len(slot_datas),
-                        inference_start_time=time.time(),
-                        inference_duration=0.0,
-                    )
+                response_batch = ResponseBatch(
+                    responses=[],
+                    batch_id=batch.batch_id,
+                    batch_size=len(slot_datas),
+                    inference_start_time=time.time(),
+                    inference_duration=0.0,
                 )
+                result_sock.send_pyobj(response_batch)
+                self._log_batch(response_batch, [])
                 # logger.warning("Sent empty response batch")
                 continue
 
             batch_size = len(slot_datas)
             infer_requests = [
-                InternalRequest.from_slot_data(sd, self._make_params(sd, batch_size))
-                for sd in slot_datas
+                replace(sd, params=self._make_params(sd, batch_size)) for sd in slot_datas
             ]
 
             logger.info("Inferring batch of %d", len(infer_requests))
@@ -175,7 +182,7 @@ class GpuWorker:
             inference_duration = t1 - t0
 
             responses = [
-                self._make_infer_response(slot_data, action, chunk_id, t0, t1)
+                self._make_infer_response(slot_data, action, chunk_id)
                 for slot_data, action, chunk_id in zip(slot_datas, actions, chunk_ids, strict=True)
             ]
 
@@ -184,28 +191,42 @@ class GpuWorker:
             )  # NOTE from Rohan: this was originally slot_reqs
 
             # Send responses directly to WS — not via scheduler
-            result_sock.send_pyobj(
-                ResponseBatch(
-                    responses=responses,
-                    batch_id=batch.batch_id,
-                    batch_size=len(slot_requests),
-                    inference_start_time=t0,
-                    inference_duration=inference_duration,
-                )
+            response_batch = ResponseBatch(
+                responses=responses,
+                batch_id=batch.batch_id,
+                batch_size=len(slot_requests),
+                inference_start_time=t0,
+                inference_duration=inference_duration,
             )
+            result_sock.send_pyobj(response_batch)
+            self._log_batch(response_batch, slot_requests)
             logger.debug("Sent response batch: %s", responses)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
+    def _log_batch(self, response_batch: ResponseBatch, requests: list[SlotRequest]) -> None:
+        self._batches_log.write(
+            json.dumps(
+                {
+                    "batch_id": response_batch.batch_id,
+                    "robot_ids": [request.robot_id for request in requests],
+                    "request_ids": [request.request_id for request in requests],
+                    "batch_size": response_batch.batch_size,
+                    "inference_start_time": response_batch.inference_start_time,
+                    "inference_duration": response_batch.inference_duration,
+                }
+            )
+            + "\n"
+        )
+        self._batches_log.flush()
+
     @staticmethod
     def _make_infer_response(
         slot_data: SlotData,
         result: PolicyResult,
         chunk_id: int,
-        inference_start_time: float,
-        inference_end_time: float,
     ) -> InferResponse:
         """Translate one internal policy result into the client wire response."""
         return InferResponse(
@@ -219,16 +240,13 @@ class GpuWorker:
             max_execution_horizon=slot_data.max_execution_horizon,
             actions=result["actions"],
             noise=result["noise"],
-            server_arrival_time=slot_data.arrival_timestamp,
-            inference_start_time=inference_start_time,
-            inference_end_time=inference_end_time,
         )
 
     def _profile_and_send(self, policy: ServingPolicy, notify_sock: zmq.Socket) -> None:
-        logger.info("Profiling batch latency for sizes 1..%d", self.max_batch_size)
+        logger.info("Profiling batch latency for sizes 1..%d", self.config.max_batch_size)
         profile: dict[int, float] = {}
         request = policy.make_infer_request()
-        for batch_size in range(1, self.max_batch_size + 1):
+        for batch_size in range(1, self.config.max_batch_size + 1):
             latencies = []
             for _ in range(PROFILE_ITERATIONS):
                 start = time.perf_counter()
@@ -256,7 +274,11 @@ class GpuWorker:
             elif isinstance(msg, PrepareScheduler):
                 # This is the ordered marker for the WS→GPU PUB stream. The
                 # PrepareGpu queue item remains the work-completion barrier.
+                self.config = msg.config
                 self._seen_prepare_markers.add(msg.operation_id)
+            elif isinstance(msg, Reconfigure):
+                self.config = msg.config
+                logger.info("Received Reconfigure: %s", msg.config)
             elif isinstance(msg, SlotRequest):
                 self._latency_tracker.update_obs(
                     msg.robot_id, msg.arrival_timestamp, msg.request_timestamp
@@ -264,7 +286,7 @@ class GpuWorker:
                 logger.debug("Received slot request: %s", msg)
             elif isinstance(msg, AckNotification):
                 self._latency_tracker.update_action_delivery(
-                    msg.robot_id, msg.receive_time, msg.server_send_time
+                    msg.robot_id, msg.ack.receive_time, msg.server_send_time
                 )
                 logger.debug("Received ack notification: %s", msg)
             elif isinstance(msg, WarmupSeed):

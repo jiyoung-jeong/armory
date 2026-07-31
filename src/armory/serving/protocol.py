@@ -3,7 +3,7 @@ import pathlib
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SchedulerConfig(BaseModel):
@@ -13,27 +13,16 @@ class SchedulerConfig(BaseModel):
     POST /reconfigure or POST /prepare; clients send it per run.
     """
 
-    scheduling_algorithm: str = "greedy-deadline"
-    # POST /reconfigure preserves boot alpha; acknowledged POST /prepare may
-    # change it between runs.
-    alpha: float = 1.0
-    action_horizon_multipliers: dict[int, float] = {}
+    model_config = ConfigDict(extra="forbid")
 
-    def to_scheduler_kwargs(self) -> dict | None:
-        if self.scheduling_algorithm == "dynamic-action":
-            return {"alpha": self.alpha}
-        if self.scheduling_algorithm == "lookahead-actions":
-            return {"action_horizon_multipliers": self.action_horizon_multipliers}
-        return None
+    scheduling_algorithm: str = "greedy-deadline"
+    # POST /reconfigure preserves the current alpha; acknowledged POST /prepare
+    # may change it between runs.
+    alpha: float = 1.0
 
     def to_reconfigure_body(self) -> dict:
-        """JSON body for POST /reconfigure (alpha is boot-only, not sent)."""
-        return {
-            "scheduling_algorithm": self.scheduling_algorithm,
-            "action_horizon_multipliers": {
-                str(k): float(v) for k, v in self.action_horizon_multipliers.items()
-            },
-        }
+        """JSON body for POST /reconfigure (alpha is preserved, not sent)."""
+        return {"scheduling_algorithm": self.scheduling_algorithm}
 
     def to_prepare_body(self) -> dict:
         """JSON body for the acknowledged POST /prepare run boundary."""
@@ -55,7 +44,6 @@ class ServerMetadata:
     max_batch_size: int
     env: str  # environment mode (ALOHA, LIBERO, etc.)
     scheduling_algorithm: str
-    scheduler_kwargs: dict | None = None
     tunnel_url: str | None = None
     location: str | None = None
 

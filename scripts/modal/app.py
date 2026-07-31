@@ -24,6 +24,9 @@ from scripts.modal.images import (
 )
 from scripts.modal.utils import ARTIFACTS_VOLUME_NAME, summarize
 
+from armory.serving.protocol import SchedulerConfig
+from evaluation.server_control_client import ServerControlClient
+
 APP_NAME = "armory-experiments"
 REMOTE_ARTIFACTS_ROOT = pathlib.Path("/artifacts")
 STAGING_ROOT = pathlib.Path("/tmp/armory-modal")  # noqa: S108
@@ -31,7 +34,7 @@ CHECKPOINT_VOLUME_NAME = "openpi-checkpoints"
 
 SERVER_GPU = "L40S"
 LIBERO_GPU = "T4"
-REGION = "us"
+REGION = "us-east"
 TIMEOUT_S = 2 * 60 * 60
 POOL_TIMEOUT_S = 12 * 60 * 60
 # Safety net on the client subprocess; the container `timeout` is the real cap.
@@ -112,9 +115,20 @@ def _ship(run_dir: pathlib.Path, staging: pathlib.Path) -> str:
     for path in staging.iterdir():
         shutil.copy(path, run_dir / path.name)
     artifact_dir = REMOTE_ARTIFACTS_ROOT / run_dir.relative_to(REMOTE_ROOT)
+    artifacts_volume.reload()
     shutil.copytree(run_dir, artifact_dir, dirs_exist_ok=True)
     artifacts_volume.commit()
     return str(artifact_dir)
+
+
+def _finalize_artifact(artifact_dir: pathlib.Path) -> dict[str, Any]:
+    """Regenerate plots after all producers have shipped, then summarize."""
+    from evaluation.metrics import generate_all_plots  # noqa: PLC0415
+
+    generate_all_plots(artifact_dir)
+    summary = summarize(artifact_dir)
+    artifacts_volume.commit()
+    return summary
 
 
 def _prepare(
@@ -126,8 +140,8 @@ def _prepare(
     ``_ship``: the client's own ``--overwrite`` rmtree's its output dir at
     startup, which is the same directory, and would take them with it.
 
-    ``-m scripts.<module>`` (not the file path) so /app leads sys.path and the
-    src ``utils``/``logging_config`` win over the shadowing scripts/utils.py.
+    ``-m scripts.<module>`` (not the file path) so package imports resolve from
+    the repository root consistently.
     """
     staging = STAGING_ROOT / name
     shutil.rmtree(staging, ignore_errors=True)
@@ -172,11 +186,13 @@ def _serve(
         urls[run_id] = ("", 0)  # poison so the orchestrator doesn't hang
     finally:
         _terminate(proc)
+    artifact_dir = pathlib.Path(_ship(directory, staging))
     return {
         "run_id": run_id,
         "status": status,
         "error": error,
-        "artifact_remote_path": _ship(directory, staging),
+        "artifact_remote_path": str(artifact_dir),
+        **_finalize_artifact(artifact_dir),
     }
 
 
@@ -209,9 +225,13 @@ def _run(
         # A timed-out client must not survive into the next pooled case with
         # the same robot IDs and global scheduler state.
         _terminate(proc)
+    try:
+        result["artifact_remote_path"] = _ship(directory, staging)
+    finally:
         if shutdown is not None:
-            shutdown[run_id] = True  # release a single-case server
-    result["artifact_remote_path"] = _ship(directory, staging)
+            # Release a single-case server only after the client artifacts are
+            # committed, so its later commit can merge server telemetry into them.
+            shutdown[run_id] = True
     return result
 
 
@@ -330,6 +350,7 @@ def _apply_mode(mode: Mode, server_config: dict, client_config: dict, run_dir: s
     client_config["agent"] = mode.agent
     client_config["output_dir"] = run_dir
     client_config["overwrite"] = True
+    server_config.setdefault("server", {})["output_dir"] = run_dir
     client_config.setdefault("experiment_config", {}).setdefault("environment", {})["kind"] = (
         mode.env_kind
     )
@@ -415,6 +436,7 @@ def launch(
             shutdown=shutdown,
         )
         print(f"[{run_id}] server spawned; waiting for tunnel + /metadata", flush=True)
+        server_finished = False
         try:
             host, port = _await_server(
                 urls,
@@ -430,22 +452,36 @@ def launch(
             client_config["host"], client_config["port"] = host, port
             print(f"[{run_id}] server ready at {host}:{port}; launching client", flush=True)
             client = _client_worker(spec, _num_robots(client_config))
-            return client.run.remote(
+            result = client.run.remote(
                 run_dir=run_dir,
                 args_json=json.dumps(client_config),
                 run_id=run_id,
                 stream_logs=stream_logs,
                 shutdown=shutdown,
             )
+            server_result = handle.get(timeout=SERVER_READY_TIMEOUT_S)
+            server_finished = True
+            result.update(
+                {
+                    key: value
+                    for key, value in server_result.items()
+                    if key not in {"run_id", "status", "error"}
+                }
+            )
+            if server_result.get("status") != "ok" and result.get("status") == "ok":
+                result.update(
+                    status="failed",
+                    error=server_result.get("error") or "server failed during shutdown",
+                )
+            return result
         finally:
-            # The client sets shutdown[run_id] before returning, so this is only
-            # load-bearing on the failure paths -- including a server that never
-            # answers /metadata, which would otherwise hold a GPU until its
-            # container timeout.
-            try:
-                handle.cancel()
-            except Exception:  # noqa: BLE001
-                pass
+            if not server_finished:
+                # Failure paths include a server that never answers /metadata;
+                # cancel it so the GPU is not held until the container timeout.
+                try:
+                    handle.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
 
 
 def _run_case(payload: dict[str, Any]) -> dict[str, Any]:
@@ -479,14 +515,16 @@ class CaseRunner:
 def server_reuse_key(server_config: dict[str, Any]) -> str:
     """Canonical key for settings that require a policy-server restart.
 
-    The algorithm and lookahead horizon weights are deliberately absent: the
-    client applies them between cases through the server control plane. This is
-    the same boundary used by the main-branch interactive runner.
+    Scheduler configuration is deliberately absent: the client applies it at
+    the acknowledged ``/prepare`` boundary between cases. This is the same
+    boundary used by the main-branch interactive runner.
     """
     config = copy.deepcopy(server_config)
     config.pop("log_dir", None)
-    scheduler = config.get("scheduler") or {}
-    config["scheduler"] = {"alpha": float(scheduler.get("alpha", 1.0))}
+    server = config.get("server") or {}
+    server.pop("output_dir", None)
+    server.pop("scheduler", None)
+    config["server"] = server
     return json.dumps(config, sort_keys=True, separators=(",", ":"))
 
 
@@ -579,10 +617,63 @@ class _PooledServerSession:
         self.forwarded_port = 0
 
 
+SERVER_METRIC_FILES = (
+    "batches.jsonl",
+    "events.jsonl",
+    "scheduler_decisions.jsonl",
+)
+
+
+def _server_metric_offsets(metrics_dir: pathlib.Path) -> dict[str, int]:
+    return {
+        name: (metrics_dir / name).stat().st_size if (metrics_dir / name).exists() else 0
+        for name in SERVER_METRIC_FILES
+    }
+
+
+def _copy_pooled_server_metrics(
+    payload: dict[str, Any],
+    *,
+    metrics_dir: pathlib.Path,
+    offsets: dict[str, int],
+) -> pathlib.Path:
+    """Copy this case's fenced slice of the pool-wide telemetry into its artifact."""
+    artifacts_volume.reload()
+    run_dir = pathlib.Path(payload["run_dir"])
+    artifact_dir = REMOTE_ARTIFACTS_ROOT / run_dir.relative_to(REMOTE_ROOT)
+    destination = artifact_dir / "server"
+    destination.mkdir(parents=True, exist_ok=True)
+
+    for name in SERVER_METRIC_FILES:
+        source = metrics_dir / name
+        if not source.exists():
+            continue
+        size = source.stat().st_size
+        start = offsets.get(name, 0)
+        # A recovered server may have reopened its pool log with ``w``.
+        if start > size:
+            start = 0
+        with source.open("rb") as stream:
+            stream.seek(start)
+            (destination / name).write_bytes(stream.read())
+
+    metadata = metrics_dir / "metadata.json"
+    if metadata.exists():
+        shutil.copy2(metadata, destination / metadata.name)
+    return artifact_dir
+
+
 def _run_pooled_case(
-    payload: dict[str, Any], *, host: str, port: int, pool_id: str, reused: bool
+    payload: dict[str, Any],
+    *,
+    host: str,
+    port: int,
+    pool_id: str,
+    reused: bool,
+    server_metrics_dir: pathlib.Path,
 ) -> dict[str, Any]:
     run_id = str(payload["run_id"])
+    offsets = _server_metric_offsets(server_metrics_dir)
     try:
         spec = MODES["gpu"]
         client_config = copy.deepcopy(payload["client_config"])
@@ -601,6 +692,40 @@ def _run_pooled_case(
         )
     except Exception as exc:  # noqa: BLE001
         result = {"run_id": run_id, "status": "failed", "error": repr(exc)}
+
+    fenced = False
+    try:
+        # Fence the final in-flight batch before slicing the shared pool logs.
+        # The next client performs its own prepare, so this extra boundary only
+        # finalizes telemetry and guarantees a clean server state after failures.
+        scheduler = SchedulerConfig.model_validate(payload["client_config"]["scheduler_config"])
+        ServerControlClient(host=host, port=port).prepare_server(
+            scheduler,
+            active_session_timeout_s=60.0,
+        )
+        fenced = True
+    except Exception as exc:  # noqa: BLE001
+        previous = result.get("error")
+        detail = f"post-run server prepare failed: {exc!r}"
+        result.update(status="failed", error=f"{previous}; {detail}" if previous else detail)
+
+    if fenced:
+        try:
+            artifact_dir = _copy_pooled_server_metrics(
+                payload,
+                metrics_dir=server_metrics_dir,
+                offsets=offsets,
+            )
+            result.update(_finalize_artifact(artifact_dir))
+        except Exception as exc:  # noqa: BLE001
+            detail = f"server telemetry finalization failed: {exc!r}"
+            previous = result.get("error")
+            result.update(
+                status="failed",
+                error=f"{previous}; {detail}" if previous else detail,
+                server_metrics_error=repr(exc),
+            )
+
     result.update(server_pool_id=pool_id, server_reused=reused)
     return result
 
@@ -649,6 +774,7 @@ def _run_pooled_shard(payload: dict[str, Any]) -> list[dict[str, Any]]:
     server_config = copy.deepcopy(cases[0]["server_config"])
     pool_run_dir = str(payload["pool_run_dir"])
     server_config["log_dir"] = str(pathlib.Path(pool_run_dir) / "internal_logs")
+    server_config.setdefault("server", {})["output_dir"] = pool_run_dir
     directory, staging, argv = _prepare(
         pool_run_dir,
         name=f"server_pool_{pool_id}",
@@ -734,6 +860,7 @@ def _run_pooled_shard(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 port=port,
                 pool_id=pool_id,
                 reused=index > 0 and session.restarts == restart_count,
+                server_metrics_dir=directory / "server",
             )
             results_by_id[run_id] = result
             if result.get("status") != "ok":

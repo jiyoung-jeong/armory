@@ -8,6 +8,7 @@ from typing import Any
 
 from armory.scheduling.latency import EMALatencyTracker
 from armory.scheduling.mirror import Mirror
+from armory.serving.protocol import SchedulerConfig
 from armory.serving.schemas import (
     AckNotification,
     Idle,
@@ -22,16 +23,18 @@ logger = logging.getLogger(__name__)
 
 
 class RequestScheduler(ABC):
-    def __init__(self, batch_queue: mp.Queue, max_batch_size: int = 1):
+    def __init__(
+        self,
+        config: SchedulerConfig,
+        batch_queue: mp.Queue,
+        max_batch_size: int = 1,
+    ):
+        self._config = config
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)
-        # TODO manual: It is weird to store the SlotRequests here.
-        # Look at what data is needed to see if we don't have to
-        # store full SlotRequests..
-        self._latest_requests: dict[RobotID, SlotRequest] = {}
 
         self.next_batch_id = itertools.count(1)
         self._in_flight = 0
@@ -41,9 +44,7 @@ class RequestScheduler(ABC):
         self.latency_tracker.update_obs(
             request.robot_id, request.arrival_timestamp, request.request_timestamp
         )
-        accepted = self.mirror.receive_request(request)
-        if accepted:
-            self._latest_requests[request.robot_id] = request
+        self.mirror.receive_request(request)
 
     def on_batch_completed(self, batch: ResponseBatch) -> None:
         # Skip empty completions (no inference happened): keeps idle batches and
@@ -55,7 +56,7 @@ class RequestScheduler(ABC):
     def update_ack(self, notification: AckNotification) -> None:
         self.latency_tracker.update_action_delivery(
             notification.robot_id,
-            notification.receive_time,
+            notification.ack.receive_time,
             notification.server_send_time,
         )
         self.mirror.confirm_chunk(notification)
@@ -74,20 +75,18 @@ class RequestScheduler(ABC):
         next_avail = self.mirror.next_time_server_available()
         logger.debug("schedule stage=mirror_in_flight_count")
         in_flight = self.mirror.in_flight_batches_count
-        logger.debug(
-            "schedule stage=mirror_schedulable latest_requests=%d", len(self._latest_requests)
-        )
+        logger.debug("schedule stage=mirror_schedulable robots=%d", len(self.mirror.robots))
         candidate_ids = self.mirror.schedulable_robot_ids()
-        candidates = [self._latest_requests[robot_id] for robot_id in candidate_ids]
+        candidates = [self.mirror.robots[robot_id].last_request for robot_id in candidate_ids]
         logger.debug("schedule stage=mirror_deadlines robots=%d", len(self.mirror.robots))
         deadlines = self.mirror.deadlines() if self.mirror.robots else {}
 
         logger.debug(
-            "schedule stage=enter candidates=%d in_flight=%d slack=%+.3fs latest_requests=%d",
+            "schedule stage=enter candidates=%d in_flight=%d slack=%+.3fs robots=%d",
             len(candidates),
             in_flight,
             next_avail - started_at,
-            len(self._latest_requests),
+            len(self.mirror.robots),
         )
 
         batches, notes = self.get_next_batches(candidates)
@@ -178,7 +177,6 @@ class RequestScheduler(ABC):
         ...
 
     def reset_robot(self, robot_id: str) -> None:
-        self._latest_requests.pop(robot_id, None)
         self.mirror.reset_robot(robot_id)
         # self.latency_tracker.clear(robot_id)
 
@@ -191,6 +189,5 @@ class RequestScheduler(ABC):
         gate ``in_flight_batches_count > 0`` stays tripped after a trial ends,
         and the next trial sees zero scheduling decisions.
         """
-        self._latest_requests.clear()
         self.mirror.clear_all()
         self.latency_tracker.clear_all()
