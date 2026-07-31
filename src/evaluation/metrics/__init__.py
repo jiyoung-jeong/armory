@@ -11,7 +11,6 @@ from evaluation.metrics.loading import (
 from evaluation.metrics.plots import (
     generate_actions_left_heatmap,
     generate_client_step_intervals_plot,
-    generate_latency_plot,
     generate_per_robot_success_rate_plot,
     generate_staleness_plot,
     generate_starvation_plot,
@@ -22,6 +21,7 @@ from evaluation.metrics.plots import (
 from evaluation.metrics.server import (
     compute_server_timing_health,
     generate_batch_size_plot,
+    generate_request_timing_plot,
     generate_server_batch_gantt_plot,
     generate_server_timings_over_time_plot,
     generate_server_timings_plot,
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 def generate_all_plots(output_path: pathlib.Path) -> None:
     plotters = [
         generate_client_step_intervals_plot,
-        generate_latency_plot,
         generate_success_rate_plot,
         generate_steps_plot,
         generate_per_robot_success_rate_plot,
@@ -43,6 +42,7 @@ def generate_all_plots(output_path: pathlib.Path) -> None:
         generate_starvation_variance_plot,
         generate_staleness_plot,
         generate_batch_size_plot,
+        generate_request_timing_plot,
         generate_server_timings_plot,
         generate_server_timings_over_time_plot,
         generate_server_batch_gantt_plot,

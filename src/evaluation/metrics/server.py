@@ -11,6 +11,7 @@ from evaluation.metrics.loading import (
     load_scheduler_decisions,
     load_server_batches,
     load_server_events,
+    request_timings,
 )
 from evaluation.metrics.plots import percentile_histogram, robot_colors, save_fig
 
@@ -192,6 +193,63 @@ def generate_server_timings_over_time_plot(output_path: pathlib.Path) -> None:
         )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     save_fig(fig, output_path / "plots" / "server_timings_over_time.png")
+
+
+TIMING_PHASES = [
+    ("send_ms", "client->server send (ms)"),
+    ("queue_ms", "server queue wait (ms)"),
+    ("inference_ms", "GPU inference (ms)"),
+    ("receive_ms", "server->client receive (ms)"),
+]
+
+
+def generate_request_timing_plot(output_path: pathlib.Path) -> None:
+    df = request_timings(output_path)
+    if df.empty:
+        logger.warning("No per-request server timings; skipping request timing plot")
+        return
+
+    robots = sorted(df["robot_id"].unique(), key=int)
+    colors = robot_colors(robots)
+
+    fig, axes = plt.subplots(2, 2, figsize=(7 * min(2, len(robots)) + 4, 9))
+    fig.suptitle("Per-Request Timing Distributions", fontsize=16, fontweight="bold")
+    for ax, (column, label) in zip(axes.flat, TIMING_PHASES):
+        samples = [
+            (robot, df.loc[df["robot_id"] == robot, column].dropna().to_numpy()) for robot in robots
+        ]
+        samples = [(robot, values) for robot, values in samples if values.size > 1]
+        if not samples:
+            ax.set_title(f"{label} (no data)")
+            ax.set_axis_off()
+            continue
+
+        combined = np.concatenate([values for _, values in samples])
+        clip = max(float(np.percentile(combined, 99.5)), 1.0)
+        parts = ax.violinplot(
+            [np.clip(values, None, clip) for _, values in samples],
+            positions=range(len(samples)),
+            widths=0.7,
+            showmedians=True,
+        )
+        for body, (robot, _) in zip(parts["bodies"], samples):
+            body.set_facecolor(colors[robot])
+            body.set_alpha(0.7)
+
+        ax.set_xticks(range(len(samples)))
+        ax.set_xticklabels([f"robot_{robot}" for robot, _ in samples], fontsize=8, rotation=45)
+        ax.set_ylabel(label, fontsize=10)
+        ax.set_ylim(0, clip * 1.05)
+        ax.set_title(
+            f"n={combined.size}  p50={np.percentile(combined, 50):.1f}  "
+            f"p95={np.percentile(combined, 95):.1f}  p99={np.percentile(combined, 99):.1f}  "
+            f"max={combined.max():.1f} (y clipped at p99.5)",
+            fontsize=9,
+        )
+        ax.grid(axis="y", alpha=0.3)
+
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    save_fig(fig, output_path / "plots" / "request_timings.png")
 
 
 def generate_batch_size_plot(output_path: pathlib.Path) -> None:

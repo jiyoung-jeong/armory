@@ -9,7 +9,6 @@ import numpy as np
 from evaluation.metrics.loading import (
     actions_left_matrix,
     completed_episodes,
-    load_action_chunks,
     load_episodes,
     load_scheduler_decisions,
     robot_starvation_rates,
@@ -98,28 +97,6 @@ def _task_groups(df):
     df = df.copy()
     df["task_label"] = "Task " + df["task_id"].astype(str) + "\n" + df["task_language"].str[:30]
     return df, df.groupby(["task_id", "task_label"], sort=True)
-
-
-def generate_latency_plot(output_path: pathlib.Path) -> None:
-    df = load_action_chunks(output_path)
-    if df.empty:
-        logger.warning("No action chunks for latency plot")
-        return
-    df["latency_ms"] = df["latency"] * 1000
-    df, grouped = _task_groups(df)
-    panels = [("All Tasks Combined", df)]
-    panels += [(task_label, group) for (_, task_label), group in grouped]
-
-    n_cols = min(3, len(panels))
-    n_rows = (len(panels) + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 5 * n_rows), squeeze=False)
-    fig.suptitle("Action Chunk Latency Distribution", fontsize=16, fontweight="bold")
-    for ax, (title, group) in zip(axes.flat, panels):
-        percentile_histogram(ax, group["latency_ms"].to_numpy(), "Latency (ms)", title=title)
-    for ax in axes.flat[len(panels) :]:
-        ax.set_visible(False)
-    fig.tight_layout()
-    save_fig(fig, output_path / "plots" / "action_chunk_latency.png")
 
 
 def generate_client_step_intervals_plot(output_path: pathlib.Path) -> None:

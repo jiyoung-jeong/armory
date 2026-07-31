@@ -40,24 +40,6 @@ def steps_by_robot(output_path: pathlib.Path) -> dict[str, list[pd.DataFrame]]:
     }
 
 
-def load_action_chunks(output_path: pathlib.Path) -> pd.DataFrame:
-    rows = []
-    for chunk_file in sorted(output_path.glob("*/*/action_chunks.parquet")):
-        result = Result.from_json(chunk_file.parent / "metadata.json")
-        chunks = pd.read_parquet(chunk_file, engine="pyarrow")
-        for chunk in chunks.itertuples(index=False):
-            rows.append(
-                {
-                    "task_suite_name": result.task_suite_name,
-                    "task_id": result.task_id,
-                    "task_language": result.task_language,
-                    "latency": chunk.response_timestamp - chunk.request_timestamp,
-                    "max_execution_horizon": chunk.max_execution_horizon,
-                }
-            )
-    return pd.DataFrame(rows)
-
-
 def load_experiment_config(output_path: pathlib.Path) -> ExperimentConfig | None:
     path = output_path / "experiment_args.json"
     if not path.exists():
@@ -251,6 +233,41 @@ def load_server_events(output_path: pathlib.Path) -> pd.DataFrame:
     if not df.empty:
         df["robot_id"] = df["robot_id"].map(_robot_idx)
     return df
+
+
+def request_timings(output_path: pathlib.Path) -> pd.DataFrame:
+    events = load_server_events(output_path)
+    batches = load_server_batches(output_path)
+    if events.empty or batches.empty:
+        return pd.DataFrame()
+
+    requests = events[events["kind"] == "request"][
+        ["robot_id", "request_id", "request_timestamp", "arrival_time"]
+    ]
+    acks = events[events["kind"] == "ack"][
+        ["robot_id", "request_id", "server_send_time", "receive_time"]
+    ]
+    served = (
+        batches[batches["batch_size"] > 0][
+            ["robot_ids", "request_ids", "inference_start_time", "inference_duration"]
+        ]
+        .explode(["robot_ids", "request_ids"])
+        .rename(columns={"robot_ids": "robot_id", "request_ids": "request_id"})
+    )
+
+    # request_id restarts per robot session, so every join needs the robot too.
+    df = requests.merge(served, on=["robot_id", "request_id"]).merge(
+        acks, on=["robot_id", "request_id"], how="left"
+    )
+    return pd.DataFrame(
+        {
+            "robot_id": df["robot_id"],
+            "send_ms": (df["arrival_time"] - df["request_timestamp"]) * 1000.0,
+            "queue_ms": (df["inference_start_time"] - df["arrival_time"]) * 1000.0,
+            "inference_ms": df["inference_duration"] * 1000.0,
+            "receive_ms": (df["receive_time"] - df["server_send_time"]) * 1000.0,
+        }
+    )
 
 
 def load_scheduler_decisions(output_path: pathlib.Path) -> list[dict]:
