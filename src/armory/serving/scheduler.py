@@ -6,7 +6,6 @@ import logging
 import multiprocessing as mp
 import pathlib
 import signal
-from dataclasses import asdict
 from multiprocessing.synchronize import Event
 
 import zmq
@@ -141,7 +140,8 @@ class SchedulerWorker:
             if decisions:
                 try:
                     for decision in decisions:
-                        decisions_log.write(json.dumps(asdict(decision), default=float) + "\n")
+                        # vars instead of asdict to avoid copy
+                        decisions_log.write(json.dumps(vars(decision), default=float) + "\n")
                     decisions_log.flush()
                 except Exception:
                     logger.exception("tick=%d failed to record scheduler decisions", tick)
