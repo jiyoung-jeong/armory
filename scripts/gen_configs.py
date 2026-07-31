@@ -32,8 +32,8 @@ from typing import Literal
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _ROOT = _HERE.parent
-# Keep the source tree importable, then add the repository and scripts roots so
-# ``scripts.*`` and the bare ``serve`` module both resolve.
+# src first so a bare `utils` import resolves to src/utils.py rather than the
+# shadowing scripts/utils.py; scripts/ last so `import serve` works.
 sys.path[:0] = [str(_ROOT / "src"), str(_ROOT), str(_HERE)]
 
 import serve  # noqa: E402

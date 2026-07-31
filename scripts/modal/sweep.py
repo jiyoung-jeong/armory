@@ -390,7 +390,12 @@ def main(
         for row in suspicious:
             print(f"  {row['run_id']}: {row.get('timing_flags', '')}")
 
-    print(
-        "\nPlot with:\n  uv run python scripts/visualization/plot_sweep.py "
-        f"--results {results_csv} --line method_variant"
-    )
+    if mode == "gpu":
+        print(
+            f"\nPlot with:\n  uv run python scripts/visualization/plot_libero_sweep.py {run_root}"
+        )
+    else:
+        print(
+            "\nPlot with:\n  uv run python scripts/visualization/plot_sweep.py "
+            f"--results {results_csv} --line method_variant"
+        )

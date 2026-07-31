@@ -9,12 +9,11 @@ import sys
 from typing import Any
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parents[1]
-REPO_ROOT = SCRIPTS_DIR.parent
-sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SCRIPTS_DIR))
+sys.path.insert(0, str(SCRIPTS_DIR / "modal"))
 sys.path.insert(0, str(SCRIPTS_DIR / "visualization"))
 
-from scripts.modal.utils import summarize, write_rows  # noqa: E402
+from _utils import summarize, write_rows  # noqa: E402
 
 
 def _load_json(path: pathlib.Path) -> dict[str, Any]:
@@ -28,32 +27,24 @@ def collect_case(
     client_args = _load_json(case_dir / "client_args.json")
     server_args = _load_json(case_dir / "server_args.json")
     output_dir = pathlib.Path(client_args.get("output_dir", case_dir))
-    experiment = client_args.get("experiment_config") or {}
-    scheduler = client_args.get("scheduler_config") or {}
-    server = server_args.get("server") or {}
-    server_scheduler = server.get("scheduler") or {}
-    results_path = output_dir / "results.csv"
 
     row: dict[str, Any] = {
         "run_id": case.get("run_id", case_dir.name),
-        "status": status or ("ok" if results_path.is_file() else "missing"),
+        "status": status or ("ok" if output_dir.exists() else "missing"),
         "error": error,
         "artifact_path": str(output_dir),
         "case_dir": str(case_dir),
-        "scheduler": case.get(
-            "scheduler",
-            scheduler.get("scheduling_algorithm", server_scheduler.get("scheduling_algorithm", "")),
-        ),
-        "num_robots": case.get("num_robots", len(experiment.get("robots") or [])),
-        "seed": case.get("seed", experiment.get("seed", "")),
-        "max_batch_size": case.get("max_batch_size", server.get("max_batch_size", "")),
-        "alpha": case.get("alpha", scheduler.get("alpha", server_scheduler.get("alpha", ""))),
+        "scheduler": case.get("scheduler", server_args.get("scheduling_algorithm", "")),
+        "num_robots": case.get("num_robots", client_args.get("num_robots", "")),
+        "seed": case.get("seed", client_args.get("seed", "")),
+        "max_batch_size": case.get("max_batch_size", server_args.get("max_batch_size", "")),
+        "alpha": case.get("alpha", server_args.get("alpha", "")),
     }
     if output_dir.exists():
         row.update(summarize(output_dir))
-    if row["status"] == "ok" and not results_path.is_file():
+    if row["status"] == "ok" and not output_dir.exists():
         row["status"] = "missing"
-        row["error"] = row["error"] or "client results.csv not found"
+        row["error"] = row["error"] or "client output directory not found"
     return row
 
 

@@ -132,8 +132,10 @@ throughput but split a seed's policy-RNG stream across servers; use one lane per
 cold seed group when exact persistent-server RNG ordering is more important.
 
 The sweep writes `cases_<stamp>.csv`, `sweep_results_<stamp>.csv`, and downloaded
-artifacts under `--output-dir/<stamp>`. It prints the corresponding
-`scripts/visualization/plot_sweep.py` command when complete.
+artifacts under `--output-dir/<stamp>`. GPU sweeps print the corresponding
+`scripts/visualization/plot_libero_sweep.py` command, which validates the cases
+and writes only the aligned fast/slow tier breakdown. Mock sweeps print the
+generic `scripts/visualization/plot_sweep.py` command.
 
 ## Config schemas
 

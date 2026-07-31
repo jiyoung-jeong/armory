@@ -61,44 +61,15 @@ if ! srun --het-group=1 \
     CLIENT_ERROR="client exited nonzero"
 fi
 
-# Stop the server so every telemetry writer is flushed, then copy its metrics
-# into the client's output tree. The two roots are deliberately separate:
-# scripts/run.py applies --overwrite before the fleet starts.
-cleanup
-trap - EXIT
-wait "${SERVER_PID}" 2>/dev/null || true
-
-uv run python - "${CASE_DIR}" "${CLIENT_STATUS}" <<'EOF'
-import json
-import pathlib
-import shutil
-import sys
-
-from evaluation.metrics import generate_all_plots
-
-case_dir = pathlib.Path(sys.argv[1])
-client_status = sys.argv[2]
-client = json.loads((case_dir / "client_args.json").read_text())
-server = json.loads((case_dir / "server_args.json").read_text())
-output_dir = pathlib.Path(client["output_dir"])
-source = pathlib.Path(server["server"]["output_dir"]) / "server"
-destination = output_dir / "server"
-
-if source.exists() and source.resolve() != destination.resolve():
-    shutil.copytree(source, destination, dirs_exist_ok=True)
-    print(f"Copied server telemetry: {source} -> {destination}")
-
-# run.py generated client plots before server telemetry was copied. Regenerate
-# after the merge so the server timing/batch plots are included as well.
-if client_status == "ok":
-    generate_all_plots(output_dir)
-EOF
-
 uv run python scripts/sbatch/collect_results.py \
     --case-dir "${CASE_DIR}" \
     --write-result \
     --status "${CLIENT_STATUS}" \
     --error "${CLIENT_ERROR}"
+
+cleanup
+trap - EXIT
+wait "${SERVER_PID}" 2>/dev/null || true
 
 if [ "${CLIENT_STATUS}" != "ok" ]; then
     exit 1

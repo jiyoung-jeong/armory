@@ -2,21 +2,20 @@ import json
 import logging
 import pathlib
 import subprocess
-import sys
 import threading
 import time
 
 import modal
 import modal.experimental
 import requests
-from scripts.modal.images import gpu_server_image
+from scripts.modal.images import REMOTE_ROOT, gpu_server_image
 
 log = logging.getLogger(__name__)
 
 app = modal.App("armory-serve")
 
 GPU = "l40s"
-REGION = "us-east"
+REGION = None
 ENV_MODE = "LIBERO"
 MAX_BATCH_SIZE = 5
 PORT = 8080
@@ -35,7 +34,7 @@ image = gpu_server_image
     gpu=GPU,
     image=image,
     volumes={CHECKPOINT_VOLUME_PATH: checkpoint_volume},
-    region=REGION,
+    region=[REGION],
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     scaledown_window=60 * 60,  # seconds, time to wait before scaling down
@@ -76,9 +75,8 @@ class ModalPolicyServer:
             )
         )
         cmd = [
-            sys.executable,
-            "-m",
-            "scripts.serve",
+            "python",
+            str(REMOTE_ROOT / "scripts/serve.py"),
             "--json-path",
             str(args_path),
         ]
