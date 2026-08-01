@@ -134,8 +134,9 @@ When advancing LIBERO, update both the `third_party/libero` gitlink and
   module isn't importable on worker containers, so Modal raises
   `DeserializationError`. `Case` stays local; `Case.payload()` flattens it.
 - **Module invocation, not file paths.** Workers run `-m scripts.serve` and
-  `-m scripts.run` — the module form keeps `/app` leading `sys.path` so `src/utils.py`
-  wins over the shadowing `scripts/utils.py`.
+  `-m scripts.run` — the module form keeps `/app` leading `sys.path`, which is what
+  makes both scripts' `from scripts.utils import ...` resolve. A bare file path puts
+  `scripts/` on `sys.path` instead and dies with `ModuleNotFoundError: scripts.utils`.
 - **First run builds images** (torch/JAX/EGL) and is slow; later runs reuse the cache.
   Mock CPU runs are ~1–3 min after that; a real-policy L40S server adds checkpoint
   load + JAX compile (~10 min).
