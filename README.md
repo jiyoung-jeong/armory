@@ -26,7 +26,13 @@
 
 Armory serves one robot policy to many robots from a remote GPU. It tracks each robot's action queue and schedules batched inference to reduce starvation when robots consume actions at different rates.
 
-This repository contains the server, lightweight robot client, policy adapters, and evaluation code used in the paper.
+This repository contains the server, robot clients, policy adapters, and evaluation code used in the paper. 
+
+Try commanding 10 robots at once using a single cloud-served Pi-05 model!
+```bash
+uv run modal run scripts/modal/run.py --mode gpu --client-config /coc/flash7/rbansal66/vvla/armory/configs/modal_10_robots_libero.json
+```
+See the Modal deployment section below for more info.
 
 ## Setup
 
@@ -62,23 +68,31 @@ uv run modal run scripts/modal/run.py \
 
 ### Local or self-hosted
 
-`scripts/serve.py` runs the policy server and `scripts/run.py` launches a client fleet. This CPU-only example uses a mock policy and environment:
+`scripts/serve.py` runs the policy server and `scripts/run.py` launches a client fleet. It is recommended to use the self-host architecture in a cluster environment where GPU and CPU nodes are available for the policy/client servers.
+
+To run with a server GPU:
 
 ```bash
 uv sync --extra evaluation --extra serving-web
 
 # Terminal 1: policy server
-uv run python -m scripts.serve --port 8080 policy:mock
+uv run python -m scripts.serve --port 8080 --model PI05 --env LIBERO
 
-# Terminal 2: one mock robot
+# Terminal 2: one robot
 uv run python -m scripts.run \
   --host 127.0.0.1 \
   --port 8080 \
-  --output-dir output/mock-demo \
+  --output-dir output/demo \
   --overwrite
 ```
 
 When the client runs on another machine, replace `127.0.0.1` with the server's reachable address and make sure port 8080 is open.
+
+If no GPU is present, you may run in mock mode, which has no real robot rollouts but will simulate the GPU and client communication.
+
+```bash
+uv run python -m scripts.serve --port 8080 policy:mock
+```
 
 ## Acknowledgments
 
