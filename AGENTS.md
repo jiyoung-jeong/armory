@@ -13,6 +13,10 @@ GIT_LFS_SKIP_SMUDGE=1 uv sync
 
 ```bash
 # Tests (pytest is configured to only collect tests/, armory-client/, and src/; never third_party/)
+# The suite reaches evaluation and web-serving code, so sync those extras once:
+#   uv sync --extra evaluation --extra serving-web
+# Tests whose stack is absent are skipped by tests/conftest.py (e.g. the openpi
+# adapter test needs jax, which resolves on Linux only).
 uv run pytest                                   # full suite
 uv run pytest tests/scheduling/mirror_test.py   # single file
 uv run pytest tests/scheduling/mirror_test.py::test_name   # single test
