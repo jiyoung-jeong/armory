@@ -93,8 +93,7 @@ sweeper can stay a dumb product.
 
 ### Config schemas
 
-> **The hand-written files under `configs/` are still the pre-refactor schema and
-> will fail validation.** Use `gen_configs.py` output (`configs/gen/…`) instead;
+> Sweeps run on `gen_configs.py` output (`configs/gen/…`), not on checked-in files;
 > the generated shapes are below.
 
 ```jsonc

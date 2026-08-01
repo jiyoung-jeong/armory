@@ -101,8 +101,9 @@ server needs no knowledge of which robots matter more.
   (`server × client × seeds`). Every scheduler/alpha/batch/fleet axis belongs in the generator,
   so the sweeper never needs to know which scheduler reads which knob. Per-robot knobs (horizon,
   weight, latency) are client-side, so a fleet shape that varies them is a client config, not a
-  server one. The hand-written files under `configs/client/**` and `configs/server/` predate the
-  current schema and no longer validate. `experiments/` holds named experiment
+  server one. Generate a tree with `gen_configs.py` rather than reaching for a checked-in file;
+  the only hand-written configs left are `configs/client/libero/short.json` and the
+  `configs/modal_*.json` fleet examples. `experiments/` holds named experiment
   definitions/results for sweeps; sbatch launchers
   (`scripts/sbatch/`) still use the older inline-axis style — see `scripts/sbatch/PHOENIX_NOTES.md`.
 - **Don't edit `requirements-modal*.txt` by hand** — they are generated lockfiles for Modal images.
