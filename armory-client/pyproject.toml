@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -12,9 +12,9 @@ only-include = ["src/armory_client"]
 name = "armory-client"
 version = "0.1.0"
 description = "Lightweight client library for the armory serving system"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "msgpack>=1.0",
-    "numpy",
-    "websockets>=13",
+    "msgpack==1.1.1",
+    "numpy==2.4.4",
+    "websockets==13.1",
 ]
