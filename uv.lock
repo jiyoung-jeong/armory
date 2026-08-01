@@ -162,6 +162,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "modal" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -226,6 +227,7 @@ serving-web = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "modal" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -251,6 +253,7 @@ requires-dist = [
     { name = "gr00t", marker = "extra == 'server'", editable = "third_party/Isaac-GR00T" },
     { name = "gym", marker = "extra == 'libero'", specifier = "==0.26.2" },
     { name = "gymnasium", marker = "extra == 'libero'", specifier = "==0.29.1" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'groot'", specifier = ">=0.34,<1" },
     { name = "imageio", marker = "extra == 'evaluation'", specifier = ">=2.36" },
     { name = "jax", marker = "sys_platform == 'darwin' and extra == 'server'", specifier = "==0.5.3" },
@@ -296,6 +299,7 @@ provides-extras = ["evaluation", "libero", "serving-web", "server", "groot", "de
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx", specifier = ">=0.27" },
     { name = "modal", specifier = ">=1.4" },
     { name = "pre-commit", specifier = ">=4" },
     { name = "pytest", specifier = ">=8" },
