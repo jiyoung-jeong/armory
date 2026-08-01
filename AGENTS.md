@@ -21,11 +21,12 @@ uv run pytest tests/scheduling/mirror_test.py::test_name   # single test
 uv run ruff check --fix
 uv run ruff format
 
-# Run a policy server (GPU host)
-uv run scripts/serve.py --env LIBERO --max-batch-size 4
+# Run a policy server (GPU host). Both scripts import `scripts.utils`, so they must be
+# invoked as modules from the repo root; a bare file path drops the root off sys.path.
+uv run python -m scripts.serve --env LIBERO --server.max-batch-size 4
 
 # Run the eval driver against a server
-uv run scripts/run.py --json-path configs/gen/<sweep>/client/<shape>/<n>_robots.json
+uv run python -m scripts.run --json-path configs/gen/<sweep>/client/<shape>/<n>_robots.json
 ```
 
 ## Architecture
@@ -110,7 +111,7 @@ server needs no knowledge of which robots matter more.
 **You can test this repo's serving/eval infra by running it on Modal directly — see
 [`scripts/modal/README.md`](scripts/modal/README.md).** Cheap CPU "mock" runs
 exercise the full server↔client path in a couple of minutes without a local GPU;
-`uv run modal run scripts/modal/run.py --server mock` is the quickest smoke test.
+`uv run modal run scripts/modal/run.py --mode mock` is the quickest smoke test.
 
 Use Modal skills for all GPU work:
 - modal-basic-skills: foundational Modal platform knowledge
