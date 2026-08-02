@@ -1,0 +1,11 @@
+{
+  "model": "pi05",
+  "env": "libero",
+  "port": 8080,
+  "server": {
+    "max_batch_size": 4,
+    "scheduler": {
+      "scheduling_algorithm": "lookahead-actions"
+    }
+  }
+}

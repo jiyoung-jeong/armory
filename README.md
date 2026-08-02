@@ -30,7 +30,10 @@ This repository contains the server, robot clients, policy adapters, and evaluat
 
 Try commanding 10 robots at once using a single cloud-served Pi-05 model!
 ```bash
-uv run modal run scripts/modal/run.py --mode gpu --client-config ./configs/modal_10_robots_libero.json
+uv run modal run scripts/modal/run.py \
+  --mode gpu \
+  --server-config ./configs/modal_server_lookahead.json \
+  --client-config ./configs/modal_10_robots_libero.json
 ```
 See the Modal deployment section below for more info.
 
@@ -63,6 +66,7 @@ For GPU evaluations, Modal runs the policy server and LIBERO client in separate 
 uv run modal setup
 uv run modal run scripts/modal/run.py \
   --mode gpu \
+  --server-config configs/modal_server_lookahead.json \
   --client-config configs/modal_single_robot_libero.json
 ```
 
@@ -76,12 +80,18 @@ To run with a server GPU:
 uv sync --extra evaluation --extra serving-web
 
 # Terminal 1: policy server
-uv run python -m scripts.serve --port 8080 --model PI05 --env LIBERO
+uv run python -m scripts.serve \
+  --port 8080 \
+  --model PI05 \
+  --env LIBERO \
+  --server.max-batch-size 4 \
+  --server.scheduler.scheduling-algorithm lookahead-actions
 
 # Terminal 2: one robot
 uv run python -m scripts.run \
   --host 127.0.0.1 \
   --port 8080 \
+  --scheduler-config.scheduling-algorithm lookahead-actions \
   --output-dir output/demo \
   --overwrite
 ```
@@ -91,7 +101,11 @@ When the client runs on another machine, replace `127.0.0.1` with the server's r
 If no GPU is present, you may run in mock mode, which has no real robot rollouts but will simulate the GPU and client communication.
 
 ```bash
-uv run python -m scripts.serve --port 8080 policy:mock
+uv run python -m scripts.serve \
+  --port 8080 \
+  --server.max-batch-size 4 \
+  --server.scheduler.scheduling-algorithm lookahead-actions \
+  policy:mock
 ```
 
 ## Acknowledgments
