@@ -30,7 +30,7 @@ This repository contains the server, robot clients, policy adapters, and evaluat
 
 Try commanding 10 robots at once using a single cloud-served Pi-05 model!
 ```bash
-uv run modal run scripts/modal/run.py --mode gpu --client-config /coc/flash7/rbansal66/vvla/armory/configs/modal_10_robots_libero.json
+uv run modal run scripts/modal/run.py --mode gpu --client-config ./configs/modal_10_robots_libero.json
 ```
 See the Modal deployment section below for more info.
 
