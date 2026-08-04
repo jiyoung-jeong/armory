@@ -19,9 +19,8 @@
 
 <p align="center">
   <a href="https://gatech-rl2.github.io/actionchunkscheduling/pdf/paper.pdf"><img src="https://img.shields.io/badge/Paper-PDF-b31b1b?style=flat-square" alt="Paper"></a>
-  <a href="https://github.com/GaTech-RL2/armory"><img src="https://img.shields.io/badge/Code-GitHub-181717?style=flat-square&logo=github" alt="Code"></a>
-  <img src="https://img.shields.io/badge/Twitter-coming_soon-1d9bf0?style=flat-square&logo=x" alt="Twitter, coming soon">
-  <img src="https://img.shields.io/badge/arXiv-coming_soon-b31b1b?style=flat-square&logo=arxiv" alt="arXiv, coming soon">
+  <a href="https://arxiv.org/abs/2608.00337"><img src="https://img.shields.io/badge/arXiv-b31b1b?style=flat-square&logo=arxiv" alt="arXiv"></a>
+  <a href="https://x.com/rbansal22/status/2083970835988234292?s=20"><img src="https://img.shields.io/badge/Twitter-1d9bf0?style=flat-square&logo=x" alt="Twitter"></a>
 </p>
 
 Armory serves one robot policy to many robots from a remote GPU. It tracks each robot's action queue and schedules batched inference to reduce starvation when robots consume actions at different rates.
