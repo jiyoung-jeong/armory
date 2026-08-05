@@ -37,13 +37,11 @@ ACTION_FATE_CASE_METADATA_COLS = [
     "num_robots",
     "seed",
     "max_batch_size",
-    "alpha",
     "starvation_rate",
     "post_first_starvation_rate",
 ]
 ACTION_FATE_CASE_SORT_COLS = [
     "scheduler",
-    "alpha",
     "max_batch_size",
     "server_variant",
     "experiment",
@@ -51,7 +49,6 @@ ACTION_FATE_CASE_SORT_COLS = [
     "run_id",
 ]
 ACTION_FATE_CASE_LABELS = {
-    "alpha": "alpha",
     "experiment": "exp",
     "max_batch_size": "B",
     "num_robots": "robots",
@@ -246,7 +243,7 @@ def _load_action_fate_sweep(results: pathlib.Path, *, x_col: str, line_col: str)
     numeric_x = pd.to_numeric(fate[x_col], errors="coerce")
     if numeric_x.notna().all():
         fate[x_col] = numeric_x
-    for col in ["max_batch_size", "alpha", "seed", "starvation_rate"]:
+    for col in ["max_batch_size", "seed", "starvation_rate"]:
         if col in fate.columns:
             fate[col] = pd.to_numeric(fate[col], errors="coerce")
     return fate
@@ -294,7 +291,6 @@ def _action_fate_case_label_columns(fate: pd.DataFrame, *, x_col: str, line_col:
         x_col,
         line_col,
         "scheduler",
-        "alpha",
         "max_batch_size",
         "server_variant",
         "experiment",

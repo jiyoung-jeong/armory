@@ -145,6 +145,11 @@ class RoundRobinScheduler(RequestScheduler):
             if removed_index < self._rr_index:
                 self._rr_index = max(0, self._rr_index - 1)
 
+    def reset_all(self) -> None:
+        super().reset_all()
+        self._rr_index = 0
+        self._rr_robot_order.clear()
+
 
 class StarvationScheduler(RequestScheduler):
     """Drops candidates whose observation_step hasn't advanced by at least

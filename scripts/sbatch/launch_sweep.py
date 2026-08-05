@@ -27,7 +27,7 @@ EXAMPLES = """examples:
       --server-config configs/server/mock.json \
       --client-config configs/client/libero/short.json \
       --output-dir experiments/sweeps/slurm \
-      --schedulers greedy-deadline,dynamic-action \
+      --schedulers greedy-deadline,weighted-edf \
       --seeds 7 \
       --max-batch-size 1 \
       --dry-run
@@ -42,20 +42,19 @@ EXAMPLES = """examples:
       --server-config configs/server/mock.json \
       --client-config configs/client/libero/half_fast_half_slow \
       --output-dir experiments/sweeps/slurm_libero \
-      --schedulers max-batch,dynamic-action \
+      --schedulers max-batch,weighted-edf,weighted-deficit-round-robin \
       --seeds 7,42 \
       --max-batch-size 1,2,4 \
       --account gts-dxu345-rl2
 
-  # 3. Submit an alpha sweep for dynamic-action plus baselines.
+  # 3. Submit weighted heuristics plus baselines.
   uv run python scripts/sbatch/launch_sweep.py \
       --account gts-dxu345-rl2 \
       --server-config configs/server/mock.json \
       --client-config configs/client/libero/half_fast_half_slow \
-      --output-dir experiments/sweeps/slurm_alpha \
-      --schedulers fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action \
+      --output-dir experiments/sweeps/slurm_weighted \
+      --schedulers max-batch,greedy-deadline,round-robin,lookahead-actions,weighted-edf,weighted-deficit-round-robin \
       --seeds 7,42 \
-      --alpha 0.0,0.25,0.5,0.75,1.0 \
       --submit-collector
 
   # 4. Preserve the server config policy exactly, useful for mock/smoke tests.
@@ -84,11 +83,11 @@ EXAMPLES = """examples:
   #    Replays each case's saved submit_cmd.json; old logs + result.json are
   #    archived to *.previous_<stamp> in the case dir.
   uv run python scripts/sbatch/launch_sweep.py \
-      --requeue experiments/sweeps/slurm_alpha/20260516_014758
+      --requeue experiments/sweeps/slurm_weighted/20260516_014758
 
   # 7b. Preview which cases would be requeued without submitting.
   uv run python scripts/sbatch/launch_sweep.py \
-      --requeue experiments/sweeps/slurm_alpha/20260516_014758 \
+      --requeue experiments/sweeps/slurm_weighted/20260516_014758 \
       --dry-run
 
 phoenix notes:
@@ -112,7 +111,6 @@ class Case:
         scheduler: str,
         seed: int,
         max_batch_size: int,
-        alpha: float,
         server_variant: str = "",
     ) -> None:
         self.server_args = server_args
@@ -123,7 +121,6 @@ class Case:
         self.scheduler = scheduler
         self.seed = seed
         self.max_batch_size = max_batch_size
-        self.alpha = alpha
         self.server_variant = server_variant
 
     @property
@@ -138,7 +135,6 @@ class Case:
             f"num_robots={self.num_robots}",
             f"seed={self.seed}",
             f"max_batch_size={self.max_batch_size}",
-            f"alpha={self.alpha}",
         ]
         if self.server_variant:
             parts.append(f"server={self.server_variant}")
@@ -242,17 +238,12 @@ def _make_cases(
     schedulers: list[str],
     seeds: list[int],
     max_batch_sizes: list[int],
-    alphas: list[float],
     stamp: str,
 ) -> list[Case]:
-    if max_batch_sizes and alphas:
-        raise SystemExit("Sweep only one of --max-batch-size or --alpha at a time.")
     if not server_variants:
         raise SystemExit("At least one server config is required.")
     if not max_batch_sizes:
         max_batch_sizes = [int(server_variants[0][1].get("max_batch_size", 1))]
-    if not alphas:
-        alphas = [float(server_variants[0][1].get("alpha", 1.0))]
 
     cases: list[Case] = []
     for seed in seeds:
@@ -265,44 +256,35 @@ def _make_cases(
             for server_variant, server_args in active_server_variants:
                 for experiment_name, experiment_config in experiment_configs:
                     for max_batch_size in max_batch_sizes:
-                        for alpha in alphas:
-                            # scheduling_algorithm used to live on the server
-                            # config, but it is now hot-swappable via POST
-                            # /reconfigure (issued by run.py on startup).
-                            # Keeping it server-side too would force the
-                            # interactive sweep driver to restart the server for
-                            # every case that varies it. ``max_batch_size`` and
-                            # ``alpha`` stay server-startup-only.
-                            server = {
-                                **server_args,
-                                "seed": seed,
-                                "max_batch_size": max_batch_size,
-                                "alpha": alpha,
-                            }
-                            server.pop("scheduling_algorithm", None)
-                            client = {
-                                **client_args,
-                                "seed": seed,
-                                "progress_type": "logging",
-                                "overwrite": True,
-                                "scheduling_algorithm": scheduler,
-                            }
-                            cases.append(
-                                Case(
-                                    server_args=server,
-                                    client_args=client,
-                                    experiment_config=experiment_config,
-                                    experiment_name=experiment_name,
-                                    stamp=stamp,
-                                    scheduler=scheduler,
-                                    seed=seed,
-                                    max_batch_size=max_batch_size,
-                                    alpha=alpha,
-                                    server_variant=(
-                                        server_variant if len(server_variants) > 1 else ""
-                                    ),
-                                )
+                        # scheduling_algorithm is hot-swappable via POST /reconfigure
+                        # (issued by run.py on startup), while max_batch_size is fixed
+                        # when the server starts.
+                        server = {
+                            **server_args,
+                            "seed": seed,
+                            "max_batch_size": max_batch_size,
+                        }
+                        server.pop("scheduling_algorithm", None)
+                        client = {
+                            **client_args,
+                            "seed": seed,
+                            "progress_type": "logging",
+                            "overwrite": True,
+                            "scheduling_algorithm": scheduler,
+                        }
+                        cases.append(
+                            Case(
+                                server_args=server,
+                                client_args=client,
+                                experiment_config=experiment_config,
+                                experiment_name=experiment_name,
+                                stamp=stamp,
+                                scheduler=scheduler,
+                                seed=seed,
+                                max_batch_size=max_batch_size,
+                                server_variant=(server_variant if len(server_variants) > 1 else ""),
                             )
+                        )
     return cases
 
 
@@ -336,7 +318,6 @@ def _materialize_case(case: Case, *, run_root: pathlib.Path) -> pathlib.Path:
             "num_robots": case.num_robots,
             "seed": case.seed,
             "max_batch_size": case.max_batch_size,
-            "alpha": case.alpha,
             "server_variant": case.server_variant,
             "case_dir": str(case_dir),
             "output_dir": str(output_dir),
@@ -540,7 +521,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--requeue",
         default="",
-        help="Path to a previous stamped run dir (e.g. experiments/sweeps/slurm_alpha/20260516_014758). "
+        help="Path to a previous stamped run dir (e.g. experiments/sweeps/slurm_weighted/20260516_014758). "
         "Resubmits cases whose result.json is missing or not status=ok using the saved submit_cmd.json.",
     )
     parser.add_argument(
@@ -552,11 +533,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="experiments/sweeps/slurm")
     parser.add_argument(
         "--schedulers",
-        default="fixed-max-batch,greedy-deadline,round-robin,lookahead-actions,dynamic-action",
+        default="max-batch,greedy-deadline,round-robin,lookahead-actions,weighted-edf,weighted-deficit-round-robin",
     )
     parser.add_argument("--seeds", default="7")
     parser.add_argument("--max-batch-size", default="")
-    parser.add_argument("--alpha", default="")
     parser.add_argument("--account", default="")
     parser.add_argument(
         "--cluster",
@@ -625,7 +605,6 @@ def main() -> None:
         schedulers=parse_list_args(args.schedulers),
         seeds=parse_list_args(args.seeds, cast=int),
         max_batch_sizes=parse_list_args(args.max_batch_size, cast=int),
-        alphas=parse_list_args(args.alpha, cast=float),
         stamp=stamp,
     )
 
@@ -640,7 +619,6 @@ def main() -> None:
             "num_robots": case.num_robots,
             "seed": case.seed,
             "max_batch_size": case.max_batch_size,
-            "alpha": case.alpha,
             "server_variant": case.server_variant,
             "case_dir": str(case_dir),
             "status": "dry_run" if args.dry_run else "submitted",

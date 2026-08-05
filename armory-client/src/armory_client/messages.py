@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -60,6 +61,10 @@ class ConnectRequest:
     control_hz: float
     weight: float = 1.0
     type: Literal["connect"] = "connect"
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.weight) or self.weight <= 0.0:
+            raise ValueError("weight must be positive and finite")
 
 
 @dataclass(frozen=True)

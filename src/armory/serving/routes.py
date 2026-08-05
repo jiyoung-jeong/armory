@@ -54,7 +54,6 @@ def register_routes(
             update={
                 "scheduler": SchedulerConfig(
                     scheduling_algorithm=algorithm,
-                    alpha=state.config.scheduler.alpha,
                 )
             }
         )

@@ -38,7 +38,6 @@ def collect_case(
         "num_robots": case.get("num_robots", client_args.get("num_robots", "")),
         "seed": case.get("seed", client_args.get("seed", "")),
         "max_batch_size": case.get("max_batch_size", server_args.get("max_batch_size", "")),
-        "alpha": case.get("alpha", server_args.get("alpha", "")),
     }
     if output_dir.exists():
         row.update(summarize(output_dir))

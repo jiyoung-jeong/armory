@@ -21,7 +21,6 @@ MAX_BATCH_SIZE = 5
 PORT = 8080
 MODEL = "PI05"
 SCHEDULING_ALGORITHM = "lookahead-actions"
-ALPHA = 2.0
 MIN_OBSERVATION_STEP_DIFF = 12
 
 checkpoint_volume = modal.Volume.from_name("openpi-checkpoints", create_if_missing=True)
@@ -68,7 +67,6 @@ class ModalPolicyServer:
                         "max_batch_size": MAX_BATCH_SIZE,
                         "scheduler": {
                             "scheduling_algorithm": SCHEDULING_ALGORITHM,
-                            "alpha": ALPHA,
                         },
                     },
                 }

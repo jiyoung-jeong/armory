@@ -75,7 +75,6 @@ def summarize(output_dir: pathlib.Path) -> dict[str, Any]:
     if server:
         out["max_batch_size"] = server.get("max_batch_size", "")
         out["action_horizon"] = server.get("action_horizon", "")
-        out["alpha_observed"] = (server.get("scheduler") or {}).get("alpha")
 
     try:
         health = compute_server_timing_health(output_dir)

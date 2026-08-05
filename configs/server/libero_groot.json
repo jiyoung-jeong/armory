@@ -8,6 +8,5 @@
   "max_batch_size": 5,
   "num_steps": 10,
   "scheduling_algorithm": "lookahead-actions",
-  "alpha": 1.0,
   "log_level": "INFO"
 }

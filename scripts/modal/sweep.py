@@ -103,7 +103,6 @@ class Case:
             "num_robots": len(self.experiment.robots),
             "seed": self.seed,
             "max_batch_size": server.max_batch_size,
-            "alpha": server.scheduler.alpha,
             "weights": ",".join(f"{robot.weight:g}" for robot in self.experiment.robots),
         }
 

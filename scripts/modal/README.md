@@ -78,7 +78,7 @@ configs/gen/modal-test/
 
 Server configs hold the model, scheduler, batch size, and inference settings. Client configs hold the environment, fleet, execution horizons, and run length. Seed is not a generation axis. A sweep applies each requested seed to both the server and client configs.
 
-Available fleet shapes are `hom`, `half_fast_half_slow`, and `one_fast`. Run `uv run python scripts/gen_configs.py --help` for the full set of axes. Use a fresh output directory for each experiment because the generator does not remove old files.
+Available fleet shapes are `hom`, `half_fast_half_slow`, and `one_fast`. Use `--short-horizon-weights 1 3 5` to generate weighted variants for heterogeneous fleets. Run `uv run python scripts/gen_configs.py --help` for the full set of axes. Use a fresh output directory for each experiment because the generator does not remove old files.
 
 For sweeps, use generated configs instead of `configs/server/` and the legacy files under `configs/client/`. The top-level `configs/modal_*_libero.json` files and `configs/client/libero/short.json` remain valid single-run examples.
 

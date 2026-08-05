@@ -128,15 +128,20 @@ class _ReplacementScheduler(_SpyScheduler):
         type(self).instances.append(self)
 
 
-def test_schedulers_read_their_own_knobs_from_the_config() -> None:
-    config = SchedulerConfig(alpha=0.25)
+def test_schedulers_receive_the_config() -> None:
+    config = SchedulerConfig()
     batch_queue = object()
 
-    dynamic = SCHEDULER_REGISTRY["dynamic-action"](config, batch_queue, max_batch_size=2)
-    greedy = SCHEDULER_REGISTRY["greedy-deadline"](config, batch_queue, max_batch_size=2)
+    schedulers = [
+        SCHEDULER_REGISTRY[name](config, batch_queue, max_batch_size=2)
+        for name in (
+            "greedy-deadline",
+            "weighted-edf",
+            "weighted-deficit-round-robin",
+        )
+    ]
 
-    assert dynamic._alpha == 0.25
-    assert greedy._config is config
+    assert all(scheduler._config is config for scheduler in schedulers)
 
 
 def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
@@ -180,7 +185,7 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
             Reconfigure(
                 config=ServerConfig(
                     max_batch_size=4,
-                    scheduler=SchedulerConfig(scheduling_algorithm=replacement_name, alpha=0.25),
+                    scheduler=SchedulerConfig(scheduling_algorithm=replacement_name),
                 )
             ),
             request,
@@ -200,9 +205,8 @@ def test_server_messages_are_applied_in_fifo_order_across_reconfigure(
     replacement = _ReplacementScheduler.instances[0]
     assert worker._current_scheduler is replacement
     assert worker.config.scheduler.scheduling_algorithm == replacement_name
-    assert worker.config.scheduler.alpha == 0.25
     assert replacement.max_batch_size == 4
-    assert replacement.config.alpha == 0.25
+    assert replacement.config.scheduling_algorithm == replacement_name
     assert replacement.calls == [
         ("update", "robot-new", 11),
         ("update_ack", "robot-new", 11),

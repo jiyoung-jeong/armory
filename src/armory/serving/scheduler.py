@@ -18,8 +18,11 @@ from armory.scheduling.baselines import (
     RoundRobinScheduler,
     StarvationScheduler,
 )
-from armory.scheduling.dynamic_action import DynamicActionScheduler
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
+from armory.scheduling.weighted_heuristics import (
+    WeightedDeficitRoundRobinScheduler,
+    WeightedEDFScheduler,
+)
 from armory.serving.config import ServerConfig
 from armory.serving.schemas import (
     AckNotification,
@@ -38,9 +41,10 @@ logger = logging.getLogger(__name__)
 SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "max-batch": MaxBatchScheduler,
     "greedy-deadline": GreedyDeadlineScheduler,
-    "dynamic-action": DynamicActionScheduler,
     "lookahead-actions": LookaheadActionsScheduler,
     "round-robin": RoundRobinScheduler,
+    "weighted-deficit-round-robin": WeightedDeficitRoundRobinScheduler,
+    "weighted-edf": WeightedEDFScheduler,
     "random": RandomBatchScheduler,
     "starvation": StarvationScheduler,
 }

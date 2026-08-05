@@ -1,11 +1,8 @@
 """Generate the server and client config trees that a sweep consumes.
 
 Sweeps take the product of a server config dir and a client config dir, so every
-axis that *shapes* a config is decided here: schedulers and their knobs on the
-server side, fleet size and horizon mix on the client side. That split is what
-lets a sweeper stay a plain product -- it never has to know that ``alpha`` only
-reaches ``dynamic-action``, because this script already collapsed the variants
-that a scheduler would have ignored.
+axis that *shapes* a config is decided here: scheduler and batch size on the
+server side, fleet shape and robot weights on the client side.
 
 Seed is deliberately *not* an axis here: it lands on both the server and the
 client, so it stays a sweep-level replication flag.
@@ -15,10 +12,10 @@ Examples:
     uv run python scripts/gen_configs.py --output-dir configs/gen/libero \\
         --env libero --schedulers max-batch greedy-deadline lookahead-actions
 
-    # Alpha fairness study on the mock stack
-    uv run python scripts/gen_configs.py --output-dir configs/gen/alpha \\
-        --env mock --schedulers dynamic-action --alphas 0.0 0.5 1.0 \\
-        --fleet-sizes 4 8 --shapes one_fast
+    # Weight the shortest-horizon robots for weighted scheduler comparisons.
+    uv run python scripts/gen_configs.py --output-dir configs/gen/weighted \\
+        --env mock --schedulers weighted-edf weighted-deficit-round-robin lookahead-actions \\
+        --short-horizon-weights 1 3 5 --fleet-sizes 4 8 --shapes one_fast
 """
 
 from __future__ import annotations
@@ -26,6 +23,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import json
+import math
 import pathlib
 import sys
 from typing import Literal
@@ -53,10 +51,6 @@ FLEET_SHAPES = {
     "one_fast": lambda n, fast, slow: [fast] + [slow] * (n - 1),
 }
 
-SCHEDULER_AXES = {
-    "dynamic-action": ("alpha",),
-}
-
 
 @dataclasses.dataclass
 class Args:
@@ -72,8 +66,6 @@ class Args:
 
     schedulers: tuple[str, ...] = ("max-batch", "greedy-deadline", "round-robin")
     max_batch_sizes: tuple[int, ...] = (5,)
-    alphas: tuple[float, ...] = (1.0,)
-    """Only reaches dynamic-action; variants collapse for every other scheduler."""
     num_steps: int = 10
     port: int = 8080
 
@@ -81,6 +73,8 @@ class Args:
     shapes: tuple[str, ...] = ("hom", "half_fast_half_slow", "one_fast")
     fast_horizon: int = 6
     slow_horizon: int = 10
+    short_horizon_weights: tuple[float, ...] = (1.0,)
+    """Weights assigned to robots with the fleet's shortest execution horizon."""
     min_horizon: int = 1
     control_hz: int = 20
     time_limit: float = 120.0
@@ -102,23 +96,14 @@ def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
     seen: set[tuple] = set()
     configs: list[tuple[str, serve.Args]] = []
 
-    for scheduler, batch, alpha in itertools.product(
-        args.schedulers, args.max_batch_sizes, args.alphas
-    ):
-        axes = SCHEDULER_AXES.get(scheduler, ())
-        values = {"alpha": alpha}
-        config = SchedulerConfig(
-            scheduling_algorithm=scheduler,
-            **{axis: values[axis] for axis in axes},
-        )
+    for scheduler, batch in itertools.product(args.schedulers, args.max_batch_sizes):
+        config = SchedulerConfig(scheduling_algorithm=scheduler)
         key = (batch, config.model_dump_json())
         if key in seen:
             continue
         seen.add(key)
 
         name = scheduler
-        if "alpha" in axes:
-            name += f"_alpha{_num(alpha)}"
         if label_batch:
             name += f"_b{batch}"
 
@@ -149,24 +134,36 @@ def _client_configs(args: Args) -> list[tuple[pathlib.Path, ExperimentConfig]]:
         else MockConfig(max_steps_per_episode=args.max_steps_per_episode)
     )
 
+    short_weights = tuple(dict.fromkeys(args.short_horizon_weights))
+    label_weight = len(short_weights) > 1 or short_weights != (1.0,)
+
     configs: list[tuple[pathlib.Path, ExperimentConfig]] = []
     for shape, size in itertools.product(args.shapes, args.fleet_sizes):
         horizons = FLEET_SHAPES[shape](size, args.fast_horizon, args.slow_horizon)
-        robots = [
-            Robot(
-                execution_horizon=ExecutionHorizon(min=args.min_horizon, max=horizon),
-                control_hz=args.control_hz,
+        shortest = min(horizons)
+        # Uniformly scaling every robot does not change a weighted scheduler,
+        # so homogeneous fleets need only the unit-weight representative.
+        active_weights = (1.0,) if len(set(horizons)) == 1 else short_weights
+        for short_weight in active_weights:
+            robots = [
+                Robot(
+                    execution_horizon=ExecutionHorizon(min=args.min_horizon, max=horizon),
+                    control_hz=args.control_hz,
+                    weight=short_weight if horizon == shortest else 1.0,
+                )
+                for horizon in horizons
+            ]
+            name = f"{size}_robots"
+            if label_weight and len(set(horizons)) > 1:
+                name += f"_w{_num(short_weight)}"
+            configs.append(
+                (
+                    pathlib.Path(shape) / f"{name}.json",
+                    ExperimentConfig(
+                        environment=environment, robots=robots, time_limit=args.time_limit
+                    ),
+                )
             )
-            for horizon in horizons
-        ]
-        configs.append(
-            (
-                pathlib.Path(shape) / f"{size}_robots.json",
-                ExperimentConfig(
-                    environment=environment, robots=robots, time_limit=args.time_limit
-                ),
-            )
-        )
     return configs
 
 
@@ -174,6 +171,10 @@ def main(args: Args) -> None:
     unknown = set(args.shapes) - set(FLEET_SHAPES)
     if unknown:
         raise SystemExit(f"Unknown shape(s) {sorted(unknown)}; known: {sorted(FLEET_SHAPES)}")
+    if not args.short_horizon_weights:
+        raise SystemExit("--short-horizon-weights must list at least one weight.")
+    if any(not math.isfinite(weight) or weight <= 0.0 for weight in args.short_horizon_weights):
+        raise SystemExit("--short-horizon-weights must be positive and finite.")
 
     server_dir = args.output_dir / "server"
     client_dir = args.output_dir / "client"
