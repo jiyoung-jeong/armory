@@ -290,7 +290,7 @@ class GpuWorker:
 
     def _make_params(self, slot_data: SlotData, batch_size: int) -> RTCParams | None:
         if (
-            slot_data.infer_type == InferType.INFERENCE_TIME_RTC
+            slot_data.infer_type in (InferType.INFERENCE_TIME_RTC, InferType.TRAIN_TIME_RTC)
             and slot_data.robot_id in self._last_served_action_index
         ):
             s = slot_data.action_index_start - self._last_served_action_index[slot_data.robot_id]

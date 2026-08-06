@@ -169,7 +169,7 @@ class OpenPiPolicyAdapter:
         return _model.Observation.from_dict(batched)
 
     def _infer_batch_group(
-        self, requests: Sequence[SlotData], *, use_rtc: bool
+        self, requests: Sequence[SlotData], *, infer_type: InferType
     ) -> list[PolicyResult]:
         """Run a homogeneous sub-batch (all RTC or all non-RTC) in a single GPU call."""
         batch_size = len(requests)
@@ -214,7 +214,7 @@ class OpenPiPolicyAdapter:
         if noise_to_use is not None:
             sample_kwargs["noise"] = noise_to_use
 
-        if use_rtc:
+        if infer_type != InferType.SYNC:
             rtc_params = [req.params for req in requests]
             prev_actions = np.stack([np.asarray(p.prev_action) for p in rtc_params], axis=0)
             s_values = np.asarray([p.s_param for p in rtc_params], dtype=np.int32)
@@ -227,7 +227,10 @@ class OpenPiPolicyAdapter:
                 d_values.tolist(),
                 eh_values.tolist(),
             )
-            sample_kwargs["use_rtc"] = True
+            if infer_type == InferType.TRAIN_TIME_RTC:
+                sample_kwargs["use_train_rtc"] = True
+            else:
+                sample_kwargs["use_rtc"] = True
             sample_kwargs["prev_action"] = jnp.asarray(prev_actions)
             sample_kwargs["s"] = jnp.asarray(s_values)
             sample_kwargs["d"] = jnp.asarray(d_values)
@@ -266,25 +269,23 @@ class OpenPiPolicyAdapter:
             return []
 
         results: list[PolicyResult | None] = [None] * len(requests)
-        grouped: dict[bool, list[int]] = {False: [], True: []}
+        grouped: dict[InferType, list[int]] = {}
 
         for i, req in enumerate(requests):
             can_rtc = (
                 not self._is_pytorch_model
                 and not self._is_triton_optimized
-                and req.infer_type == InferType.INFERENCE_TIME_RTC
+                and req.infer_type in (InferType.INFERENCE_TIME_RTC, InferType.TRAIN_TIME_RTC)
                 and isinstance(req.params, RTCParams)
             )
             logger.debug(
                 f"can_rtc: {can_rtc}, pytorch_model: {self._is_pytorch_model}, triton_optimized: {self._is_triton_optimized}, infer_type: {req.infer_type}, params: {req.params}"
             )
-            grouped[can_rtc].append(i)
+            grouped.setdefault(req.infer_type if can_rtc else InferType.SYNC, []).append(i)
 
-        for use_rtc, indices in grouped.items():
-            if not indices:
-                continue
+        for infer_type, indices in grouped.items():
             sub_requests = [requests[i] for i in indices]
-            sub_results = self._infer_batch_group(sub_requests, use_rtc=use_rtc)
+            sub_results = self._infer_batch_group(sub_requests, infer_type=infer_type)
             for i, result in zip(indices, sub_results, strict=True):
                 results[i] = result
 
@@ -310,6 +311,13 @@ class OpenPiPolicyAdapter:
                 warmup_request(
                     example_obs,
                     infer_type=InferType.INFERENCE_TIME_RTC,
+                    params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
+                )
+            )
+            warmup_requests.append(
+                warmup_request(
+                    example_obs,
+                    infer_type=InferType.TRAIN_TIME_RTC,
                     params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
                 )
             )

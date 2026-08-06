@@ -96,28 +96,34 @@ def test_infer_batch_splits_rtc_requests_and_restores_original_order(
         # Existing behavior: RTC mode without RTCParams follows the non-RTC path.
         _request("rtc-without-params-2", InferType.INFERENCE_TIME_RTC),
         _request("rtc-3", InferType.INFERENCE_TIME_RTC, rtc_params),
+        _request("train-rtc-4", InferType.TRAIN_TIME_RTC, rtc_params),
     ]
-    calls: list[tuple[bool, list[str]]] = []
+    calls: list[tuple[InferType, list[str]]] = []
 
     def fake_infer_batch_group(
         grouped_requests: list[SlotData],
         *,
-        use_rtc: bool,
+        infer_type: InferType,
     ) -> list[dict]:
-        calls.append((use_rtc, [request.robot_id for request in grouped_requests]))
-        return [{"robot_id": request.robot_id, "used_rtc": use_rtc} for request in grouped_requests]
+        calls.append((infer_type, [request.robot_id for request in grouped_requests]))
+        return [
+            {"robot_id": request.robot_id, "infer_type": infer_type}
+            for request in grouped_requests
+        ]
 
     monkeypatch.setattr(adapter, "_infer_batch_group", fake_infer_batch_group)
 
     results = adapter.infer_batch(requests)
 
-    assert calls == [
-        (False, ["sync-1", "rtc-without-params-2"]),
-        (True, ["rtc-0", "rtc-3"]),
+    assert sorted(calls, key=lambda c: c[0].value) == [
+        (InferType.INFERENCE_TIME_RTC, ["rtc-0", "rtc-3"]),
+        (InferType.SYNC, ["sync-1", "rtc-without-params-2"]),
+        (InferType.TRAIN_TIME_RTC, ["train-rtc-4"]),
     ]
     assert results == [
-        {"robot_id": "rtc-0", "used_rtc": True},
-        {"robot_id": "sync-1", "used_rtc": False},
-        {"robot_id": "rtc-without-params-2", "used_rtc": False},
-        {"robot_id": "rtc-3", "used_rtc": True},
+        {"robot_id": "rtc-0", "infer_type": InferType.INFERENCE_TIME_RTC},
+        {"robot_id": "sync-1", "infer_type": InferType.SYNC},
+        {"robot_id": "rtc-without-params-2", "infer_type": InferType.SYNC},
+        {"robot_id": "rtc-3", "infer_type": InferType.INFERENCE_TIME_RTC},
+        {"robot_id": "train-rtc-4", "infer_type": InferType.TRAIN_TIME_RTC},
     ]
