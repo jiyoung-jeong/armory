@@ -1,0 +1,19 @@
+{
+    "env": "libero",
+    "model": "pi05",
+    "policy": {},
+    "server": {
+        "max_batch_size": 1,
+        "scheduler": {
+            "scheduling_algorithm": "max-batch"
+        },
+        "engine": {
+            "num_steps": 10
+        },
+        "output_dir": "output/serve"
+    },
+    "port": 8080,
+    "seed": 7,
+    "log_level": "INFO",
+    "log_dir": "logs/server"
+}

@@ -164,10 +164,10 @@ class GpuWorker:
             ]
 
             logger.info("Inferring batch of %d", len(infer_requests))
-            t0 = time.time()
+            inference_start_time = time.time()
+            timer_start = time.perf_counter()
             actions = policy.infer_batch(infer_requests)
-            t1 = time.time()
-            inference_duration = t1 - t0
+            inference_duration = time.perf_counter() - timer_start
 
             responses = [
                 self._make_infer_response(slot_data, action, chunk_id)
@@ -183,7 +183,7 @@ class GpuWorker:
                 responses=responses,
                 batch_id=batch.batch_id,
                 batch_size=len(slot_requests),
-                inference_start_time=t0,
+                inference_start_time=inference_start_time,
                 inference_duration=inference_duration,
             )
             result_sock.send_pyobj(response_batch)

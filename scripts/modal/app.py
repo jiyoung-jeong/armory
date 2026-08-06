@@ -375,29 +375,32 @@ def launch(
         try:
             host, port = _await_server(urls, run_id)
             if not host:
+                server_result = handle.get(timeout=120)
                 return {
                     "run_id": run_id,
                     "status": "failed",
-                    "error": "server failed before forwarding",
+                    "error": server_result["error"] or "server failed before forwarding",
                 }
             client_config["host"], client_config["port"] = host, port
             print(f"[{run_id}] server ready at {host}:{port}; launching client", flush=True)
-            return client.run.remote(
+            result = client.run.remote(
                 run_dir=run_dir,
                 args_json=json.dumps(client_config),
                 run_id=run_id,
                 stream_logs=stream_logs,
                 shutdown=shutdown,
             )
-        finally:
-            # The client sets shutdown[run_id] before returning, so this is only
-            # load-bearing on the failure paths -- including a server that never
-            # answers /metadata, which would otherwise hold a GPU until its
-            # container timeout.
-            try:
-                handle.cancel()
-            except Exception:  # noqa: BLE001
-                pass
+            server_result = handle.get(timeout=120)
+            if server_result["status"] != "ok":
+                result.update(
+                    status="failed",
+                    error=server_result["error"] or "server failed while shipping artifacts",
+                )
+            return result
+        except Exception:
+            # Failure before the client signals shutdown must release the GPU.
+            handle.cancel()
+            raise
 
 
 @app.cls(

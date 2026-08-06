@@ -96,3 +96,47 @@ uv run modal run scripts/modal/sweep.py \
 ```
 
 The sweep runs every server config x client config x seed combination. Use `--mode gpu` to run the same grid with a real policy server and LIBERO clients. Results, logs, and downloaded artifacts are written under `<output-dir>/<timestamp>/`.
+
+## Measure inference latency
+
+The server records the actual batch size and exact `policy.infer_batch()` duration
+for every live batch in `server/batches.jsonl`. To measure p99 latency with live
+LIBERO observations, generate a saturated 10-robot workload for batch sizes 1-3:
+
+```bash
+uv run python scripts/gen_configs.py \
+  --output-dir configs/gen/modal-inference-latency \
+  --env libero \
+  --schedulers max-batch \
+  --max-batch-sizes 1 2 3 \
+  --fleet-sizes 10 \
+  --shapes hom \
+  --time-limit 120
+```
+
+Run each batch-size wave sequentially. Each wave uses at most three L40S servers
+and three T4 clients under a 10-GPU account limit:
+
+```bash
+for batch_size in 1 2 3; do
+  uv run modal run scripts/modal/sweep.py \
+    --mode gpu \
+    --server-config "configs/gen/modal-inference-latency/server/max-batch_b${batch_size}.json" \
+    --client-config configs/gen/modal-inference-latency/client/hom/10_robots.json \
+    --seeds 1,2,3 \
+    --output-dir experiments/sweeps/modal-inference-latency
+done
+```
+
+After all three waves finish, aggregate the downloaded batch records:
+
+```bash
+uv run python scripts/visualization/inference_latency.py \
+  --run-root experiments/sweeps/modal-inference-latency
+```
+
+The analysis groups by the observed batch size, not the configured maximum. It
+reports pooled and per-worker p50, p95, and p99 policy service time and generates
+full-distribution and tail ECDFs. This timing includes policy preprocessing, GPU
+execution, and output transfer, matching the scheduler's latency measurement; it
+excludes queueing and network latency.
