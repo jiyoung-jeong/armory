@@ -28,14 +28,10 @@ import pathlib
 import sys
 from typing import Literal
 
-_HERE = pathlib.Path(__file__).resolve().parent
-_ROOT = _HERE.parent
-# src first so a bare `utils` import resolves to src/utils.py rather than the
-# shadowing scripts/utils.py; scripts/ last so `import serve` works.
-sys.path[:0] = [str(_ROOT / "src"), str(_ROOT), str(_HERE)]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-import serve  # noqa: E402
 import tyro  # noqa: E402
+from scripts import serve  # noqa: E402
 
 from armory.serving.config import EngineConfig, ServerConfig  # noqa: E402
 from armory.serving.protocol import SchedulerConfig  # noqa: E402

@@ -17,6 +17,8 @@ P = TypeVar("P", bound="ParquetDataclass")
 class JSONBaseModel(BaseModel):
     """Mixin that adds JSON file serialization to pydantic BaseModel subclasses."""
 
+    model_config = ConfigDict(extra="forbid")
+
     def to_json(self, filepath: pathlib.Path, indent: int = 4) -> None:
         with open(filepath, "w") as f:
             json.dump(self.model_dump(mode="json"), f, indent=indent)
