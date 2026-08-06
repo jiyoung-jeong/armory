@@ -99,6 +99,7 @@ def submit_cmd(case_dir: pathlib.Path, num_robots: int, args: argparse.Namespace
             "--ntasks=1",
             "--cpus-per-task=4",
             f"--mem={args.server_mem}",
+            *([f"--nodelist={args.server_nodelist}"] if args.server_nodelist else []),
             time,
             *account,
             *qos,
@@ -194,6 +195,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qos", default="")
     parser.add_argument("--time", default="1:00:00")
     parser.add_argument("--server-mem", default="32G")
+    parser.add_argument("--server-nodelist", default="grom")
     parser.add_argument("--client-mem", default="128G")
     parser.add_argument("--cpus-per-robot", type=int, default=2)
     parser.add_argument("--submit-collector", action="store_true")
