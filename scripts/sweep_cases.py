@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import dataclasses
-import itertools
 import pathlib
 from typing import Any
 
 from scripts import serve
 
 from evaluation.types import ExperimentConfig
+
+UNWEIGHTED_SCHEDULERS = {"deficit-round-robin", "max-batch", "round-robin"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,7 +40,6 @@ class Case:
             "num_robots": len(self.experiment.robots),
             "seed": self.seed,
             "max_batch_size": server.max_batch_size,
-            "alpha": server.scheduler.alpha,
             "weights": ",".join(f"{robot.weight:g}" for robot in self.experiment.robots),
         }
 
@@ -57,6 +57,34 @@ def config_paths(path: str, *, flag: str) -> list[tuple[str, pathlib.Path]]:
         if found:
             return [(str(p.relative_to(root).with_suffix("")).replace("/", "_"), p) for p in found]
     raise SystemExit(f"{flag} must be a JSON file or a directory containing them: {path}")
+
+
+def _experiments_for_server(
+    server: serve.Args, experiments: list[tuple[str, ExperimentConfig]]
+) -> list[tuple[str, ExperimentConfig]]:
+    if server.server.scheduler.scheduling_algorithm not in UNWEIGHTED_SCHEDULERS:
+        return experiments
+
+    # Collapse configs that differ only by a weight this scheduler ignores,
+    # preferring the unit-weight representative when one exists.
+    representatives: dict[tuple[str, str], tuple[str, ExperimentConfig]] = {}
+    for name, experiment in experiments:
+        family, separator, weight_label = name.rpartition("_w")
+        try:
+            float(weight_label)
+        except ValueError:
+            family = name
+        if not separator:
+            family = name
+        unweighted = experiment.model_copy(
+            update={
+                "robots": [robot.model_copy(update={"weight": 1.0}) for robot in experiment.robots]
+            }
+        )
+        key = family, unweighted.model_dump_json()
+        if key not in representatives or all(robot.weight == 1.0 for robot in experiment.robots):
+            representatives[key] = (name, experiment)
+    return list(representatives.values())
 
 
 def build_cases(server_config: str, client_config: str, seeds: list[int]) -> list[Case]:
@@ -78,7 +106,7 @@ def build_cases(server_config: str, client_config: str, seeds: list[int]) -> lis
             experiment_name=experiment_name,
             seed=seed,
         )
-        for (server_name, server), (experiment_name, experiment), seed in itertools.product(
-            servers, experiments, seeds
-        )
+        for server_name, server in servers
+        for experiment_name, experiment in _experiments_for_server(server, experiments)
+        for seed in seeds
     ]

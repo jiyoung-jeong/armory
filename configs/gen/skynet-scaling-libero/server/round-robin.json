@@ -5,7 +5,7 @@
     "server": {
         "max_batch_size": 3,
         "scheduler": {
-            "scheduling_algorithm": "weighted-deficit-round-robin"
+            "scheduling_algorithm": "round-robin"
         },
         "engine": {
             "num_steps": 10

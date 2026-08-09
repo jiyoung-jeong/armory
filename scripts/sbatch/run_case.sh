@@ -32,7 +32,7 @@ for name, override in (("server_args.json", {"port": port}), ("client_args.json"
     path.write_text(json.dumps({**json.loads(path.read_text()), **override}, indent=2) + "\n")
 EOF
 
-uv run python -m scripts.serve --json-path "${CASE_DIR}/server_args.json" \
+srun --het-group=0 uv run python -m scripts.serve --json-path "${CASE_DIR}/server_args.json" \
     >"${CASE_DIR}/logs/server.stdout.log" 2>"${CASE_DIR}/logs/server.stderr.log" &
 SERVER_PID=$!
 echo "Server PID ${SERVER_PID}"

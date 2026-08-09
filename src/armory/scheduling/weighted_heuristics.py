@@ -18,6 +18,42 @@ def _validate_weight(request: SlotRequest) -> float:
     return weight
 
 
+def _action_coverage_cost(request: SlotRequest) -> float:
+    control_hz = float(request.control_hz)
+    horizon = float(request.max_execution_horizon)
+    if not math.isfinite(control_hz) or control_hz <= 0.0:
+        raise ValueError(
+            f"Robot {request.robot_id!r} must have a positive finite control_hz; got {control_hz!r}"
+        )
+    if not math.isfinite(horizon) or horizon <= 0.0:
+        raise ValueError(
+            f"Robot {request.robot_id!r} must have a positive finite "
+            f"max_execution_horizon; got {horizon!r}"
+        )
+    cost = horizon / control_hz
+    if not math.isfinite(cost) or cost <= 0.0:
+        raise ValueError(
+            f"Robot {request.robot_id!r} must have a positive finite "
+            f"action-coverage cost; got {cost!r}"
+        )
+    return cost
+
+
+def _candidate_map(candidates: list[SlotRequest]) -> dict[RobotID, SlotRequest]:
+    candidate_by_robot = {request.robot_id: request for request in candidates}
+    if len(candidate_by_robot) != len(candidates):
+        raise ValueError("Round-robin candidates must contain at most one request per robot")
+    return candidate_by_robot
+
+
+def _validate_registered(
+    candidate_by_robot: dict[RobotID, SlotRequest], robot_order: list[RobotID]
+) -> None:
+    unknown = sorted(set(candidate_by_robot) - set(robot_order))
+    if unknown:
+        raise RuntimeError(f"Candidate robots were not registered through update(): {unknown}")
+
+
 class WeightedEDFScheduler(RequestScheduler):
     """Earliest-deadline-first batching with weighted service debt."""
 
@@ -135,8 +171,8 @@ class WeightedEDFScheduler(RequestScheduler):
         return feasible, priority / infer_latency, throughput, -earliest
 
 
-class WeightedDeficitRoundRobinScheduler(RoundRobinScheduler):
-    """Round robin with persistent, weight-proportional service deficits."""
+class WeightedRoundRobinScheduler(RoundRobinScheduler):
+    """Smooth weighted round robin over pending robots."""
 
     def __init__(
         self,
@@ -145,12 +181,12 @@ class WeightedDeficitRoundRobinScheduler(RoundRobinScheduler):
         max_batch_size: int = 1,
     ) -> None:
         super().__init__(config, batch_queue, max_batch_size)
-        self._deficit: dict[RobotID, float] = {}
+        self._current_weight: dict[RobotID, float] = {}
 
     def update(self, request: SlotRequest) -> None:
         _validate_weight(request)
         super().update(request)
-        self._deficit.setdefault(request.robot_id, 0.0)
+        self._current_weight.setdefault(request.robot_id, 0.0)
 
     def get_next_batches(
         self, candidates: list[SlotRequest]
@@ -160,57 +196,123 @@ class WeightedDeficitRoundRobinScheduler(RoundRobinScheduler):
         if not candidates:
             return [], {"reason": "no_candidates"}
 
-        candidate_by_robot = {request.robot_id: request for request in candidates}
+        candidate_by_robot = _candidate_map(candidates)
         weights = {request.robot_id: _validate_weight(request) for request in candidates}
-        robot_positions = {robot_id: index for index, robot_id in enumerate(self._rr_robot_order)}
-        unknown = sorted(set(candidate_by_robot) - set(robot_positions))
-        if unknown:
-            raise RuntimeError(f"Candidate robots were not registered through update(): {unknown}")
-
+        _validate_registered(candidate_by_robot, self._rr_robot_order)
         n_robots = len(self._rr_robot_order)
         cursor_before = self._rr_index % n_robots
-        max_weight = max(weights.values())
-        quantum = {robot_id: weight / max_weight for robot_id, weight in weights.items()}
-        deficit_before = {
-            robot_id: self._deficit.setdefault(robot_id, 0.0) for robot_id in candidate_by_robot
+        current_weight_before = {
+            robot_id: self._current_weight[robot_id] for robot_id in candidate_by_robot
         }
-
+        robot_positions = {
+            robot_id: index for index, robot_id in enumerate(self._rr_robot_order)
+        }
+        total_weight = sum(weights.values())
         remaining = set(candidate_by_robot)
         chosen: list[SlotRequest] = []
         while remaining and len(chosen) < self._max_batch_size:
+            for robot_id, weight in weights.items():
+                self._current_weight[robot_id] += weight
+
             cursor = self._rr_index % n_robots
-            distance = {
-                robot_id: (robot_positions[robot_id] - cursor) % n_robots for robot_id in remaining
-            }
-            visits_needed = {
-                robot_id: max(
-                    1,
-                    math.ceil((1.0 - self._deficit[robot_id]) / quantum[robot_id] - 1e-12),
-                )
-                for robot_id in remaining
-            }
-            service_offset = {
-                robot_id: distance[robot_id] + (visits_needed[robot_id] - 1) * n_robots
-                for robot_id in remaining
-            }
-            selected_id = min(remaining, key=service_offset.__getitem__)
-            selected_offset = service_offset[selected_id]
-
-            for robot_id in remaining:
-                if distance[robot_id] <= selected_offset:
-                    visits = (selected_offset - distance[robot_id]) // n_robots + 1
-                    self._deficit[robot_id] += visits * quantum[robot_id]
-
-            self._deficit[selected_id] = max(0.0, self._deficit[selected_id] - 1.0)
+            selected_id = min(
+                remaining,
+                key=lambda robot_id: (
+                    -self._current_weight[robot_id],
+                    (robot_positions[robot_id] - cursor) % n_robots,
+                ),
+            )
+            self._current_weight[selected_id] -= total_weight
             chosen.append(candidate_by_robot[selected_id])
             remaining.remove(selected_id)
             self._rr_index = (robot_positions[selected_id] + 1) % n_robots
 
         notes = {
-            "rule": "weighted_deficit_round_robin",
+            "rule": "weighted_round_robin",
             "max_batch_size": self._max_batch_size,
             "chosen_batch_size": len(chosen),
             "weights": weights,
+            "current_weight_before": current_weight_before,
+            "current_weight": dict(self._current_weight),
+            "rr_index_before": cursor_before,
+            "rr_index_after": self._rr_index,
+            "robot_order": list(self._rr_robot_order),
+        }
+        return [chosen], notes
+
+    def reset_robot(self, robot_id: RobotID) -> None:
+        super().reset_robot(robot_id)
+        self._current_weight.pop(robot_id, None)
+
+    def reset_all(self) -> None:
+        super().reset_all()
+        self._current_weight.clear()
+
+
+class DeficitRoundRobinScheduler(RoundRobinScheduler):
+    """Deficit round robin with action-coverage seconds as request cost.
+
+    Each pending robot receives the same quantum when visited. The quantum is the
+    minimum registered request cost. Explicit robot weights are ignored.
+    """
+
+    def __init__(
+        self,
+        config: SchedulerConfig,
+        batch_queue: mp.Queue,
+        max_batch_size: int = 1,
+    ) -> None:
+        super().__init__(config, batch_queue, max_batch_size)
+        self._deficit: dict[RobotID, float] = {}
+        self._request_cost: dict[RobotID, float] = {}
+
+    def update(self, request: SlotRequest) -> None:
+        request_cost = _action_coverage_cost(request)
+        super().update(request)
+        self._deficit.setdefault(request.robot_id, 0.0)
+        self._request_cost[request.robot_id] = request_cost
+
+    def get_next_batches(
+        self, candidates: list[SlotRequest]
+    ) -> tuple[list[list[SlotRequest]], dict[str, Any]]:
+        if self.mirror.in_flight_batches_count > 0:
+            return [], {"reason": "server_busy"}
+        if not candidates:
+            return [], {"reason": "no_candidates"}
+
+        candidate_by_robot = _candidate_map(candidates)
+        for request in candidates:
+            _action_coverage_cost(request)
+        _validate_registered(candidate_by_robot, self._rr_robot_order)
+        request_costs = {
+            robot_id: self._request_cost[robot_id] for robot_id in candidate_by_robot
+        }
+        n_robots = len(self._rr_robot_order)
+        cursor_before = self._rr_index % n_robots
+        quantum = min(self._request_cost.values())
+        deficit_before = {robot_id: self._deficit[robot_id] for robot_id in candidate_by_robot}
+        remaining = set(candidate_by_robot)
+        chosen: list[SlotRequest] = []
+        while remaining and len(chosen) < self._max_batch_size:
+            robot_id = self._rr_robot_order[self._rr_index % n_robots]
+            self._rr_index = (self._rr_index + 1) % n_robots
+            if robot_id not in remaining:
+                continue
+
+            self._deficit[robot_id] += quantum
+            request_cost = self._request_cost[robot_id]
+            if self._deficit[robot_id] + 1e-12 < request_cost:
+                continue
+
+            self._deficit[robot_id] = max(0.0, self._deficit[robot_id] - request_cost)
+            chosen.append(candidate_by_robot[robot_id])
+            remaining.remove(robot_id)
+
+        notes = {
+            "rule": "deficit_round_robin",
+            "max_batch_size": self._max_batch_size,
+            "chosen_batch_size": len(chosen),
+            "action_coverage_cost": request_costs,
             "quantum": quantum,
             "deficit_before": deficit_before,
             "deficit": dict(self._deficit),
@@ -223,7 +325,9 @@ class WeightedDeficitRoundRobinScheduler(RoundRobinScheduler):
     def reset_robot(self, robot_id: RobotID) -> None:
         super().reset_robot(robot_id)
         self._deficit.pop(robot_id, None)
+        self._request_cost.pop(robot_id, None)
 
     def reset_all(self) -> None:
         super().reset_all()
         self._deficit.clear()
+        self._request_cost.clear()

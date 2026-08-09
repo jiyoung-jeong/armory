@@ -10,8 +10,9 @@ import pytest
 from armory.scheduling import weighted_heuristics
 from armory.scheduling.baselines import RoundRobinScheduler
 from armory.scheduling.weighted_heuristics import (
-    WeightedDeficitRoundRobinScheduler,
+    DeficitRoundRobinScheduler,
     WeightedEDFScheduler,
+    WeightedRoundRobinScheduler,
 )
 from armory.serving.protocol import SchedulerConfig
 from armory.serving.rtc import InferType
@@ -90,11 +91,15 @@ def _request(
 
 
 def _scheduler(
-    scheduler_type: type[WeightedEDFScheduler] | type[WeightedDeficitRoundRobinScheduler],
+    scheduler_type: (
+        type[WeightedEDFScheduler]
+        | type[WeightedRoundRobinScheduler]
+        | type[DeficitRoundRobinScheduler]
+    ),
     *,
     max_batch_size: int,
     infer_latency: dict[int, float] | None = None,
-) -> WeightedEDFScheduler | WeightedDeficitRoundRobinScheduler:
+) -> WeightedEDFScheduler | WeightedRoundRobinScheduler | DeficitRoundRobinScheduler:
     scheduler = scheduler_type(SchedulerConfig(), object(), max_batch_size=max_batch_size)
     scheduler.mirror = _FakeMirror()  # type: ignore[assignment]
     scheduler.latency_tracker = _FakeLatencyTracker(  # type: ignore[assignment]
@@ -104,7 +109,7 @@ def _scheduler(
 
 
 def _choose(
-    scheduler: WeightedEDFScheduler | WeightedDeficitRoundRobinScheduler,
+    scheduler: WeightedEDFScheduler | WeightedRoundRobinScheduler | DeficitRoundRobinScheduler,
     candidates: list[SlotRequest],
 ) -> tuple[list[str], dict[str, Any]]:
     mirror = scheduler.mirror
@@ -116,7 +121,7 @@ def _choose(
 
 
 def _register(
-    scheduler: WeightedDeficitRoundRobinScheduler,
+    scheduler: WeightedRoundRobinScheduler | DeficitRoundRobinScheduler,
     candidates: list[SlotRequest],
 ) -> None:
     for request in candidates:
@@ -234,8 +239,8 @@ def test_weighted_edf_resets_debt_state(monkeypatch: pytest.MonkeyPatch) -> None
     assert scheduler.latency_tracker.cleared  # type: ignore[attr-defined]
 
 
-def test_weighted_deficit_round_robin_equal_weights_match_round_robin_batches() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=2)
+def test_weighted_round_robin_equal_weights_match_round_robin_batches() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=2)
     candidates = [_request("c"), _request("b"), _request("a")]
     _register(scheduler, candidates)
 
@@ -245,8 +250,8 @@ def test_weighted_deficit_round_robin_equal_weights_match_round_robin_batches() 
     assert batches == [["c", "b"], ["a", "c"], ["b", "a"]]
 
 
-def test_weighted_deficit_round_robin_tracks_long_run_weight_ratio() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=1)
+def test_weighted_round_robin_tracks_long_run_weight_ratio() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=1)
     candidates = [_request("a", weight=3.0), _request("b", weight=2.0), _request("c")]
     _register(scheduler, candidates)
 
@@ -255,8 +260,8 @@ def test_weighted_deficit_round_robin_tracks_long_run_weight_ratio() -> None:
     assert counts == {"a": 30, "b": 20, "c": 10}
 
 
-def test_weighted_deficit_round_robin_respects_one_robot_per_batch_capacity() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=2)
+def test_weighted_round_robin_respects_one_robot_per_batch_capacity() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=2)
     candidates = [_request("a", weight=5.0), _request("b"), _request("c")]
     _register(scheduler, candidates)
 
@@ -267,8 +272,32 @@ def test_weighted_deficit_round_robin_respects_one_robot_per_batch_capacity() ->
     assert all(len(batch) == len(set(batch)) == 2 for batch in batches)
 
 
-def test_weighted_deficit_round_robin_fills_from_available_unique_candidates() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=4)
+@pytest.mark.parametrize(
+    ("fast_weight", "expected_fast_count"),
+    [(3.0, 750), (5.0, 1_000)],
+)
+def test_weighted_round_robin_preserves_weights_at_paper_batch_size(
+    fast_weight: float, expected_fast_count: int
+) -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=3)
+    candidates = [_request("fast", weight=fast_weight)] + [
+        _request(f"slow-{index}") for index in range(9)
+    ]
+    _register(scheduler, candidates)
+
+    counts: Counter[str] = Counter()
+    for _ in range(1_000):
+        chosen, _ = _choose(scheduler, candidates)
+        assert len(chosen) == len(set(chosen)) == 3
+        counts.update(chosen)
+
+    slow_counts = [counts[f"slow-{index}"] for index in range(9)]
+    assert counts["fast"] == expected_fast_count
+    assert max(slow_counts) - min(slow_counts) <= 1
+
+
+def test_weighted_round_robin_fills_from_available_unique_candidates() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=4)
     candidates = [_request("a", weight=3.0), _request("c"), _request("d")]
     _register(scheduler, candidates)
 
@@ -276,40 +305,40 @@ def test_weighted_deficit_round_robin_fills_from_available_unique_candidates() -
 
     assert len(chosen) == len(set(chosen)) == 3
     assert set(chosen) == {"a", "c", "d"}
-    assert notes["rule"] == "weighted_deficit_round_robin"
+    assert notes["rule"] == "weighted_round_robin"
 
 
-def test_weighted_deficit_round_robin_does_not_accrue_for_unavailable_robots() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=1)
+def test_weighted_round_robin_does_not_accrue_for_unavailable_robots() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=1)
     a = _request("a", weight=5.0)
     b = _request("b")
     _register(scheduler, [a, b])
 
     assert _choose(scheduler, [a, b])[0] == ["a"]
-    deficit_before = scheduler._deficit["b"]
+    current_weight_before = scheduler._current_weight["b"]
     for _ in range(4):
         assert _choose(scheduler, [a])[0] == ["a"]
 
-    assert scheduler._deficit["b"] == deficit_before
+    assert scheduler._current_weight["b"] == current_weight_before
 
 
 @pytest.mark.parametrize("weight", [0.0, -1.0, math.nan, math.inf, -math.inf])
-def test_weighted_deficit_round_robin_rejects_invalid_weights_without_mutating_state(
+def test_weighted_round_robin_rejects_invalid_weights_without_mutating_state(
     weight: float,
 ) -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=2)
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=2)
     valid = _request("valid")
     _register(scheduler, [valid])
-    state_before = (dict(scheduler._deficit), scheduler._rr_index)
+    state_before = (dict(scheduler._current_weight), scheduler._rr_index)
 
     with pytest.raises(ValueError, match="weight"):
         scheduler.get_next_batches([valid, _request("invalid", weight=weight)])
 
-    assert (scheduler._deficit, scheduler._rr_index) == state_before
+    assert (scheduler._current_weight, scheduler._rr_index) == state_before
 
 
-def test_weighted_deficit_round_robin_reset_robot_and_reset_all_clear_state() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=1)
+def test_weighted_round_robin_reset_robot_and_reset_all_clear_state() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=1)
     a = _request("a")
     b = _request("b")
     _register(scheduler, [a, b])
@@ -318,13 +347,13 @@ def test_weighted_deficit_round_robin_reset_robot_and_reset_all_clear_state() ->
 
     scheduler.reset_robot("a")
 
-    assert "a" not in scheduler._deficit
+    assert "a" not in scheduler._current_weight
     assert scheduler._rr_robot_order == ["b"]
     assert scheduler.mirror.reset_robots == ["a"]  # type: ignore[attr-defined]
 
     scheduler.reset_all()
 
-    assert scheduler._deficit == {}
+    assert scheduler._current_weight == {}
     assert scheduler._rr_robot_order == []
     assert scheduler._rr_index == 0
     assert scheduler.mirror.clear_count == 1  # type: ignore[attr-defined]
@@ -333,12 +362,12 @@ def test_weighted_deficit_round_robin_reset_robot_and_reset_all_clear_state() ->
     assert _choose(scheduler, [b, a])[0] == ["b"]
 
 
-def test_weighted_deficit_round_robin_busy_and_empty_passes_do_not_change_state() -> None:
-    scheduler = _scheduler(WeightedDeficitRoundRobinScheduler, max_batch_size=1)
+def test_weighted_round_robin_busy_and_empty_passes_do_not_change_state() -> None:
+    scheduler = _scheduler(WeightedRoundRobinScheduler, max_batch_size=1)
     a = _request("a")
     _register(scheduler, [a])
     _choose(scheduler, [a])
-    state_before = (dict(scheduler._deficit), scheduler._rr_index)
+    state_before = (dict(scheduler._current_weight), scheduler._rr_index)
 
     scheduler.mirror.in_flight_batches_count = 1
     assert scheduler.get_next_batches([_request("b", weight=2.0)]) == (
@@ -348,4 +377,122 @@ def test_weighted_deficit_round_robin_busy_and_empty_passes_do_not_change_state(
     scheduler.mirror.in_flight_batches_count = 0
     assert scheduler.get_next_batches([]) == ([], {"reason": "no_candidates"})
 
+    assert (scheduler._current_weight, scheduler._rr_index) == state_before
+
+
+def test_deficit_round_robin_equal_coverage_matches_round_robin_batches() -> None:
+    scheduler = _scheduler(DeficitRoundRobinScheduler, max_batch_size=2)
+    candidates = [
+        _request("c", control_hz=10.0, max_execution_horizon=2),
+        _request("b", control_hz=20.0, max_execution_horizon=4),
+        _request("a", control_hz=5.0, max_execution_horizon=1, weight=1_000.0),
+    ]
+    _register(scheduler, candidates)
+
+    batches = [_choose(scheduler, candidates)[0] for _ in range(3)]
+
+    assert isinstance(scheduler, RoundRobinScheduler)
+    assert batches == [["c", "b"], ["a", "c"], ["b", "a"]]
+
+
+def test_deficit_round_robin_balances_action_coverage_and_ignores_weights() -> None:
+    scheduler = _scheduler(DeficitRoundRobinScheduler, max_batch_size=1)
+    candidates = [
+        _request("a", control_hz=5.0, max_execution_horizon=1, weight=0.01),
+        _request("b", control_hz=10.0, max_execution_horizon=3, weight=1_000.0),
+        _request("c", control_hz=10.0, max_execution_horizon=6, weight=7.0),
+    ]
+    _register(scheduler, candidates)
+
+    counts = Counter(_choose(scheduler, candidates)[0][0] for _ in range(60))
+
+    assert counts == {"a": 30, "b": 20, "c": 10}
+
+
+def test_deficit_round_robin_fills_unique_candidates() -> None:
+    scheduler = _scheduler(DeficitRoundRobinScheduler, max_batch_size=4)
+    candidates = [
+        _request("a", control_hz=20.0, max_execution_horizon=6),
+        _request("b", control_hz=20.0, max_execution_horizon=10),
+        _request("c", control_hz=10.0, max_execution_horizon=10),
+    ]
+    _register(scheduler, candidates)
+
+    chosen, notes = _choose(scheduler, candidates)
+
+    assert len(chosen) == len(set(chosen)) == 3
+    assert set(chosen) == {"a", "b", "c"}
+    assert notes["rule"] == "deficit_round_robin"
+    assert notes["quantum"] == pytest.approx(0.3)
+    assert notes["action_coverage_cost"] == {
+        "a": pytest.approx(0.3),
+        "b": pytest.approx(0.5),
+        "c": pytest.approx(1.0),
+    }
+
+
+def test_deficit_round_robin_does_not_accrue_for_unavailable_robots() -> None:
+    scheduler = _scheduler(DeficitRoundRobinScheduler, max_batch_size=1)
+    a = _request("a", control_hz=20.0, max_execution_horizon=6)
+    b = _request("b", control_hz=20.0, max_execution_horizon=10)
+    _register(scheduler, [a, b])
+
+    _choose(scheduler, [a, b])
+    deficit_before = scheduler._deficit["b"]
+    for _ in range(4):
+        assert _choose(scheduler, [a])[0] == ["a"]
+
+    assert scheduler._deficit["b"] == deficit_before
+
+
+@pytest.mark.parametrize(
+    ("control_hz", "horizon", "match"),
+    [
+        (0.0, 1, "control_hz"),
+        (-1.0, 1, "control_hz"),
+        (math.inf, 1, "control_hz"),
+        (1.0, 0, "max_execution_horizon"),
+        (1.0, -1, "max_execution_horizon"),
+        (1e-308, 10**308, "action-coverage cost"),
+    ],
+)
+def test_deficit_round_robin_rejects_invalid_coverage_without_mutating_state(
+    control_hz: float, horizon: int, match: str
+) -> None:
+    scheduler = _scheduler(DeficitRoundRobinScheduler, max_batch_size=1)
+    valid = _request("valid")
+    _register(scheduler, [valid])
+    state_before = (dict(scheduler._deficit), scheduler._rr_index)
+
+    with pytest.raises(ValueError, match=match):
+        scheduler.get_next_batches(
+            [_request("invalid", control_hz=control_hz, max_execution_horizon=horizon)]
+        )
+
     assert (scheduler._deficit, scheduler._rr_index) == state_before
+
+
+def test_deficit_round_robin_reset_and_idle_paths_preserve_state() -> None:
+    scheduler = _scheduler(DeficitRoundRobinScheduler, max_batch_size=1)
+    a = _request("a", control_hz=20.0, max_execution_horizon=6)
+    b = _request("b", control_hz=20.0, max_execution_horizon=10)
+    _register(scheduler, [a, b])
+    _choose(scheduler, [a, b])
+
+    state_before = (dict(scheduler._deficit), dict(scheduler._request_cost), scheduler._rr_index)
+    scheduler.mirror.in_flight_batches_count = 1
+    assert scheduler.get_next_batches([a]) == ([], {"reason": "server_busy"})
+    scheduler.mirror.in_flight_batches_count = 0
+    assert scheduler.get_next_batches([]) == ([], {"reason": "no_candidates"})
+    assert (scheduler._deficit, scheduler._request_cost, scheduler._rr_index) == state_before
+
+    scheduler.reset_robot("a")
+    assert "a" not in scheduler._deficit
+    assert "a" not in scheduler._request_cost
+    assert scheduler._rr_robot_order == ["b"]
+
+    scheduler.reset_all()
+    assert scheduler._deficit == {}
+    assert scheduler._request_cost == {}
+    assert scheduler._rr_robot_order == []
+    assert scheduler._rr_index == 0

@@ -95,7 +95,7 @@ uv run modal run scripts/modal/sweep.py \
   --output-dir experiments/sweeps/modal-smoke
 ```
 
-The sweep runs every server config x client config x seed combination. Use `--mode gpu` to run the same grid with a real policy server and LIBERO clients. Results, logs, and downloaded artifacts are written under `<output-dir>/<timestamp>/`.
+The sweep runs every compatible server config x client config x seed combination. Since `deficit-round-robin` uses action coverage rather than explicit robot weights, it is paired only with unit-weight clients instead of duplicating `w1`, `w3`, and `w5` cases. Use `--mode gpu` to run the same grid with a real policy server and LIBERO clients. Results, logs, and downloaded artifacts are written under `<output-dir>/<timestamp>/`.
 
 ## Measure inference latency
 

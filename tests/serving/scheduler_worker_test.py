@@ -136,8 +136,9 @@ def test_schedulers_receive_the_config() -> None:
         SCHEDULER_REGISTRY[name](config, batch_queue, max_batch_size=2)
         for name in (
             "greedy-deadline",
+            "deficit-round-robin",
             "weighted-edf",
-            "weighted-deficit-round-robin",
+            "weighted-round-robin",
         )
     ]
 

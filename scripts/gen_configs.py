@@ -14,7 +14,7 @@ Examples:
 
     # Weight the shortest-horizon robots for weighted scheduler comparisons.
     uv run python scripts/gen_configs.py --output-dir configs/gen/weighted \\
-        --env mock --schedulers weighted-edf weighted-deficit-round-robin lookahead-actions \\
+        --env mock --schedulers weighted-edf weighted-round-robin deficit-round-robin \\
         --short-horizon-weights 1 3 5 --fleet-sizes 4 8 --shapes one_fast
 """
 
@@ -76,6 +76,7 @@ class Args:
     time_limit: float = 120.0
     max_steps_per_episode: int = 300
     task_suite_name: str = "libero_10"
+    task_subset_size: int = 0
 
 
 def _num(value: float) -> str:
@@ -124,7 +125,9 @@ def _server_configs(args: Args) -> list[tuple[str, serve.Args]]:
 def _client_configs(args: Args) -> list[tuple[pathlib.Path, ExperimentConfig]]:
     environment = (
         LiberoConfig(
-            task_suite_name=args.task_suite_name, max_steps_per_episode=args.max_steps_per_episode
+            task_suite_name=args.task_suite_name,
+            max_steps_per_episode=args.max_steps_per_episode,
+            task_subset_size=args.task_subset_size,
         )
         if args.env == "libero"
         else MockConfig(max_steps_per_episode=args.max_steps_per_episode)

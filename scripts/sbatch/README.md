@@ -41,7 +41,7 @@ uv run python scripts/sbatch/launch_sweep.py \
   --submit-collector
 ```
 
-Either side accepts one JSON file or a directory of them. The launcher submits every server x client x seed combination and writes everything under `<output-dir>/<stamp>/<run_id>/`:
+Either side accepts one JSON file or a directory of them. The launcher submits every compatible server x client x seed combination; `deficit-round-robin` is paired only with unit-weight clients because it uses action coverage instead of explicit robot weights. Results are written under `<output-dir>/<stamp>/<run_id>/`:
 
 ```text
 experiments/sweeps/slurm/20260805_120000/
@@ -63,6 +63,8 @@ Add `--dry-run` to materialize configs and print the sbatch commands without sub
 
 `--cluster` selects the resource request: `skynet` (default, `overcap` partition, L40S server + A40 client), `ice` (L40S server, V100 or L40S client scaled by fleet size), and `pace` (L40S server + V100 client, `embers` QOS). PACE requires `--account`; see `PHOENIX_NOTES.md`.
 
+On Skynet, the server can use any matching L40S node except `bishop` by default. Override this with `--server-exclude`, or pin it explicitly with `--server-nodelist`.
+
 Sizing knobs: `--time`, `--server-mem` (default `32G`), `--client-mem` (default `128G`), `--cpus-per-robot` (default 2, client CPUs are `max(8, robots * cpus_per_robot)`), and `--qos`.
 
 ## Collect results
@@ -75,16 +77,30 @@ uv run python scripts/sbatch/collect_results.py --run-dir experiments/sweeps/slu
 
 This writes `sweep_results_<stamp>.csv` and plots under `<run_dir>/plots/`. Pass `--no-plots` to skip plotting.
 
-## Requeue failures
+## Rerun selected cases
 
-Resubmit every case whose `result.json` is missing or not `status=ok`, reusing its recorded sbatch command:
+Resubmit cases into a new sweep directory while reusing their recorded Slurm requests. Without
+`--requeue-cases`, every case whose `result.json` is missing or not `status=ok` is selected:
 
 ```bash
-uv run python scripts/sbatch/launch_sweep.py --requeue experiments/sweeps/slurm/<stamp> --dry-run
-uv run python scripts/sbatch/launch_sweep.py --requeue experiments/sweeps/slurm/<stamp>
+uv run python scripts/sbatch/launch_sweep.py \
+  --requeue experiments/sweeps/slurm/<old-stamp> \
+  --output-dir experiments/sweeps/slurm-reruns \
+  --dry-run
 ```
 
-Old `result.json` and `logs/` are renamed with a `.previous_<stamp>` suffix, and the requeued job ids land in `requeue_<stamp>.csv`.
+To rerun an explicit set, pass a CSV containing a `run_id` column:
+
+```bash
+uv run python scripts/sbatch/launch_sweep.py \
+  --requeue experiments/sweeps/slurm/<old-stamp> \
+  --requeue-cases problematic_cases.csv \
+  --output-dir experiments/sweeps/slurm-reruns \
+  --submit-collector
+```
+
+Both commands create `<output-dir>/<new-stamp>/`; the source sweep is never modified. Add
+`--stamp` to choose the new directory name explicitly.
 
 ## Run one case manually
 

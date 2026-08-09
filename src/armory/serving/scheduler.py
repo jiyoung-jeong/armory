@@ -20,8 +20,9 @@ from armory.scheduling.baselines import (
 )
 from armory.scheduling.lookahead_actions import LookaheadActionsScheduler
 from armory.scheduling.weighted_heuristics import (
-    WeightedDeficitRoundRobinScheduler,
+    DeficitRoundRobinScheduler,
     WeightedEDFScheduler,
+    WeightedRoundRobinScheduler,
 )
 from armory.serving.config import ServerConfig
 from armory.serving.schemas import (
@@ -43,8 +44,9 @@ SCHEDULER_REGISTRY: dict[str, type[RequestScheduler]] = {
     "greedy-deadline": GreedyDeadlineScheduler,
     "lookahead-actions": LookaheadActionsScheduler,
     "round-robin": RoundRobinScheduler,
-    "weighted-deficit-round-robin": WeightedDeficitRoundRobinScheduler,
+    "deficit-round-robin": DeficitRoundRobinScheduler,
     "weighted-edf": WeightedEDFScheduler,
+    "weighted-round-robin": WeightedRoundRobinScheduler,
     "random": RandomBatchScheduler,
     "starvation": StarvationScheduler,
 }

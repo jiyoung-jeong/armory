@@ -19,6 +19,8 @@ class LiberoConfig(BaseModel):
     kind: Literal["libero"] = "libero"
     task_suite_name: str = "libero_10"
     max_steps_per_episode: int = Field(gt=0, default=300)
+    # Positive values select one task subset and assign it round-robin.
+    task_subset_size: int = Field(default=0, ge=0)
     # None means use ExperimentConfig.seed. Keeping this independently
     # configurable lets task assignments remain fixed across other sweeps.
     task_seed: int | None = Field(default=None, ge=0)
