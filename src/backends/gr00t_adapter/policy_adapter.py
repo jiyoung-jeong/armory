@@ -27,6 +27,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from armory.backends.types import PolicyResult, warmup_request
+from armory.serving.rtc import InferType
 from armory.serving.schemas import SlotData
 
 logger = logging.getLogger(__name__)
@@ -146,7 +147,8 @@ class Gr00tPolicyAdapter:
     def make_infer_request(self) -> SlotData:
         return warmup_request(_make_example_obs())
 
-    def warmup(self, max_batch_size: int) -> None:
+    def warmup(self, max_batch_size: int, infer_type: InferType) -> None:
+        del infer_type
         request = self.make_infer_request()
         for batch_size in range(1, max_batch_size + 1):
             logger.info("Warming up GR00T batch_size=%d", batch_size)

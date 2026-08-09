@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from armory.backends.types import PolicyResult, warmup_request
+from armory.serving.rtc import InferType
 from armory.serving.schemas import SlotData
 
 with Path(__file__).with_name("inference_profiles.json").open() as f:
@@ -36,8 +37,8 @@ class MockPolicy:
         # Only ever fed to infer_batch, which ignores every field but the count.
         return warmup_request({})
 
-    def warmup(self, max_batch_size: int) -> None:
-        del max_batch_size
+    def warmup(self, max_batch_size: int, infer_type: InferType) -> None:
+        del max_batch_size, infer_type
 
     def infer_batch(self, requests: Sequence[SlotData]) -> list[PolicyResult]:
         inference_latency = self._inference_latency[len(requests)]

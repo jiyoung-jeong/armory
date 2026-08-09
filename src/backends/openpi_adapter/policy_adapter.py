@@ -295,13 +295,15 @@ class OpenPiPolicyAdapter:
     def make_infer_request(self) -> SlotData:
         return warmup_request(self._make_example_fn())
 
-    def warmup(self, max_batch_size: int) -> None:
-        """Warm up both SYNC and RTC paths to trigger JAX JIT compilation."""
+    def warmup(self, max_batch_size: int, infer_type: InferType) -> None:
         example_obs = self._make_example_fn()
         warmup_requests = [warmup_request(example_obs)]
 
-        # Add RTC warmup if the model supports it
-        if not self._is_pytorch_model and not self._is_triton_optimized:
+        if (
+            infer_type != InferType.SYNC
+            and not self._is_pytorch_model
+            and not self._is_triton_optimized
+        ):
             example_actions = (
                 np.asarray(self._model.make_example_actions())
                 if hasattr(self._model, "make_example_actions")
@@ -310,14 +312,7 @@ class OpenPiPolicyAdapter:
             warmup_requests.append(
                 warmup_request(
                     example_obs,
-                    infer_type=InferType.INFERENCE_TIME_RTC,
-                    params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
-                )
-            )
-            warmup_requests.append(
-                warmup_request(
-                    example_obs,
-                    infer_type=InferType.TRAIN_TIME_RTC,
+                    infer_type=infer_type,
                     params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
                 )
             )

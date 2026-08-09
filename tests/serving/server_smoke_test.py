@@ -52,8 +52,8 @@ class _TwoRobotBatchScheduler(RequestScheduler):
 class _SmokePolicy:
     """Small CPU policy exercising the real engine process and shared slots."""
 
-    def warmup(self, max_batch_size: int) -> None:
-        del max_batch_size
+    def warmup(self, max_batch_size: int, infer_type: object) -> None:
+        del max_batch_size, infer_type
 
     def make_infer_request(self) -> object:
         return object()

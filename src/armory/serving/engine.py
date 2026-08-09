@@ -79,7 +79,7 @@ class GpuWorker:
         logger.info("GPU worker starting")
 
         policy = self.policy_factory()
-        policy.warmup(self.config.max_batch_size)
+        policy.warmup(self.config.max_batch_size, self.config.engine.infer_type)
 
         ctx = zmq.Context()
 
