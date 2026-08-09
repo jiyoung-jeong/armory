@@ -140,7 +140,7 @@ class OpenPiPolicyAdapter:
                     [obs["observation/wrist_image"] for obs in observations]
                 ),
                 "prompt": np.stack([obs["prompt"] for obs in observations]),
-            }
+            }, None
 
         # Apply transform to each observation independently (tokenization, image parsing etc.)
         transformed = [
@@ -166,7 +166,8 @@ class OpenPiPolicyAdapter:
                 batched,
             )
 
-        return _model.Observation.from_dict(batched)
+        prev_actions = batched.pop("actions", None)
+        return _model.Observation.from_dict(batched), prev_actions
 
     def _infer_batch_group(
         self, requests: Sequence[SlotData], *, infer_type: InferType
@@ -190,7 +191,13 @@ class OpenPiPolicyAdapter:
                     if req.noise is not None:
                         noise_to_use = noise_to_use.at[i].set(req.noise)
 
-        observation = self.create_batch_obs([_rename_keys(req.observation) for req in requests])
+        obs_dicts = [_rename_keys(req.observation) for req in requests]
+        if infer_type != InferType.SYNC:
+            obs_dicts = [
+                {**obs, "actions": np.array(req.params.prev_action)}
+                for obs, req in zip(obs_dicts, requests, strict=True)
+            ]
+        observation, prev_actions = self.create_batch_obs(obs_dicts)
 
         if self._is_triton_optimized:
             sample_kwargs = dict(self._sample_kwargs)
@@ -206,7 +213,7 @@ class OpenPiPolicyAdapter:
                 result["noise"] = (
                     noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
                 )
-                result["rtc_prev_actions"] = raw_actions[i]
+                result["rtc_prev_actions"] = result["actions"]
                 results.append(result)
             return results
 
@@ -216,7 +223,6 @@ class OpenPiPolicyAdapter:
 
         if infer_type != InferType.SYNC:
             rtc_params = [req.params for req in requests]
-            prev_actions = np.stack([np.asarray(p.prev_action) for p in rtc_params], axis=0)
             s_values = np.asarray([p.s_param for p in rtc_params], dtype=np.int32)
             d_values = np.asarray([p.d_param for p in rtc_params], dtype=np.int32)
             eh_values = np.asarray([req.max_execution_horizon for req in requests], dtype=np.int32)
@@ -231,7 +237,7 @@ class OpenPiPolicyAdapter:
                 sample_kwargs["use_train_rtc"] = True
             else:
                 sample_kwargs["use_rtc"] = True
-            sample_kwargs["prev_action"] = jnp.asarray(prev_actions)
+            sample_kwargs["prev_action"] = prev_actions
             sample_kwargs["s"] = jnp.asarray(s_values)
             sample_kwargs["d"] = jnp.asarray(d_values)
             sample_kwargs["execution_horizon"] = jnp.asarray(eh_values)
@@ -254,7 +260,7 @@ class OpenPiPolicyAdapter:
             result["noise"] = (
                 noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
             )
-            result["rtc_prev_actions"] = raw_actions[i]
+            result["rtc_prev_actions"] = result["actions"]
             results.append(result)
 
         return results
@@ -297,30 +303,26 @@ class OpenPiPolicyAdapter:
 
     def warmup(self, max_batch_size: int, infer_type: InferType) -> None:
         example_obs = self._make_example_fn()
-        warmup_requests = [warmup_request(example_obs)]
+        for batch_size in range(1, max_batch_size + 1):
+            logger.info("Warming up %s batch_size=%d", InferType.SYNC, batch_size)
+            result = self.infer_batch([warmup_request(example_obs)] * batch_size)
 
         if (
             infer_type != InferType.SYNC
             and not self._is_pytorch_model
             and not self._is_triton_optimized
         ):
-            example_actions = (
-                np.asarray(self._model.make_example_actions())
-                if hasattr(self._model, "make_example_actions")
-                else np.zeros((8, 7), dtype=np.float32)
+            req = warmup_request(
+                example_obs,
+                infer_type=infer_type,
+                params=RTCParams(
+                    prev_action=np.zeros_like(result[0]["actions"]), s_param=5, d_param=3
+                ),
             )
-            warmup_requests.append(
-                warmup_request(
-                    example_obs,
-                    infer_type=infer_type,
-                    params=RTCParams(prev_action=example_actions, s_param=5, d_param=3),
-                )
-            )
-
-        for req in warmup_requests:
             for batch_size in range(1, max_batch_size + 1):
-                logger.info("Warming up %s batch_size=%d", req.infer_type, batch_size)
+                logger.info("Warming up %s batch_size=%d", infer_type, batch_size)
                 result = self.infer_batch([req] * batch_size)
+
         logger.info("Warmup complete; output shape: %s", result[0]["actions"].shape)
 
     @property
