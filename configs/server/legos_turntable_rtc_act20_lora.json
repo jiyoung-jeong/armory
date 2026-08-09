@@ -1,0 +1,19 @@
+{
+  "model": "pi05",
+  "env": "real_act_20",
+  "port": 8080,
+  "policy": {
+    "config": "pi05_legos_turntable_better_full_30hz_rtc_act20_lora",
+    "dir": "/coc/flash8/dhe83/.cache/openpi-assets/checkpoints/pi05_legos_turntable_better_full_30hz_rtc_act20_lora/pi05_legos_turntable_better_full_30hz_rtc_act20_lora/30000"
+  },
+  "server": {
+    "max_batch_size": 1,
+    "scheduler": {
+      "scheduling_algorithm": "lookahead-actions"
+    },
+    "engine": {
+      "num_steps": 10,
+      "infer_type": "train_time_rtc"
+    }
+  }
+}
