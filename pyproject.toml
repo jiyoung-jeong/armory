@@ -72,7 +72,7 @@ serving-web = [
     "uvicorn==0.44.0",
 ]
 server = [
-    "av==17.0.0",
+    "av==16.0.0",
     "chex==0.1.90",
     "dash==4.1.0",
     "fastapi==0.135.3",
@@ -87,7 +87,7 @@ groot = [
     "albumentations==2.0.8",
     "diffusers==0.33.1",
     "dm-tree==0.1.8",
-    "huggingface-hub==0.34.0",
+    "huggingface-hub==0.36.2",
     "opencv-python-headless==4.11.0.86",
     "pillow==12.2.0",
     "scipy==1.17.1",
@@ -96,6 +96,7 @@ groot = [
     "transformers==4.57.0",
 ]
 dev = [
+    "httpx==0.28.1",
     "modal==1.5.2",
     "pre-commit==4.6.0",
     "pytest==9.0.3",
@@ -104,6 +105,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "httpx==0.28.1",
     "modal==1.5.2",
     "pre-commit==4.6.0",
     "pytest==9.0.3",
@@ -130,7 +132,7 @@ known-first-party = ["armory", "armory_client", "evaluation", "openpi_adapter", 
 [tool.uv.sources]
 armory-client = { path = "armory-client", editable = true }
 gr00t = { path = "third_party/Isaac-GR00T", editable = true }
-lerobot = { git = "https://github.com/huggingface/lerobot", rev = "0cf864870cf29f4738d3ade893e6fd13fbd7cdb5" }
+lerobot = { git = "https://github.com/huggingface/lerobot", rev = "33cad37054c2b594ceba57463e8f11ee374fa93c" }
 libero = { path = "third_party/libero", editable = true }
 openpi = { path = "third_party/openpi", editable = true }
 openpi-client = { path = "third_party/openpi/packages/openpi-client", editable = true }
