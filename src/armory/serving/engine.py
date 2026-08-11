@@ -97,7 +97,6 @@ class GpuWorker:
         self._latency_tracker = EMALatencyTracker()
         self._last_served_action_index: dict[RobotID, int] = {}
         self._prev_actions: dict[RobotID, np.ndarray] = {}
-        self._realized_delay: dict[RobotID, float] = {}
         self._batches_log = open(self.metrics_dir / "batches.jsonl", "w")
 
         self._profile_and_send(policy, result_sock)
@@ -273,13 +272,6 @@ class GpuWorker:
                 self._latency_tracker.update_action_delivery(
                     msg.robot_id, msg.ack.receive_time, msg.server_send_time
                 )
-                if msg.robot_id in self._realized_delay:
-                    self._realized_delay[msg.robot_id] = (
-                        0.9 * self._realized_delay[msg.robot_id]
-                        + 0.1 * msg.ack.first_executed_index
-                    )
-                else:
-                    self._realized_delay[msg.robot_id] = msg.ack.first_executed_index
                 logger.debug("Received ack notification: %s", msg)
             elif isinstance(msg, WarmupSeed):
                 for arrival_ts, request_ts in msg.obs_samples:
@@ -302,20 +294,16 @@ class GpuWorker:
             slot_data.infer_type in (InferType.INFERENCE_TIME_RTC, InferType.TRAIN_TIME_RTC)
             and slot_data.robot_id in self._last_served_action_index
         ):
+            prev_action = self._prev_actions[slot_data.robot_id]
             s = slot_data.action_index_start - self._last_served_action_index[slot_data.robot_id]
-            if slot_data.robot_id in self._realized_delay:
-                d = math.ceil(self._realized_delay[slot_data.robot_id])
-            else:
-                d = (
-                    math.ceil(
-                        self._latency_tracker.total_latency(slot_data.robot_id, batch_size)
-                        * slot_data.control_hz
-                    )
-                    + 1
-                )
-            return RTCParams(
-                prev_action=self._prev_actions[slot_data.robot_id], s_param=s, d_param=d
+            if s >= len(prev_action):
+                return None
+            d = math.ceil(
+                self._latency_tracker.total_latency(slot_data.robot_id, batch_size)
+                * slot_data.control_hz
             )
+            d = min(d, len(prev_action) - s)
+            return RTCParams(prev_action=prev_action, s_param=s, d_param=d)
         return None
 
     def _update_state(
