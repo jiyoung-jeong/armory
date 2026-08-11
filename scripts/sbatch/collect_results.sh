@@ -12,7 +12,7 @@ set -euo pipefail
 
 RUN_DIR=${1:?Usage: collect_results.sh <run_dir>}
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="${ARMORY_SCRIPTS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/utils.sh"
 

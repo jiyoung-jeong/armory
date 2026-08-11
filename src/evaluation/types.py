@@ -118,6 +118,14 @@ class Robot(BaseModel):
     weight: float = Field(default=1.0, gt=0.0, allow_inf_nan=False)
 
 
+class WeightSwitch(BaseModel):
+    """One timed robot-weight change during an experiment."""
+
+    at_seconds: float = Field(gt=0.0, allow_inf_nan=False)
+    robot_idx: int = Field(ge=0)
+    weight: float = Field(gt=0.0, allow_inf_nan=False)
+
+
 class ExperimentConfig(JSONBaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -126,3 +134,14 @@ class ExperimentConfig(JSONBaseModel):
     robots: list[Robot] = [Robot()]
     time_limit: float = Field(default=10.0, ge=0.0)
     seed: int = Field(default=7, ge=0)
+    weight_switch: WeightSwitch | None = None
+
+    @model_validator(mode="after")
+    def _validate_weight_switch(self) -> Self:
+        if self.weight_switch is None:
+            return self
+        if self.weight_switch.robot_idx >= len(self.robots):
+            raise ValueError("weight_switch.robot_idx must identify a configured robot")
+        if self.weight_switch.at_seconds >= self.time_limit:
+            raise ValueError("weight_switch.at_seconds must be less than time_limit")
+        return self

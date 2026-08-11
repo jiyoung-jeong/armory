@@ -38,8 +38,16 @@ uv run python scripts/sbatch/launch_sweep.py \
   --seeds 7,42 \
   --output-dir experiments/sweeps/slurm \
   --time 2:00:00 \
+  --max-retries 1 \
   --submit-collector
 ```
+
+`--max-retries` requeues a heterogeneous case after a server or client failure,
+releasing both GPUs and returning the same job to Slurm's pending queue. The
+default is `0`; a small value such as `1` avoids repeatedly retrying deterministic
+failures. Slurm can also requeue eligible node failures and preemptions. User
+cancellations and time-limit termination remain terminal. Retry attempts retain
+the same job ID, and previous server/client logs use an `attempt-N` suffix.
 
 Either side accepts one JSON file or a directory of them. The launcher submits every compatible server x client x seed combination; `deficit-round-robin` is paired only with unit-weight clients because it uses action coverage instead of explicit robot weights. Results are written under `<output-dir>/<stamp>/<run_id>/`:
 

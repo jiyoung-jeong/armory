@@ -3,6 +3,7 @@ import multiprocessing
 import pathlib
 import shutil
 import sys
+import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
@@ -145,6 +146,29 @@ def run_robot(
     start_barrier.wait(timeout=_FLEET_START_TIMEOUT_S)
 
     deadline = time.monotonic() + args.experiment_config.time_limit
+    switch = args.experiment_config.weight_switch
+    switch_error: list[BaseException] = []
+    switch_timer: threading.Timer | None = None
+    if switch is not None and robot_idx == switch.robot_idx:
+
+        def apply_weight_switch() -> None:
+            try:
+                result = ServerControlClient(args.host, args.port).set_robot_weight(
+                    f"robot_{robot_idx}", switch.weight
+                )
+                logger.info(
+                    "Applied weight switch at server time %.6f: robot_%d %g -> %g",
+                    result["applied_at"],
+                    robot_idx,
+                    result["old_weight"],
+                    result["weight"],
+                )
+            except BaseException as exc:  # propagate timer failures after the rollout
+                switch_error.append(exc)
+
+        switch_timer = threading.Timer(switch.at_seconds, apply_weight_switch)
+        switch_timer.start()
+
     # A single worker preserves episode order for the sequentially named output
     # folders, while allowing the next rollout to begin during IO.
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="episode-save") as save_executor:
@@ -156,6 +180,11 @@ def run_robot(
             logger.info("robot %d: ran %d episode(s)", meta.robot_idx, len(saves))
         finally:
             runtime.close()
+            if switch_timer is not None:
+                switch_timer.cancel()
+                switch_timer.join()
+    if switch_error:
+        raise RuntimeError("Timed robot-weight switch failed") from switch_error[0]
     # ``ThreadPoolExecutor.__exit__`` waits but does not re-raise worker exceptions.
     for save in saves:
         save.result()

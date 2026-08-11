@@ -637,7 +637,11 @@ class Mirror:
                 self.latency_tracker,
                 request.weight,
             )
-        return self.robots[request.robot_id].step(request)
+        robot = self.robots[request.robot_id]
+        accepted = robot.step(request)
+        if accepted:
+            robot.weight = request.weight
+        return accepted
 
     def queue_batch(
         self,

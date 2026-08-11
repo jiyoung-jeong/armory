@@ -50,7 +50,13 @@ def submit_cmd(case_dir: pathlib.Path, num_robots: int, args: argparse.Namespace
     qos = [f"--qos={args.qos}"] if args.qos else []
     time = f"--time={args.time}"
 
-    cmd = ["sbatch", "--parsable", f"--export=ALL,ARMORY_SCRIPTS_DIR={HERE}"]
+    cmd = [
+        "sbatch",
+        "--parsable",
+        f"--export=ALL,ARMORY_SCRIPTS_DIR={HERE},ARMORY_MAX_RETRIES={args.max_retries}",
+    ]
+    if args.max_retries:
+        cmd += ["--requeue", "--open-mode=append"]
     if args.cluster == "pace":
         cmd += [
             "--constraint=gpu-l40s",
@@ -247,7 +253,12 @@ def requeue(
 
 def submit_collector(run_root: pathlib.Path, job_ids: list[str], args: argparse.Namespace) -> str:
     dependency_ids = [job_id.split(";", 1)[0] for job_id in job_ids if job_id]
-    cmd = ["sbatch", "--parsable", f"--dependency=afterany:{':'.join(dependency_ids)}"]
+    cmd = [
+        "sbatch",
+        "--parsable",
+        f"--export=ALL,ARMORY_SCRIPTS_DIR={HERE}",
+        f"--dependency=afterany:{':'.join(dependency_ids)}",
+    ]
     if args.account:
         cmd.append(f"--account={args.account}")
     cmd += [str(HERE / "collect_results.sh"), str(run_root)]
@@ -287,6 +298,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server-exclude", default="bishop")
     parser.add_argument("--client-mem", default="128G")
     parser.add_argument("--cpus-per-robot", type=int, default=2)
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=0,
+        help="Automatically requeue each failed case at most this many times.",
+    )
     parser.add_argument("--submit-collector", action="store_true")
     parser.add_argument("--stamp", default="")
     parser.add_argument("--dry-run", action="store_true")
@@ -295,6 +312,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.max_retries < 0:
+        raise SystemExit("--max-retries must be non-negative.")
     if args.requeue:
         source_root = pathlib.Path(args.requeue)
         if not source_root.is_dir():

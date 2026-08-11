@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import queue
-from dataclasses import asdict
+import time
+from dataclasses import asdict, replace
 
 from fastapi import FastAPI, HTTPException, Request
 
@@ -83,3 +86,43 @@ def register_routes(
             logger.info("Reset: drained %d pending batches from queue", drained)
         await state.scheduler_sock.send_pyobj(ResetAll())
         return {"status": "ok", "drained_batches": drained}
+
+    @app.patch("/robots/{robot_id}/weight")
+    async def set_robot_weight(robot_id: str, request: Request) -> dict:
+        state: ServerState = request.app.state.server
+        metadata = state.robot_metadata.get(robot_id)
+        if metadata is None:
+            raise HTTPException(status_code=404, detail=f"Unknown robot {robot_id!r}")
+
+        body = await request.json()
+        try:
+            weight = float(body["weight"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="weight must be a number") from exc
+        if not math.isfinite(weight) or weight <= 0.0:
+            raise HTTPException(status_code=400, detail="weight must be positive and finite")
+
+        old_weight = metadata.weight
+        applied_at = time.time()
+        state.robot_metadata[robot_id] = replace(metadata, weight=weight)
+        state.events_log.write(
+            json.dumps(
+                {
+                    "kind": "weight_switch",
+                    "robot_id": robot_id,
+                    "old_weight": old_weight,
+                    "weight": weight,
+                    "applied_at": applied_at,
+                }
+            )
+            + "\n"
+        )
+        state.events_log.flush()
+        logger.info("Updated %s weight: %g -> %g", robot_id, old_weight, weight)
+        return {
+            "status": "ok",
+            "robot_id": robot_id,
+            "old_weight": old_weight,
+            "weight": weight,
+            "applied_at": applied_at,
+        }

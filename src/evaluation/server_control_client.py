@@ -64,3 +64,13 @@ class ServerControlClient:
         )
         if not resp.ok:
             raise RuntimeError(f"POST /reconfigure {resp.status_code}: {resp.text}")
+
+    def set_robot_weight(self, robot_id: str, weight: float) -> dict:
+        resp = requests.patch(
+            f"{self._http_base}/robots/{robot_id}/weight",
+            json={"weight": weight},
+            timeout=10.0,
+        )
+        if not resp.ok:
+            raise RuntimeError(f"PATCH robot weight {resp.status_code}: {resp.text}")
+        return resp.json()

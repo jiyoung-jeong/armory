@@ -28,6 +28,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
+from scipy import stats as scipy_stats  # noqa: E402
 
 FAST_HORIZON = 6
 SLOW_HORIZON = 10
@@ -817,6 +818,47 @@ def _draw_error_bars(
     )
 
 
+def _draw_ci95_band(
+    ax,
+    data: pd.DataFrame,
+    scheduler: str,
+    metric: str,
+    robot_grid: list[int],
+) -> None:
+    scheduler_data = data[data["scheduler"] == scheduler]
+    if scheduler_data.empty:
+        return
+    indexed = scheduler_data.set_index("num_robots")
+    means = indexed[metric].reindex(robot_grid)
+    errors = indexed[f"{metric}_sem"].reindex(robot_grid)
+    counts = indexed["n"].reindex(robot_grid)
+    valid = means.notna() & errors.notna() & counts.gt(1)
+    if not valid.any():
+        return
+
+    critical = pd.Series(np.nan, index=means.index, dtype=float)
+    critical[valid] = scipy_stats.t.ppf(0.975, counts[valid].to_numpy() - 1)
+    half_width = critical * errors
+    lower = means - half_width
+    upper = means + half_width
+    lower = lower.clip(lower=0.0)
+    if metric.startswith("starv_"):
+        upper = upper.clip(upper=100.0)
+
+    ax.fill_between(
+        means.index.to_numpy(),
+        lower.to_numpy(),
+        upper.to_numpy(),
+        where=valid.to_numpy(),
+        color=SCHEDULER_COLORS.get(scheduler, "#444444"),
+        alpha=0.10,
+        linewidth=0,
+        interpolate=False,
+        label="_nolegend_",
+        zorder=1,
+    )
+
+
 def _align_row(axes, *, full_range: bool = False) -> None:
     values = [
         float(value)
@@ -897,6 +939,7 @@ def _plot(
     num_robots: set[int] | None,
     filename_suffix: str = "",
     error_bars: bool = False,
+    ci95_bands: bool = False,
     full_range: bool = False,
 ) -> pathlib.Path | None:
     data = data[data["max_batch_size"] == max_batch_size]
@@ -946,6 +989,15 @@ def _plot(
                     _draw_error_bars(
                         axes[row, column], scenario_data, scheduler, metric, robot_grid
                     )
+    if ci95_bands:
+        for scenario_index, scenario in enumerate(TIERED_SCENARIOS):
+            scenario_data = data[data["scenario"] == scenario]
+            for row, tier_offset, metric, _, _ in panels:
+                column = scenario_index * 2 + tier_offset
+                for scheduler in schedulers:
+                    _draw_ci95_band(
+                        axes[row, column], scenario_data, scheduler, metric, robot_grid
+                    )
 
     handles: list = []
     labels: list[str] = []
@@ -966,17 +1018,21 @@ def _plot(
             framealpha=0.95,
             frameon=False,
         )
-    if error_bars:
+    if error_bars or ci95_bands:
         fig.text(
             0.5,
             0.012,
-            "Error bars: ±1 standard error across seeds",
+            (
+                "Shading: 95% t interval across seeds"
+                if ci95_bands
+                else "Error bars: ±1 standard error across seeds"
+            ),
             ha="center",
             va="bottom",
             fontsize=10,
             color="#555555",
         )
-    fig.tight_layout(rect=[0, 0.035 if error_bars else 0, 1, 0.95])
+    fig.tight_layout(rect=[0, 0.035 if error_bars or ci95_bands else 0, 1, 0.95])
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
     path = plots_dir / (
@@ -1072,6 +1128,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--ci95-bands",
+        action="store_true",
+        help=(
+            "Write only separate __ci95 plots with shaded 95%% t intervals "
+            "across seeds; leave existing plots and summary CSVs untouched."
+        ),
+    )
+    parser.add_argument(
         "--full-range",
         action="store_true",
         help="Show the full metric range instead of clipping isolated values.",
@@ -1086,6 +1150,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.error_bars and args.ci95_bands:
+        raise SystemExit("--error-bars and --ci95-bands are mutually exclusive")
     if args.max_starvation_rate is not None and not 0 <= args.max_starvation_rate <= 1:
         raise SystemExit("--max-starvation-rate must be between 0 and 1")
     if args.control_hz <= 0:
@@ -1134,7 +1200,8 @@ def main() -> None:
         "seed",
         "reason",
     ]
-    if not args.error_bars:
+    uncertainty_plot = args.error_bars or args.ci95_bands
+    if not uncertainty_plot:
         output_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(missing, columns=missing_columns).to_csv(
             output_dir / "missing_cases.csv", index=False
@@ -1149,7 +1216,7 @@ def main() -> None:
         )
 
     requested_mbs = _int_set(args.max_batch_size)
-    data = _aggregate(rows, specs, args.control_hz, include_sem=args.error_bars)
+    data = _aggregate(rows, specs, args.control_hz, include_sem=uncertainty_plot)
     batch_sizes = sorted(set(data["max_batch_size"]))
     if requested_mbs is not None:
         batch_sizes = [value for value in batch_sizes if value in requested_mbs]
@@ -1159,10 +1226,10 @@ def main() -> None:
         reference = _paper_reference(
             args.lookahead_root.resolve(), batch_sizes, reference_schedulers
         )
-        if args.error_bars:
+        if uncertainty_plot:
             if not args.lookahead_case_root:
                 raise SystemExit(
-                    "--error-bars with --lookahead-root also requires "
+                    "uncertainty plots with --lookahead-root also require "
                     "--lookahead-case-root for each tiered scenario"
                 )
             errors = _paper_sem(
@@ -1191,9 +1258,11 @@ def main() -> None:
         if unknown:
             raise SystemExit(f"Requested schedulers are unavailable: {sorted(unknown)}")
         data = data[data["scheduler"].isin(selected_schedulers)].copy()
-    if not args.error_bars:
+    if not uncertainty_plot:
         data.to_csv(output_dir / "aggregated_metrics.csv", index=False)
-    filename_suffix = "__errorbars" if args.error_bars else ""
+    filename_suffix = (
+        "__errorbars" if args.error_bars else "__ci95" if args.ci95_bands else ""
+    )
     written = [
         path
         for mbs in batch_sizes
@@ -1205,6 +1274,7 @@ def main() -> None:
                 num_robots=_int_set(args.num_robots),
                 filename_suffix=filename_suffix,
                 error_bars=args.error_bars,
+                ci95_bands=args.ci95_bands,
                 full_range=args.full_range,
             )
         )
@@ -1225,9 +1295,12 @@ def main() -> None:
                     filename_suffix=(
                         "__wedf_vs_la__errorbars"
                         if args.error_bars
+                        else "__wedf_vs_la__ci95"
+                        if args.ci95_bands
                         else "__wedf_vs_la"
                     ),
                     error_bars=args.error_bars,
+                    ci95_bands=args.ci95_bands,
                     full_range=args.full_range,
                 )
             )
@@ -1237,13 +1310,13 @@ def main() -> None:
     if missing:
         detail = (
             "the existing exclusion set was left untouched"
-            if args.error_bars
+            if uncertainty_plot
             else f"see {output_dir / 'missing_cases.csv'}"
         )
         print(f"WARNING: excluded {len(missing)} case(s); {detail}")
     if reference_rows:
         print(f"Loaded {reference_rows} reference aggregate point(s) from the paper run.")
-    if not args.error_bars:
+    if not uncertainty_plot:
         print(f"Wrote {output_dir / 'aggregated_metrics.csv'}")
     for path in written:
         print(f"Wrote {path}")

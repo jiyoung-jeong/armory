@@ -17,11 +17,11 @@ def collect_case(case_dir: pathlib.Path, *, status: str = "", error: str = "") -
     output_dir = case_dir / "output"
     row = {
         **case,
-        "status": status or ("ok" if output_dir.exists() else "missing"),
+        "status": status or "missing",
         "error": error,
         "artifact_path": str(output_dir),
     }
-    if output_dir.exists():
+    if output_dir.exists() and row["status"] == "ok":
         row.update(summarize(output_dir))
     return row
 
@@ -34,12 +34,18 @@ def write_case_result(case_dir: pathlib.Path, *, status: str, error: str) -> Non
 
 def collect_run(run_root: pathlib.Path, *, plots: bool = True) -> pathlib.Path:
     case_dirs = sorted(path.parent for path in run_root.glob("**/case.json"))
-    rows = [
-        json.loads((d / "result.json").read_text())
-        if (d / "result.json").exists()
-        else collect_case(d)
-        for d in case_dirs
-    ]
+    rows = []
+    for case_dir in case_dirs:
+        result = case_dir / "result.json"
+        if not result.exists():
+            rows.append(collect_case(case_dir, status="missing", error="result.json missing"))
+            continue
+        try:
+            rows.append(json.loads(result.read_text()))
+        except (OSError, json.JSONDecodeError) as exc:
+            rows.append(
+                collect_case(case_dir, status="failed", error=f"invalid result.json: {exc}")
+            )
     out = run_root / f"sweep_results_{run_root.name}.csv"
     write_rows(out, rows)
     if plots:
