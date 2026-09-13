@@ -20,6 +20,10 @@ dev-mode-dirs = ["src", "src/backends", "third_party/libero", "armory-client/src
 [tool.uv]
 required-environments = ["sys_platform == 'linux'"]
 
+[tool.uv.extra-build-dependencies]
+# egl-probe uses CMake but does not declare it as a build dependency.
+egl-probe = ["cmake==3.30.0"]
+
 [project]
 name = "armory"
 version = "0.1.0"
