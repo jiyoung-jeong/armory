@@ -1,0 +1,17 @@
+{
+  "experiment_config": {
+    "environment": {
+      "kind": "libero",
+      "task_suite_name": "libero_10",
+      "max_steps_per_episode": 500
+    },
+    "time_limit": 60.0,
+    "robots": [
+      {},
+      {}
+    ]
+  },
+  "scheduler_config": {
+    "scheduling_algorithm": "lookahead-actions"
+  }
+}
