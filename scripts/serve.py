@@ -46,6 +46,7 @@ class Args(JsonArgs):
     policy: Checkpoint | Default | Mock = dataclasses.field(default_factory=Default)
     server: ServerConfig = field(default_factory=ServerConfig)
 
+    host: str = "0.0.0.0"
     port: int = 8080
     seed: int = 7
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -89,7 +90,7 @@ def main(args: Args) -> None:
         log_queue=log_queue,
     )
     try:
-        server.serve_forever(host="0.0.0.0", port=args.port)
+        server.serve_forever(host=args.host, port=args.port)
     finally:
         log_listener.stop()
 
