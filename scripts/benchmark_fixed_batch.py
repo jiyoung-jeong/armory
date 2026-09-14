@@ -1,7 +1,8 @@
 """Capture actual LIBERO observations, then time materialized SYNC infer_batch calls.
 
 Run capture and run as separate processes so EGL is gone before model timing.
-No serving, scheduler, network or renderer is included in measured calls.
+The fixed/dynamic phases exclude serving, scheduling, networking and rendering.
+An optional off/on/off control adds four concurrent LIBERO environments.
 """
 
 from __future__ import annotations
@@ -10,7 +11,9 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import multiprocessing as mp
 import os
+import queue
 import subprocess
 import time
 from pathlib import Path
@@ -73,6 +76,101 @@ def capture(output):
     (output / "metadata.json").write_text(json.dumps(records, indent=2))
 
 
+def render_worker(index, ready, stop, results):
+    """A controlled background load: real cameras and CPU simulation at 20 Hz.
+
+    Uses null actions, so this is a resource-contention control, not a policy
+    success experiment. Inference inputs in the parent stay exactly fixed.
+    """
+    from armory_client.schemas import Action
+    from evaluation.envs.libero import LiberoRobotSpec, LiberoSimEnvironment
+
+    env = LiberoSimEnvironment(
+        LiberoRobotSpec("libero_10", [5, 2, 6, 9][index]), max_episode_steps=500, seed=7 + index
+    )
+    count = 0
+    try:
+        env.reset()
+        ready.put(index)
+        begin = time.monotonic()
+        next_step = begin
+        while not stop.is_set():
+            if env.is_episode_complete():
+                env.reset()
+            obs = env.get_observation()
+            env.apply_action(
+                Action(
+                    step=obs.step,
+                    action=np.array([0.0] * 6 + [-1.0]),
+                    action_chunk_index=None,
+                    index_in_chunk=None,
+                )
+            )
+            count += 1
+            next_step = max(next_step + 0.05, time.monotonic())
+            stop.wait(max(0, next_step - time.monotonic()))
+        results.put(dict(robot=index, steps=count, elapsed_s=time.monotonic() - begin))
+    finally:
+        env.close()
+
+
+def renderer_control(args, measure, manifest):
+    context = mp.get_context("spawn")
+    ready, results = context.Queue(), context.Queue()
+    stop = context.Event()
+    workers = [
+        context.Process(target=render_worker, args=(i, ready, stop, results)) for i in range(4)
+    ]
+    # Off/on/off blocks use the same compiled model, input and RNG.
+    for size in [2, 4]:
+        for index in range(args.samples):
+            measure(size, "control_before", 0, index)
+    try:
+        for worker in workers:
+            worker.start()
+        assert {ready.get(timeout=90) for _ in workers} == set(range(4))
+        stop.wait(2)  # All four environments reach steady pacing before timing.
+        own = {os.getpid(), *(worker.pid for worker in workers)}
+        if set(gpu_processes(args.gpu)) - own:
+            raise RuntimeError("Another GPU compute workload appeared")
+        for size in [2, 4]:
+            for index in range(args.samples):
+                if any(not worker.is_alive() for worker in workers):
+                    raise RuntimeError("Background renderer exited during measurement")
+                measure(size, "four_renderers", 0, index)
+            print(f"Renderer control size={size} complete", flush=True)
+    finally:
+        stop.set()
+        for worker in workers:
+            if worker.pid is None:
+                continue
+            worker.join(timeout=10)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+            if worker.is_alive():
+                worker.kill()
+                worker.join(timeout=5)
+    render_stats = []
+    for _ in workers:
+        try:
+            render_stats.append(results.get(timeout=2))
+        except queue.Empty:
+            break
+    assert len(render_stats) == 4 and all(worker.exitcode == 0 for worker in workers)
+    manifest["renderer_control"] = dict(
+        workers=render_stats,
+        description="Off/on/off; four real LIBERO environments using null actions at 20 Hz, both cameras and observation preprocessing; no WebSocket",
+        same_gpu=True,
+        model_inputs_unchanged=True,
+    )
+    for size in [4, 2]:
+        for index in range(args.samples):
+            measure(size, "control_after", 0, index)
+    if set(gpu_processes(args.gpu)) - {os.getpid()}:
+        raise RuntimeError("GPU compute processes remain after renderer control")
+
+
 def run(args):
     import jax
 
@@ -126,7 +224,8 @@ def run(args):
         rng_reset_outside_timer=True,
         timer="perf_counter_ns",
         timing_scope="Full infer_batch, including transforms, dispatch, NumPy materialization and output transforms",
-        renderer_active=False,
+        renderer_active_in_fixed_and_dynamic=False,
+        renderer_control_requested=args.with_renderer_control,
         jax_version=jax.__version__,
         devices=[str(d) for d in jax.devices()],
         git_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -190,6 +289,8 @@ def run(args):
         for cycle in range(args.samples):
             for size in [1, 2, 3, 2]:
                 measure(size, "dynamic", 0, cycle)
+        if args.with_renderer_control:
+            renderer_control(args, measure, manifest)
     manifest.update(
         status="complete",
         finished_at=time.time(),
@@ -208,6 +309,7 @@ def main():
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--samples", type=int, default=50)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--with-renderer-control", action="store_true")
     args = parser.parse_args()
     if args.mode == "run" and args.inputs is None:
         parser.error("run requires --inputs")

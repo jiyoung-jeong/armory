@@ -110,7 +110,9 @@ def create_agent(args: Args, robot_idx: int, environment: _environment.Environme
         ws_client=ws_client,
         broker=broker,
         create_null_action=environment.create_null_action,
-        event_log_path=args.output_dir / f"broker_events_{robot_idx}.jsonl" if args.record_events else None,
+        event_log_path=args.output_dir / f"broker_events_{robot_idx}.jsonl"
+        if args.record_events
+        else None,
     )
 
 

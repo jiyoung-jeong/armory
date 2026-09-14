@@ -52,7 +52,7 @@ def analyze(path):
     )
     transitions.to_csv(path / "transitions.csv", index=False)
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.2), layout="constrained")
-    for phase, g in summary.groupby("phase"):
+    for phase, g in summary[summary.phase.isin(["fixed", "dynamic"])].groupby("phase"):
         axes[0].plot(g.batch_size, g["mean"], "o-", label=phase)
         axes[1].plot(g.batch_size, g.ms_per_request, "o-", label=phase)
         axes[2].plot(g.batch_size, g.requests_per_second, "o-", label=phase)
@@ -72,6 +72,22 @@ def analyze(path):
     fig.savefig(path / "batch_cost.png", dpi=170)
     fig.savefig(path / "batch_cost.pdf")
     plt.close(fig)
+    control = summary[summary.phase.str.startswith("control") | summary.phase.eq("four_renderers")]
+    if not control.empty:
+        fig, ax = plt.subplots(figsize=(7, 4), layout="constrained")
+        for phase, g in control.groupby("phase"):
+            ax.plot(g.batch_size, g["mean"], "o-", label=phase)
+        ax.set(
+            xlabel="Actual batch size",
+            ylabel="Full infer_batch (ms)",
+            xticks=[2, 4],
+            title="Fixed inputs with four concurrent LIBERO environments",
+        )
+        ax.legend()
+        ax.grid(alpha=0.2)
+        fig.savefig(path / "renderer_control.png", dpi=170)
+        fig.savefig(path / "renderer_control.pdf")
+        plt.close(fig)
     print(summary.to_string(index=False))
     return summary
 
