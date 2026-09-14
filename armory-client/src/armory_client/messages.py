@@ -15,12 +15,14 @@ class InferRequest:
     min_execution_horizon: int
     max_execution_horizon: int
     noise: np.ndarray | None = None  # action_horizon noise_dim
+    episode_id: str = ""
     type: Literal["infer"] = "infer"
 
 
 @dataclass(frozen=True)
 class ResetRequest:
     robot_id: str
+    episode_id: str = ""
     type: Literal["reset"] = "reset"
 
 
@@ -36,6 +38,7 @@ class InferResponse:
     min_execution_horizon: int
     max_execution_horizon: int
     noise: np.ndarray | None = None  # action_horizon noise_dim
+    episode_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class ResponseAck:
     execution_start_step: int  # client step when new chunk became available
     first_executed_index: int = 0  # index within chunk where actual execution started
 
+    episode_id: str = ""
     type: Literal["ack"] = "ack"
 
 

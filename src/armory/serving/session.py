@@ -118,6 +118,7 @@ async def _receive_loop(
     slot_index: int,
     send_times: dict[int, float],
     request_ids: Iterator[int],
+    episode_state: dict[str, str],
 ) -> None:
     try:
         while True:
@@ -126,11 +127,38 @@ async def _receive_loop(
 
             match msg.get("type"):
                 case "reset":
-                    await state.scheduler_sock.send_pyobj(ResetRequest(robot_id=robot_id))
+                    reset = ResetRequest(**msg)
+                    episode_state["id"] = reset.episode_id
+                    send_times.clear()
+                    await state.scheduler_sock.send_pyobj(reset)
+                    _log_event(
+                        state,
+                        dict(
+                            kind="episode_reset",
+                            robot_id=robot_id,
+                            episode_id=reset.episode_id,
+                            time=time.time(),
+                        ),
+                    )
                     continue
                 case "ack":
                     ack = ResponseAck(**msg)
                     send_time = send_times.pop(ack.request_id, None)
+                    if ack.episode_id != episode_state["id"]:
+                        _log_event(
+                            state,
+                            dict(
+                                kind="ack_discarded",
+                                robot_id=robot_id,
+                                request_id=ack.request_id,
+                                chunk_id=ack.chunk_id,
+                                episode_id=ack.episode_id,
+                                current_episode_id=episode_state["id"],
+                                time=time.time(),
+                                reason="stale_episode",
+                            ),
+                        )
+                        continue
                     if send_time is None:
                         # A client reset can leave an in-flight response whose
                         # background receiver still ACKs after local state reset.
@@ -147,6 +175,7 @@ async def _receive_loop(
                         state,
                         {
                             "kind": "ack",
+                            "episode_id": ack.episode_id,
                             "robot_id": robot_id,
                             "request_id": ack.request_id,
                             "chunk_id": ack.chunk_id,
@@ -162,12 +191,26 @@ async def _receive_loop(
                     continue
 
             req = InferRequest(**msg)
+            if req.episode_id != episode_state["id"]:
+                _log_event(
+                    state,
+                    dict(
+                        kind="request_discarded",
+                        robot_id=robot_id,
+                        episode_id=req.episode_id,
+                        current_episode_id=episode_state["id"],
+                        time=time.time(),
+                        reason="stale_episode",
+                    ),
+                )
+                continue
 
             # Write observation and request metadata atomically so the GPU
             # always reads metadata corresponding to the same observation.
             slot_data = SlotData(
                 slot_index=slot_index,
                 robot_id=robot_id,
+                episode_id=req.episode_id,
                 request_id=next(request_ids),
                 arrival_timestamp=time.time(),
                 observation=req.observation,
@@ -189,6 +232,7 @@ async def _receive_loop(
                 state,
                 {
                     "kind": "request",
+                    "episode_id": req.episode_id,
                     "robot_id": robot_id,
                     "request_id": slot_data.request_id,
                     "observation_step": req.observation_step,
@@ -204,15 +248,45 @@ async def _send_loop(
     websocket: WebSocket,
     response_queue: asyncio.Queue[InferResponse],
     send_times: dict[int, float],
+    episode_state: dict[str, str],
+    state: ServerState,
 ) -> None:
     while True:
         response = await response_queue.get()
-        send_times[response.request_id] = time.time()
+        if response.episode_id != episode_state["id"]:
+            _log_event(
+                state,
+                dict(
+                    kind="response_discarded",
+                    robot_id=response.robot_id,
+                    request_id=response.request_id,
+                    chunk_id=response.chunk_id,
+                    episode_id=response.episode_id,
+                    current_episode_id=episode_state["id"],
+                    time=time.time(),
+                    reason="stale_episode",
+                ),
+            )
+            continue
+        send_start = time.time()
+        send_times[response.request_id] = send_start
         with nvtx_range(
             f"armory.send robot={response.robot_id} chunk={response.chunk_id} "
             f"request={response.request_id}"
         ):
             await websocket.send_bytes(msgpack_numpy.packb(response))
+        _log_event(
+            state,
+            dict(
+                kind="response_sent",
+                robot_id=response.robot_id,
+                request_id=response.request_id,
+                chunk_id=response.chunk_id,
+                episode_id=response.episode_id,
+                send_start=send_start,
+                send_complete=time.time(),
+            ),
+        )
         logger.debug("Sent response: %s", response)
 
 
@@ -234,6 +308,7 @@ async def serve_websocket_session(
 
     response_queue: asyncio.Queue[InferResponse] = state.response_queues[robot_id]
     send_times: dict[int, float] = {}
+    episode_state = {"id": ""}
 
     recv_task = asyncio.create_task(
         _receive_loop(
@@ -243,9 +318,12 @@ async def serve_websocket_session(
             slot_index=slot_index,
             send_times=send_times,
             request_ids=request_ids,
+            episode_state=episode_state,
         )
     )
-    send_task = asyncio.create_task(_send_loop(websocket, response_queue, send_times))
+    send_task = asyncio.create_task(
+        _send_loop(websocket, response_queue, send_times, episode_state, state)
+    )
     try:
         await recv_task
     finally:

@@ -69,6 +69,7 @@ class GpuWorker:
         self.ready_event = ready_event
         self.metrics_dir = metrics_dir
         self.log_queue = log_queue
+        self._episode_ids: dict[str, str] = {}
 
     def run(self) -> None:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -108,6 +109,7 @@ class GpuWorker:
             self._process_server_messages(req_sock)
 
             batch: RequestBatch = self.batch_queue.get()  # blocking
+            self._process_server_messages(req_sock)  # Resets may arrive while idle.
 
             # Synthetic idle batch: occupy the GPU for the requested duration
             # (no inference), then report an empty completion so the scheduler's
@@ -136,6 +138,12 @@ class GpuWorker:
             slot_requests = []
             for sr, chunk_id in zip(slot_reqs, batch.chunk_ids, strict=True):
                 sd = self.slots.read(sr.slot_index)
+                if (
+                    sd.robot_id != sr.robot_id
+                    or sd.episode_id != sr.episode_id
+                    or sd.episode_id != self._episode_ids.get(sd.robot_id, sd.episode_id)
+                ):
+                    continue  # A queued request must not read a new episode from a reused slot.
                 if sr.robot_id not in self._last_served_action_index or sr.can_serve(
                     self._last_served_action_index[sr.robot_id], sd.action_index_start
                 ):
@@ -207,6 +215,9 @@ class GpuWorker:
                     # The worker may read a newer observation from the same slot.
                     "processed_robot_ids": [r.robot_id for r in response_batch.responses],
                     "processed_request_ids": [r.request_id for r in response_batch.responses],
+                    "processed_episode_ids": [
+                        getattr(r, "episode_id", "") for r in response_batch.responses
+                    ],
                     "chunk_ids": [r.chunk_id for r in response_batch.responses],
                     "processed_observation_steps": [
                         r.observation_step for r in response_batch.responses
@@ -238,6 +249,7 @@ class GpuWorker:
             max_execution_horizon=slot_data.max_execution_horizon,
             actions=result["actions"],
             noise=result["noise"],
+            episode_id=slot_data.episode_id,
         )
 
     def _profile_and_send(self, policy: ServingPolicy, notify_sock: zmq.Socket) -> None:
@@ -260,12 +272,14 @@ class GpuWorker:
         while req_sock.poll(0):
             msg = req_sock.recv_pyobj(zmq.NOBLOCK)
             if isinstance(msg, ResetRequest):
+                self._episode_ids[msg.robot_id] = msg.episode_id
                 # Latency intentionally preserved across resets — matches scheduler
                 # behavior (see scheduling/base.py:reset_robot).
                 self._last_served_action_index.pop(msg.robot_id, None)
                 self._prev_actions.pop(msg.robot_id, None)
                 logger.debug("Received reset request: %s", msg)
             elif isinstance(msg, ResetAll):
+                self._episode_ids.clear()
                 self._last_served_action_index.clear()
                 self._prev_actions.clear()
                 logger.info("Received ResetAll: cleared engine RTC state (latency preserved)")

@@ -19,6 +19,7 @@ class ActionChunk:
     response_timestamp: float
     request_id: int = -1
     noise: np.ndarray | None = None
+    episode_id: str = ""
 
     @classmethod
     def from_infer_response(
@@ -39,6 +40,7 @@ class ActionChunk:
             response_timestamp=time.time(),
             request_id=infer_response.request_id,
             noise=infer_response.noise,
+            episode_id=infer_response.episode_id,
         )
 
     @property

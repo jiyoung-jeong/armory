@@ -1,5 +1,6 @@
 import logging
 import time
+import uuid
 from collections.abc import Callable
 
 import numpy as np
@@ -54,6 +55,11 @@ class BidirectionalWebsocket:
         self._pre_send_hook = pre_send_hook
         self._control_hz = control_hz
         self._weight = weight
+        self._episode_id = ""
+
+    @property
+    def episode_id(self) -> str:
+        return self._episode_id
 
     def connect(self):
         self._ws = self._connect_ws()
@@ -101,7 +107,7 @@ class BidirectionalWebsocket:
         min_execution_horizon: int = 5,
         max_execution_horizon: int = 100,
         noise: np.ndarray | None = None,
-    ) -> None:
+    ) -> dict[str, float | int]:
         if self._pre_send_hook is not None:
             self._pre_send_hook()
 
@@ -110,6 +116,7 @@ class BidirectionalWebsocket:
         data = msgpack_numpy.packb(
             messages.InferRequest(
                 robot_id=self._robot_id,
+                episode_id=self._episode_id,
                 observation=obs,  # type: ignore[arg-type]
                 observation_step=obs.step,
                 action_index_start=action_index_start,
@@ -120,7 +127,14 @@ class BidirectionalWebsocket:
                 noise=noise,
             )
         )
+        serialize_end = time.time()
         self._ws.send(data)  # type: ignore
+        return dict(
+            request_timestamp=request_timestamp,
+            serialize_end=serialize_end,
+            send_end=time.time(),
+            payload_bytes=len(data),
+        )
 
     def receive(
         self,
@@ -156,11 +170,15 @@ class BidirectionalWebsocket:
             max_execution_horizon=max_execution_horizon,
             execution_start_step=execution_start_step,
             first_executed_index=first_executed_index,
+            episode_id=self._episode_id,
         )
         self._ws.send(msgpack_numpy.packb(ack))
 
     def reset(self) -> None:
-        data = msgpack_numpy.packb(messages.ResetRequest(robot_id=self._robot_id))
+        self._episode_id = uuid.uuid4().hex
+        data = msgpack_numpy.packb(
+            messages.ResetRequest(robot_id=self._robot_id, episode_id=self._episode_id)
+        )
         try:
             self._ws.send(data)
         except Exception as exc:  # noqa: BLE001

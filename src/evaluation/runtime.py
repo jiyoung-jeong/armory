@@ -42,6 +42,7 @@ class Rollout:
     truncated: bool
     initial_state: np.ndarray | None
     action_chunks: tuple[ActionChunk, ...]
+    episode_id: str = ""
 
 
 class Runtime:
@@ -125,6 +126,7 @@ class Runtime:
             truncated=truncated,
             initial_state=self._environment.current_initial_state,
             action_chunks=self._agent.action_chunks,
+            episode_id=getattr(self._agent, "episode_id", ""),
         )
 
     def close(self) -> None:

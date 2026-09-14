@@ -188,6 +188,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
         str(seconds),
         "--output-dir",
         str(dest / "client"),
+        "--record-events",
         "--server-log-dir",
         str(dest / "policy/server"),
     ]
@@ -200,6 +201,8 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
         seed=7,
         gpu=gpu,
         profiling=profile,
+        record_events=True,
+        episode_isolation=True,
         server_command=server_args,
         client_command=client_args,
         git_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -273,7 +276,11 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
                     next_sample = now + 5
                 if profile:
                     events = dest / "policy/server/events.jsonl"
-                    if first_request_seen is None and events.exists() and events.stat().st_size > 0:
+                    if (
+                        first_request_seen is None
+                        and events.exists()
+                        and '"kind": "request"' in events.read_text()
+                    ):
                         first_request_seen = now
                     if (
                         capture_start is None
@@ -336,7 +343,9 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=["profile", "repeat", "scale"], required=True)
+    parser.add_argument(
+        "--phase", choices=["profile", "repeat", "scale", "clean", "profile4"], required=True
+    )
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--seconds", type=float, default=180)
@@ -348,12 +357,17 @@ def main():
     os.chdir(ROOT)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    if args.phase == "profile":
+    if args.phase == "profile4":
+        for size in [2, 4]:
+            trial(output, 4, size, 0, 60, args.gpu, True, resume=args.resume)
+    elif args.phase == "profile":
         trial(output, 2, 2, 0, 35, args.gpu, True, resume=args.resume)
     else:
         for rep in range(1, args.repeats + 1):
-            if args.phase == "repeat":
-                sizes = [1, 2] if rep % 2 else [2, 1]
+            if args.phase in ("repeat", "clean"):
+                sizes = [1, 2] if args.phase == "repeat" else [2, 4]
+                if rep % 2 == 0:
+                    sizes.reverse()
             else:
                 sizes = [1, 2, 4]
                 offset = (rep - 1) % len(sizes)

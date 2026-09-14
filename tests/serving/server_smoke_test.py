@@ -24,6 +24,7 @@ from armory_client.messages import (
     ConnectRequest,
     InferRequest,
     InferResponse,
+    ResetRequest,
     ResponseAck,
     WarmupAck,
     WarmupPing,
@@ -109,12 +110,13 @@ def _connect_and_warmup(websocket: Any, robot_id: str) -> None:
         )
 
 
-def _send_infer(websocket: Any, robot_id: str, observation_step: int) -> None:
+def _send_infer(websocket: Any, robot_id: str, observation_step: int, episode_id: str = "") -> None:
     requested_at = time.time()
     _send(
         websocket,
         InferRequest(
             robot_id=robot_id,
+            episode_id=episode_id,
             observation={
                 "state": np.array([observation_step, observation_step + 1], dtype=np.float32)
             },
@@ -139,6 +141,7 @@ def _receive_and_ack(websocket: Any, robot_id: str, observation_step: int) -> In
     _send(
         websocket,
         ResponseAck(
+            episode_id=response.episode_id,
             request_id=response.request_id,
             chunk_id=response.chunk_id,
             observation_step=response.observation_step,
@@ -236,6 +239,11 @@ def _run_server_scenario(result_queue: mp.Queue) -> None:
                 _send_infer(robot_a, "robot-a", observation_step=0)
                 replay_response = _receive_and_ack(robot_a, "robot-a", observation_step=0)
                 assert replay_response.request_id > response_b.request_id
+                for episode_id in ("episode-one", "episode-two"):
+                    _send(robot_a, ResetRequest(robot_id="robot-a", episode_id=episode_id))
+                    _send_infer(robot_a, "robot-a", observation_step=0, episode_id=episode_id)
+                    current = _receive_and_ack(robot_a, "robot-a", observation_step=0)
+                    assert current.episode_id == episode_id
 
         result_queue.put(("ok", None))
     except BaseException:

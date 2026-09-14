@@ -31,6 +31,7 @@ class Result(JSONBaseModel):
     episode_idx: int
     # Defaulted so metadata.json written before this field still loads.
     truncated: bool = False
+    episode_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ def _save_metadata(
     Result(
         success=rollout.success,
         truncated=rollout.truncated,
+        episode_id=rollout.episode_id,
         robot_idx=meta.robot_idx,
         steps_taken=len(rollout.steps),
         task_suite_name=meta.task_suite_name,

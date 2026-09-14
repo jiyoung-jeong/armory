@@ -31,6 +31,7 @@ class SlotRequest:
     noise: np.ndarray | None
     control_hz: float
     weight: float = 1.0
+    episode_id: str = ""
 
     def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
         return (

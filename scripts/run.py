@@ -49,6 +49,7 @@ class Args(JsonArgs):
     output_dir: pathlib.Path = pathlib.Path("output/run")
     overwrite: bool = False
     # Directory containing this run's server metadata.json and JSONL logs.
+    record_events: bool = False
     server_log_dir: pathlib.Path | None = None
 
     @model_validator(mode="after")
@@ -109,6 +110,7 @@ def create_agent(args: Args, robot_idx: int, environment: _environment.Environme
         ws_client=ws_client,
         broker=broker,
         create_null_action=environment.create_null_action,
+        event_log_path=args.output_dir / f"broker_events_{robot_idx}.jsonl" if args.record_events else None,
     )
 
 
