@@ -19,6 +19,7 @@ import numpy as np
 from armory.backends.types import PolicyResult, warmup_request
 from armory.serving.rtc import InferType, RTCParams
 from armory.serving.schemas import SlotData
+from armory.utils.profiling import nvtx_range
 
 logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG)
@@ -174,23 +175,24 @@ class OpenPiPolicyAdapter:
         """Run a homogeneous sub-batch (all RTC or all non-RTC) in a single GPU call."""
         batch_size = len(requests)
 
-        # Sample or collect noise for the batch
-        if self._is_pytorch_model:
-            rng_or_device = self._pytorch_device
-            noise_to_use = self._sample_noise(rng_or_device, batch_size)
-            if noise_to_use is not None:
-                for i, req in enumerate(requests):
-                    if req.noise is not None:
-                        noise_to_use[i] = req.noise
-        else:
-            rng_or_device = self._split_rng()
-            noise_to_use = self._sample_noise(rng_or_device, batch_size)
-            if noise_to_use is not None:
-                for i, req in enumerate(requests):
-                    if req.noise is not None:
-                        noise_to_use = noise_to_use.at[i].set(req.noise)
+        with nvtx_range("armory.openpi.prepare_inputs"):
+            # Sample or collect noise for the batch
+            if self._is_pytorch_model:
+                rng_or_device = self._pytorch_device
+                noise_to_use = self._sample_noise(rng_or_device, batch_size)
+                if noise_to_use is not None:
+                    for i, req in enumerate(requests):
+                        if req.noise is not None:
+                            noise_to_use[i] = req.noise
+            else:
+                rng_or_device = self._split_rng()
+                noise_to_use = self._sample_noise(rng_or_device, batch_size)
+                if noise_to_use is not None:
+                    for i, req in enumerate(requests):
+                        if req.noise is not None:
+                            noise_to_use = noise_to_use.at[i].set(req.noise)
 
-        observation = self.create_batch_obs([_rename_keys(req.observation) for req in requests])
+            observation = self.create_batch_obs([_rename_keys(req.observation) for req in requests])
 
         if self._is_triton_optimized:
             sample_kwargs = dict(self._sample_kwargs)
@@ -233,26 +235,30 @@ class OpenPiPolicyAdapter:
             sample_kwargs["d"] = jnp.asarray(d_values)
             sample_kwargs["execution_horizon"] = jnp.asarray(eh_values)
 
-        actions = self._sample_actions(rng_or_device, observation, **sample_kwargs)
-        if self._is_pytorch_model:
-            raw_actions = np.asarray(actions.detach().cpu())
-            raw_state = np.asarray(observation.state.detach().cpu())
-        else:
-            raw_actions = np.asarray(actions)
-            raw_state = np.asarray(observation.state)
+        with nvtx_range("armory.openpi.sample_dispatch"):
+            actions = self._sample_actions(rng_or_device, observation, **sample_kwargs)
+        with nvtx_range("armory.openpi.materialize"):
+            if self._is_pytorch_model:
+                raw_actions = np.asarray(actions.detach().cpu())
+                raw_state = np.asarray(observation.state.detach().cpu())
+            else:
+                raw_actions = np.asarray(actions)
+                raw_state = np.asarray(observation.state)
+
+            noise_np = np.asarray(noise_to_use) if noise_to_use is not None else None
 
         # Apply output_transform per-sample: transforms like LiberoOutputs use [:, :7] designed
         # for single-sample shapes (action_horizon, action_dim_padded), not batched shapes.
-        noise_np = np.asarray(noise_to_use) if noise_to_use is not None else None
-        results = []
-        for i in range(batch_size):
-            sample = {"actions": raw_actions[i], "state": raw_state[i]}
-            result = self._output_transform(sample)
-            result["noise"] = (
-                noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
-            )
-            result["rtc_prev_actions"] = raw_actions[i]
-            results.append(result)
+        with nvtx_range("armory.openpi.output_transform"):
+            results = []
+            for i in range(batch_size):
+                sample = {"actions": raw_actions[i], "state": raw_state[i]}
+                result = self._output_transform(sample)
+                result["noise"] = (
+                    noise_np[i] if (noise_np is not None and noise_np.ndim == 3) else noise_np
+                )
+                result["rtc_prev_actions"] = raw_actions[i]
+                results.append(result)
 
         return results
 
