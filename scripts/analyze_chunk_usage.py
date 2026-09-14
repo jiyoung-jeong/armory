@@ -249,11 +249,13 @@ def analyze(root: Path, output: Path):
     output.mkdir(parents=True, exist_ok=True)
     chunk_rows, action_rows, streak_rows, stage_rows, trial_rows = [], [], [], [], []
     total_steps = total_episodes = 0
+    measured_events_available = True
     for manifest_path in sorted(root.glob("run_*/manifest.json")):
         m = json.loads(manifest_path.read_text())
         if m["status"] != "complete" or m["profiling"]:
             continue
         run = manifest_path.parent
+        measured_events_available &= (run / "client/broker_events_0.jsonl").exists()
         common = dict(
             run=m["name"], robots=m["robots"], max_batch=m["max_batch_size"], repeat=m["repeat"]
         )
@@ -265,6 +267,9 @@ def analyze(root: Path, output: Path):
             steps = pd.read_parquet(path)
             chunk_path = path.parent / "action_chunks.parquet"
             chunks = pd.read_parquet(chunk_path) if chunk_path.exists() else pd.DataFrame()
+            if meta.get("episode_id") and not chunks.empty:
+                if not chunks.episode_id.eq(meta["episode_id"]).all():
+                    raise ValueError(f"Cross-episode saved response: {path.parent}")
             episode = dict(
                 **common,
                 robot_id=f"robot_{meta['robot_idx']}",
@@ -392,7 +397,11 @@ def analyze(root: Path, output: Path):
         ),
         limitations=[
             "Queue depths are reconstructed, not newly measured receipt events.",
-            "Independent send-complete events and exact snapshot/reset timestamps were not logged.",
+            (
+                "Independent send and reset/broker events are analyzed separately by analyze_followup_events. Snapshot time is not directly logged."
+                if measured_events_available
+                else "Independent send-complete events and exact snapshot/reset timestamps were not logged."
+            ),
             "No recorded ACK does not establish whether sending or receiving occurred.",
             "request_to_step_record_ms excludes observation creation and ends after apply_action.",
             "Unsaved outputs have no recorded action use; actual use outside recorded steps is not observed.",
@@ -450,8 +459,10 @@ def plot_summary(chunks, streaks, output):
         xticks=range(1, 15),
     )
     axes[1].legend(fontsize=8)
+    cross_episode = int(chunks.saved_in_source_episode.eq(False).sum())
     fig.suptitle(
-        "4 robots; pooled 3 x 180 s trials, seed 7; includes recorded cross-episode actions"
+        f"4 robots; {chunks.run.nunique()} pooled trials, seed 7; "
+        f"cross-episode saved chunks: {cross_episode}"
     )
     fig.savefig(output / "chunk_use_comparison.png", dpi=170)
     fig.savefig(output / "chunk_use_comparison.pdf")
