@@ -1,0 +1,17 @@
+{
+  "env": "libero",
+  "model": "pi05",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "seed": 7,
+  "server": {
+    "max_batch_size": 2,
+    "scheduler": {
+      "scheduling_algorithm": "lookahead-actions"
+    },
+    "engine": {
+      "num_steps": 10
+    },
+    "output_dir": "output/server_pi05_libero_b2_01"
+  }
+}
