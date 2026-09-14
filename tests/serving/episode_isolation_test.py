@@ -134,3 +134,41 @@ def test_server_filters_queued_old_responses_and_records_send_completion():
         assert events[-1]["send_complete"] >= events[-1]["send_start"]
 
     asyncio.run(scenario())
+
+
+def test_response_received_before_reset_is_checked_after_waiting_for_agent_lock():
+    ws = FakeWebsocket()
+    agent = PolicyAgent(ws, ActionChunkBroker(), lambda *_: None)
+
+    class PauseReceiverLock:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.waiting = threading.Event()
+            self.proceed = threading.Event()
+            self.paused = False
+
+        def __enter__(self):
+            if threading.current_thread() is agent._background_thread and not self.paused:
+                self.paused = True
+                self.waiting.set()
+                assert self.proceed.wait(5)
+            self.lock.acquire()
+
+        def __exit__(self, *_):
+            self.lock.release()
+
+    gate = PauseReceiverLock()
+    agent._lock = gate
+    try:
+        ws.responses.put(response(ws.episode_id, 1))
+        assert gate.waiting.wait(5)  # Decoded old response, not yet holding the lock.
+        agent.reset()
+        current = ws.episode_id
+        gate.proceed.set()
+        ws.responses.put(response(current, 2))
+        assert ws.accepted.wait(5)
+        assert [ack["request_id"] for ack in ws.acks] == [2]
+        assert [chunk.episode_id for chunk in agent.action_chunks] == [current]
+    finally:
+        gate.proceed.set()
+        agent.close()
