@@ -101,9 +101,25 @@ def wait_ready(server, expected_batch, timeout=360):
     raise TimeoutError("Server readiness timeout")
 
 
-def trial(output, robots, batch, repeat, seconds, gpu, profile):
+def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
     name = f"{'profile' if profile else 'run'}_r{robots}_b{batch}_rep{repeat}"
     dest = output / name
+    if resume and (dest / "manifest.json").exists():
+        prior = json.loads((dest / "manifest.json").read_text())
+        expected = dict(
+            robots=robots,
+            max_batch_size=batch,
+            repeat=repeat,
+            seconds=seconds,
+            gpu=gpu,
+            profiling=profile,
+            seed=7,
+            status="complete",
+        )
+        if not all(prior.get(k) == v for k, v in expected.items()):
+            raise ValueError(f"Cannot resume incomplete or differently configured trial: {dest}")
+        emit("trial_skipped_complete", run=name)
+        return
     dest.mkdir(parents=True, exist_ok=False)
     occupied = gpu_processes(gpu)
     if occupied:
@@ -112,6 +128,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile):
     import socket
 
     with socket.socket() as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("127.0.0.1", 8080))
     env = dict(os.environ)
     env.update(
@@ -324,6 +341,7 @@ def main():
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--seconds", type=float, default=180)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--resume", action="store_true", help="Skip matching completed trials")
     args = parser.parse_args()
     if args.seconds <= 0 or args.repeats < 1:
         parser.error("seconds and repeats must be positive")
@@ -331,7 +349,7 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if args.phase == "profile":
-        trial(output, 2, 2, 0, 35, args.gpu, True)
+        trial(output, 2, 2, 0, 35, args.gpu, True, resume=args.resume)
     else:
         for rep in range(1, args.repeats + 1):
             if args.phase == "repeat":
@@ -349,6 +367,7 @@ def main():
                     args.seconds,
                     args.gpu,
                     False,
+                    resume=args.resume,
                 )
     emit("phase_complete", phase=args.phase)
 

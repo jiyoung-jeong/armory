@@ -100,3 +100,28 @@ def test_nsight_target_ownership_uses_exact_output_path(tmp_path):
     finally:
         child.terminate()
         child.wait(timeout=3)
+
+
+def test_resume_only_skips_complete_matching_trials(tmp_path):
+    from scripts.local_batch_sweep import trial
+
+    dest = tmp_path / "run_r2_b1_rep1"
+    dest.mkdir()
+    manifest = dict(
+        robots=2,
+        max_batch_size=1,
+        repeat=1,
+        seconds=180,
+        gpu=0,
+        profiling=False,
+        seed=7,
+        status="complete",
+    )
+    (dest / "manifest.json").write_text(json.dumps(manifest))
+    trial(tmp_path, 2, 1, 1, 180, 0, False, resume=True)
+    with pytest.raises(ValueError, match="differently configured"):
+        trial(tmp_path, 2, 1, 1, 60, 0, False, resume=True)
+    manifest["status"] = "failed"
+    (dest / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="incomplete"):
+        trial(tmp_path, 2, 1, 1, 180, 0, False, resume=True)

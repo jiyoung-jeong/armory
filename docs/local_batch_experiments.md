@@ -74,3 +74,9 @@ The analyzer verifies every saved chunk against processed request and chunk IDs,
 exports per-run and per-robot CSVs, and aggregates repetitions without including
 profile trials in the comparison. Standard deviations describe run-to-run
 variation; three same-seed repeats do not establish a general performance ranking.
+
+Use --resume with the same phase and parameters to skip completed matching
+trials after an interruption. Incomplete or differently configured trials
+are rejected and must be inspected and preserved under another name first.
+The port availability probe allows TCP TIME_WAIT sockets to expire naturally
+using SO_REUSEADDR; it still refuses an active listener.
