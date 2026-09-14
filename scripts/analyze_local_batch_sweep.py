@@ -27,11 +27,13 @@ def summarize_trial(path):
     robot_rows = []
     intervals = []
     chunks = []
+    chunk_gaps = []
     starts = []
     ends = []
     streak_lengths = []
     for rid, robot_episodes in episodes.groupby("robot_idx"):
         robot_intervals = []
+        robot_chunk_gaps = []
         robot_streaks = []
         for p in sorted((client / str(rid)).glob("*/steps.parquet")):
             s = pd.read_parquet(p)
@@ -54,7 +56,9 @@ def summarize_trial(path):
             )
             c["robot_id"] = f"robot_{rid}"
             chunks.append(c)
+            robot_chunk_gaps.extend(np.diff(c.response_timestamp.to_numpy()) * 1000)
         intervals.extend(robot_intervals)
+        chunk_gaps.extend(robot_chunk_gaps)
         streak_lengths.extend(robot_streaks)
         observed = int(robot_episodes.observed_steps.sum())
         starved = int(robot_episodes.starvation_steps.sum())
@@ -80,6 +84,8 @@ def summarize_trial(path):
                 starvation_streaks=len(robot_streaks),
                 max_streak_steps=max(robot_streaks, default=0),
                 step_interval_p95_ms=percentile(robot_intervals, 95),
+                chunk_gap_mean_ms=float(np.mean(robot_chunk_gaps)),
+                chunk_gap_p95_ms=percentile(robot_chunk_gaps, 95),
             )
         )
     chunks = pd.concat(chunks, ignore_index=True)
@@ -143,6 +149,8 @@ def summarize_trial(path):
         chunk_latency_mean_ms=float(latency.mean()),
         chunk_latency_p95_ms=percentile(latency, 95),
         chunk_latency_p99_ms=percentile(latency, 99),
+        chunk_gap_mean_ms=float(np.mean(chunk_gaps)),
+        chunk_gap_p95_ms=percentile(chunk_gaps, 95),
         stored_chunks=len(chunks),
         received_observations=len(req),
         processed_observations=len(processed),
@@ -190,15 +198,19 @@ def analyze(root):
         chunk_latency_p95_ms_mean=("chunk_latency_p95_ms", "mean"),
         step_interval_p95_ms_mean=("step_interval_p95_ms", "mean"),
         actual_batch_mean=("actual_batch_mean", "mean"),
+        chunk_gap_mean_ms=("chunk_gap_mean_ms", "mean"),
+        chunk_gap_p95_ms_mean=("chunk_gap_p95_ms", "mean"),
         sampled_peak_gpu_mib=("sampled_peak_gpu_mib", "max"),
     ).reset_index()
     stats.to_csv(root / "conditions.csv", index=False)
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), layout="constrained")
+    fig, axes_grid = plt.subplots(2, 2, figsize=(12, 8), layout="constrained")
+    axes = axes_grid.ravel()
     for n, g in normal.groupby("robots"):
         for ax, metric, label, scale in [
             (axes[0], "successes_per_min", "Successful tasks / min", 1),
             (axes[1], "post_first_starvation_rate", "Post-first-action starvation (%)", 100),
             (axes[2], "chunk_latency_p95_ms", "Stored chunk latency p95 (ms)", 1),
+            (axes[3], "chunk_gap_mean_ms", "Within-episode chunk receipt gap mean (ms)", 1),
         ]:
             means = g.groupby("max_batch")[metric].mean() * scale
             ax.plot(means.index, means.values, marker="o", label=f"{n} robots")
