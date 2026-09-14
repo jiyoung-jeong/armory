@@ -63,3 +63,14 @@ utilization. request_timestamp starts just before serialization, after observati
 creation; response_timestamp is recorded while converting the response to a chunk
 under the broker lock. This is not a pure network RTT. Fresh-observation age before
 inference is also not the robot's total service wait.
+
+After completed trials, run:
+
+```bash
+.venv/bin/python -m scripts.analyze_local_batch_sweep output/local_batch_sweep_20260914
+```
+
+The analyzer verifies every saved chunk against processed request and chunk IDs,
+exports per-run and per-robot CSVs, and aggregates repetitions without including
+profile trials in the comparison. Standard deviations describe run-to-run
+variation; three same-seed repeats do not establish a general performance ranking.
