@@ -141,6 +141,32 @@ def analyze_trial(run):
                 acked=req in acks,
                 saved=req in saved,
             )
+            prediction = d["notes"].get("prediction")
+            if prediction:
+                pc = next(c for c in prediction["chunks"] if c["robot_id"] == rid)
+                row.update(
+                    predicted_batch_size=len(prediction["chunks"]),
+                    predicted_action_index_start=pc["action_index_start"],
+                    predicted_inference_ms=prediction["inference_duration"] * 1000,
+                    inference_prediction_error_ms=(
+                        b["inference_duration"] - prediction["inference_duration"]
+                    )
+                    * 1000,
+                    predicted_completion=prediction["completion_time"],
+                    completion_prediction_error_ms=(t1 - prediction["completion_time"]) * 1000,
+                    predicted_arrival=pc["arrival_time"],
+                    predicted_first_executed_index=pc["first_executed_index"],
+                    predicted_new_chunk_actions=max(
+                        0, pc["max_execution_horizon"] - pc["first_executed_index"]
+                    ),
+                )
+                if r:
+                    actual_skip = max(0, r["next_action_index"] - r["action_index_start"])
+                    row.update(
+                        arrival_prediction_error_ms=(r["time"] - pc["arrival_time"]) * 1000,
+                        actual_first_executed_index=actual_skip,
+                        actual_new_chunk_actions=max(0, r["max_execution_horizon"] - actual_skip),
+                    )
             if s:
                 row.update(
                     send_start=s["send_start"],

@@ -144,6 +144,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
         OMP_NUM_THREADS="2",
         OPENBLAS_NUM_THREADS="2",
         ARMORY_NVTX="1" if profile else "0",
+        ARMORY_RECORD_PREDICTIONS="1" if profile else "0",
     )
     server_args = [
         sys.executable,

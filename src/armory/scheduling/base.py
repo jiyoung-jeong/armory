@@ -1,6 +1,7 @@
 import itertools
 import logging
 import multiprocessing as mp
+import os
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -33,6 +34,7 @@ class RequestScheduler(ABC):
         self._config = config
         self._batch_queue = batch_queue
         self._max_batch_size = max_batch_size
+        self._record_predictions = os.environ.get("ARMORY_RECORD_PREDICTIONS") == "1"
 
         self.latency_tracker = EMALatencyTracker()
         self.mirror = Mirror(self.latency_tracker)
@@ -112,6 +114,7 @@ class RequestScheduler(ABC):
         decisions: list[SchedulerDecision] = []
         for batch in batches:
             batch_id = next(self.next_batch_id)
+            prediction = None
             if isinstance(batch, Idle):
                 # Leave the GPU idle: occupy the mirror's server clock for the
                 # duration and tell the worker to sleep. No chunks, no robots.
@@ -130,6 +133,25 @@ class RequestScheduler(ABC):
                 scheduled_ids: list[RobotID] = []
             else:
                 chunks = self.mirror.queue_batch([slot.robot_id for slot in batch], batch_id)
+                if self._record_predictions:
+                    # Snapshot the values used for this dispatch, before a later
+                    # completion/ACK updates the latency tracker or mirror.
+                    prediction = dict(
+                        inference_duration=self.latency_tracker.infer_latency(len(batch)),
+                        completion_time=self.mirror.in_flight_batches[-1].completion_time,
+                        chunks=[
+                            dict(
+                                robot_id=slot.robot_id,
+                                chunk_id=chunk.chunk_id,
+                                arrival_time=chunk.arrival_time,
+                                action_index_start=chunk.action_index_start,
+                                execution_start_step=chunk.execution_start_step,
+                                first_executed_index=chunk.first_executed_index,
+                                max_execution_horizon=chunk.max_execution_horizon,
+                            )
+                            for slot, chunk in zip(batch, chunks, strict=True)
+                        ],
+                    )
                 self._batch_queue.put_nowait(
                     RequestBatch(
                         requests=batch,
@@ -156,7 +178,10 @@ class RequestScheduler(ABC):
                     deadlines=dict(deadlines),
                     batch_id=batch_id,
                     scheduled=scheduled_ids,
-                    notes=dict(notes),
+                    notes={
+                        **notes,
+                        **({"prediction": prediction} if prediction is not None else {}),
+                    },
                 )
             )
 

@@ -147,6 +147,8 @@ class PolicyAgent(Agent):
                     queue_before=queue_before,
                     queue_after=self._broker.num_actions_available,
                     next_action_index=next_action,
+                    action_index_start=action_chunk.action_index_start,
+                    max_execution_horizon=action_chunk.max_execution_horizon,
                 )
                 first_executed_index = max(
                     0, self._broker.next_action_step - action_chunk.action_index_start
