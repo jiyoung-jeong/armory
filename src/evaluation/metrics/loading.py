@@ -247,6 +247,14 @@ def request_timings(output_path: pathlib.Path) -> pd.DataFrame:
     acks = events[events["kind"] == "ack"][
         ["robot_id", "request_id", "server_send_time", "receive_time"]
     ]
+    # The engine can replace selected observations with newer slot contents.
+    # Responses/ACKs refer to processed IDs, not the selection-time IDs.
+    if "processed_request_ids" in batches:
+        batches = batches.copy()
+        batches["request_ids"] = batches["processed_request_ids"]
+        batches["robot_ids"] = batches["processed_robot_ids"].map(
+            lambda ids: [_robot_idx(rid) for rid in ids]
+        )
     served = (
         batches[batches["batch_size"] > 0][
             ["robot_ids", "request_ids", "inference_start_time", "inference_duration"]
@@ -255,7 +263,7 @@ def request_timings(output_path: pathlib.Path) -> pd.DataFrame:
         .rename(columns={"robot_ids": "robot_id", "request_ids": "request_id"})
     )
 
-    # request_id restarts per robot session, so every join needs the robot too.
+    # Retain robot identity as well as the server-assigned request ID.
     df = requests.merge(served, on=["robot_id", "request_id"]).merge(
         acks, on=["robot_id", "request_id"], how="left"
     )

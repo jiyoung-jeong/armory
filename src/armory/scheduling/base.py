@@ -18,6 +18,7 @@ from armory.serving.schemas import (
     SchedulerDecision,
     SlotRequest,
 )
+from armory.utils.profiling import nvtx_mark, nvtx_range
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,8 @@ class RequestScheduler(ABC):
             len(self.mirror.robots),
         )
 
-        batches, notes = self.get_next_batches(candidates)
+        with nvtx_range("armory.scheduler.decide"):
+            batches, notes = self.get_next_batches(candidates)
         post_return = time.time()
         logger.debug(
             "schedule stage=get_next_batches_done batches=%d mode=%s",
@@ -142,6 +144,7 @@ class RequestScheduler(ABC):
                     [slot.robot_id for slot in batch],
                 )
                 scheduled_ids = [slot.robot_id for slot in batch]
+            nvtx_mark(f"armory.scheduler.dispatch batch={batch_id} robots={scheduled_ids}")
             decisions.append(
                 SchedulerDecision(
                     scheduler_name=type(self).__name__,

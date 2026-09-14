@@ -48,11 +48,19 @@ class Args(JsonArgs):
     port: int = 8080
     output_dir: pathlib.Path = pathlib.Path("output/run")
     overwrite: bool = False
+    # Directory containing this run's server metadata.json and JSONL logs.
+    server_log_dir: pathlib.Path | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "Args":
         if not self.overwrite and self.output_dir.exists():
             raise ValueError(f"Output path {self.output_dir} already exists")
+        if self.server_log_dir is not None:
+            self.server_log_dir = self.server_log_dir.resolve()
+            if self.server_log_dir.is_relative_to(self.output_dir.resolve()):
+                raise ValueError("Server logs must be outside the client output directory")
+            if not self.server_log_dir.is_dir():
+                raise ValueError(f"Server log directory does not exist: {self.server_log_dir}")
         return self
 
 
@@ -204,6 +212,8 @@ def main(args: Args) -> None:
     if args.overwrite:
         shutil.rmtree(args.output_dir, ignore_errors=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.server_log_dir is not None:
+        (args.output_dir / "server").symlink_to(args.server_log_dir, target_is_directory=True)
 
     log_queue, log_listener = setup_logging(
         log_path=args.output_dir / "run.log", level=logging.INFO

@@ -18,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 from armory.serving.rtc import InferType
 from armory.serving.schemas import AckNotification, RobotID, SlotData, WarmupSeed
 from armory.serving.server_runtime import ServerState
+from armory.utils.profiling import nvtx_range
 from armory_client import msgpack_numpy
 from armory_client.messages import (
     ConnectRequest,
@@ -207,7 +208,11 @@ async def _send_loop(
     while True:
         response = await response_queue.get()
         send_times[response.request_id] = time.time()
-        await websocket.send_bytes(msgpack_numpy.packb(response))
+        with nvtx_range(
+            f"armory.send robot={response.robot_id} chunk={response.chunk_id} "
+            f"request={response.request_id}"
+        ):
+            await websocket.send_bytes(msgpack_numpy.packb(response))
         logger.debug("Sent response: %s", response)
 
 

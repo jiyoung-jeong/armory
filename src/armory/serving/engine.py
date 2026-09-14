@@ -30,6 +30,7 @@ from armory.serving.schemas import (
 )
 from armory.serving.slots import RobotSlots
 from armory.utils import logging_config
+from armory.utils.profiling import nvtx_range
 from armory_client.messages import (
     InferResponse,
     ResetRequest,
@@ -165,7 +166,8 @@ class GpuWorker:
 
             logger.info("Inferring batch of %d", len(infer_requests))
             t0 = time.time()
-            actions = policy.infer_batch(infer_requests)
+            with nvtx_range(f"armory.infer batch={batch.batch_id} size={batch_size}"):
+                actions = policy.infer_batch(infer_requests)
             t1 = time.time()
             inference_duration = t1 - t0
 
@@ -200,7 +202,15 @@ class GpuWorker:
                 {
                     "batch_id": response_batch.batch_id,
                     "robot_ids": [request.robot_id for request in requests],
+                    # Keep selected IDs for scheduler diagnostics and old readers.
                     "request_ids": [request.request_id for request in requests],
+                    # The worker may read a newer observation from the same slot.
+                    "processed_robot_ids": [r.robot_id for r in response_batch.responses],
+                    "processed_request_ids": [r.request_id for r in response_batch.responses],
+                    "chunk_ids": [r.chunk_id for r in response_batch.responses],
+                    "processed_observation_steps": [
+                        r.observation_step for r in response_batch.responses
+                    ],
                     "batch_size": response_batch.batch_size,
                     "inference_start_time": response_batch.inference_start_time,
                     "inference_duration": response_batch.inference_duration,
