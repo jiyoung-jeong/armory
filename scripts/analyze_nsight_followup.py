@@ -123,6 +123,47 @@ def analyze(run):
         params=(worker,),
     )
     copies.to_csv(dest / "copies.csv", index=False)
+    phase_rows = []
+    starts = frame.nvtx_start_ns.to_numpy()
+    for start, end, label, tid in con.execute(
+        "select start,end,text,globalTid from NVTX_EVENTS where text like 'armory.openpi.%'"
+    ):
+        if end is None or (tid & ~0xFFFFFF) != worker or end <= start:
+            continue
+        index = int(np.searchsorted(starts, start, side="right") - 1)
+        if index < 0:
+            continue
+        parent = frame.iloc[index]
+        if end > parent.nvtx_end_ns:
+            continue
+        phase_rows.append(
+            dict(
+                batch_id=int(parent.batch_id),
+                batch_size=int(parent.batch_size),
+                phase=label.rsplit(".", 1)[1],
+                duration_ms=(end - start) / 1e6,
+            )
+        )
+    phase_summary = {}
+    if phase_rows:
+        phase_frame = pd.DataFrame(phase_rows)
+        assert phase_frame.groupby("batch_id").size().eq(4).all()
+        assert phase_frame.batch_id.nunique() == len(frame)
+        phase_frame.to_csv(dest / "adapter_phases.csv", index=False)
+        for (size, phase), group in phase_frame.groupby(["batch_size", "phase"]):
+            phase_summary.setdefault(int(size), {})[phase] = stats(group.duration_ms)
+        order = ["prepare_inputs", "sample_dispatch", "materialize", "output_transform"]
+        means = phase_frame.groupby(["batch_size", "phase"]).duration_ms.mean().unstack()[order]
+        ax = means.plot.bar(stacked=True, figsize=(8, 4), rot=0)
+        ax.set(
+            xlabel="Actual batch size",
+            ylabel="Host wall time (ms)",
+            title="OpenPI call phases; materialize includes GPU completion wait",
+        )
+        ax.figure.tight_layout()
+        ax.figure.savefig(dest / "adapter_phases.png", dpi=170)
+        ax.figure.savefig(dest / "adapter_phases.pdf")
+        plt.close(ax.figure)
     gaps = (frame.nvtx_start_ns.to_numpy()[1:] - frame.nvtx_end_ns.to_numpy()[:-1]) / 1e6
     incident_path = run / "event_analysis/starvation_incidents.csv"
     has_events = incident_path.exists()
@@ -150,6 +191,7 @@ def analyze(run):
         inference_wall_ms=float(frame.duration_ms.sum()),
         inference_wall_fraction=float(frame.duration_ms.sum() / ((last - first) / 1e6)),
         between_inference_gap_ms=stats(gaps),
+        adapter_phases_by_batch=phase_summary,
         cuda_activity=activity_stats,
         recorded_activity_union_s=union_length(merged) / 1e9,
         starvation_in_capture=len(in_capture) if has_events else None,
