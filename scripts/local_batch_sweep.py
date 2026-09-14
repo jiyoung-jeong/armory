@@ -314,8 +314,6 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False, gr
                                 str(NSYS),
                                 "start",
                                 f"--session={session}",
-                                "--trace=cuda,nvtx",
-                                f"--cuda-graph-trace={graph_trace}",
                                 "--sample=none",
                                 "--cpuctxsw=none",
                             ],
