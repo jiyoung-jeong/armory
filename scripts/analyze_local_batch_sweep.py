@@ -50,8 +50,15 @@ def summarize_trial(path):
             a = np.flatnonzero(np.diff(np.r_[False, post].astype(int)) == 1)
             z = np.flatnonzero(np.diff(np.r_[post, False].astype(int)) == -1) + 1
             robot_streaks.extend((z - a).tolist())
+            chunk_path = p.parent / "action_chunks.parquet"
+            if not chunk_path.exists():
+                if s.action_chunk_index.notna().any():
+                    raise ValueError(f"Missing chunks for executed actions: {p.parent}")
+                # save_action_chunks omits the file if no response arrived.
+                # The episode's steps and starvation still count above.
+                continue
             c = pd.read_parquet(
-                p.parent / "action_chunks.parquet",
+                chunk_path,
                 columns=["request_id", "chunk_id", "request_timestamp", "response_timestamp"],
             )
             c["robot_id"] = f"robot_{rid}"
@@ -84,7 +91,9 @@ def summarize_trial(path):
                 starvation_streaks=len(robot_streaks),
                 max_streak_steps=max(robot_streaks, default=0),
                 step_interval_p95_ms=percentile(robot_intervals, 95),
-                chunk_gap_mean_ms=float(np.mean(robot_chunk_gaps)),
+                chunk_gap_mean_ms=float(np.mean(robot_chunk_gaps))
+                if robot_chunk_gaps
+                else float("nan"),
                 chunk_gap_p95_ms=percentile(robot_chunk_gaps, 95),
             )
         )
@@ -149,7 +158,7 @@ def summarize_trial(path):
         chunk_latency_mean_ms=float(latency.mean()),
         chunk_latency_p95_ms=percentile(latency, 95),
         chunk_latency_p99_ms=percentile(latency, 99),
-        chunk_gap_mean_ms=float(np.mean(chunk_gaps)),
+        chunk_gap_mean_ms=float(np.mean(chunk_gaps)) if chunk_gaps else float("nan"),
         chunk_gap_p95_ms=percentile(chunk_gaps, 95),
         stored_chunks=len(chunks),
         received_observations=len(req),
