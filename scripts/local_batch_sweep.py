@@ -35,22 +35,50 @@ def gpu_processes(gpu):
     return [int(line.strip()) for line in result.stdout.splitlines() if line.strip().isdigit()]
 
 
-def stop_group(proc):
+def server_process_groups(output_dir):
+    """Find our exact server command, including Nsight-created process groups."""
+    groups = set()
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != os.getuid():
+                continue
+            args = (entry / "cmdline").read_bytes().split(b"\0")
+            if b"scripts.serve" not in args or b"--server.output-dir" not in args:
+                continue
+            index = args.index(b"--server.output-dir")
+            if args[index + 1] == os.fsencode(output_dir):
+                group = os.getpgid(int(entry.name))
+                if group <= 1 or group == os.getpgrp():
+                    raise RuntimeError("Refusing to manage the experiment runner's process group")
+                groups.add(group)
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return groups
+
+
+def stop_group(proc, extra_groups=()):
     if proc is None:
         return
+    groups = {proc.pid, *extra_groups}
     for sig, timeout in [(signal.SIGINT, 12), (signal.SIGTERM, 5), (signal.SIGKILL, 3)]:
-        try:
-            os.killpg(proc.pid, sig)
-        except ProcessLookupError:
-            break
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            proc.poll()  # Reap the group leader even when orphaned children remain.
+        for group in list(groups):
             try:
-                os.killpg(proc.pid, 0)
+                os.killpg(group, sig)
             except ProcessLookupError:
-                return
+                groups.discard(group)
+        deadline = time.monotonic() + timeout
+        while groups and time.monotonic() < deadline:
+            proc.poll()
+            for group in list(groups):
+                try:
+                    os.killpg(group, 0)
+                except ProcessLookupError:
+                    groups.discard(group)
             time.sleep(0.2)
+        if not groups:
+            break
     try:
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
@@ -163,6 +191,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile):
     )
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=2))
     server = client = None
+    server_groups = set()
     capture_start = capture_end = None
     with (
         (dest / "server.stdout.log").open("w") as sf,
@@ -180,6 +209,8 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile):
             )
             emit("server_start", run=name, pid=server.pid)
             manifest["server_metadata"] = wait_ready(server, batch)
+            server_groups = server_process_groups(dest / "policy")
+            manifest["server_process_groups"] = sorted(server_groups)
             emit("server_ready", run=name)
             client = subprocess.Popen(
                 client_args,
@@ -201,7 +232,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile):
                     foreign = []
                     for pid in processes:
                         try:
-                            if os.getpgid(pid) not in [server.pid, client.pid]:
+                            if os.getpgid(pid) not in {server.pid, client.pid, *server_groups}:
                                 foreign.append(pid)
                         except ProcessLookupError:
                             pass
@@ -275,7 +306,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile):
             raise
         finally:
             stop_group(client)
-            stop_group(server)
+            stop_group(server, server_groups)
             if profile:
                 subprocess.run(
                     [str(NSYS), "shutdown", f"--session={session}"],

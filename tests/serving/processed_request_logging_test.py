@@ -72,3 +72,31 @@ def test_server_log_link_cannot_target_overwritten_client_output(tmp_path):
     server.mkdir(parents=True)
     with pytest.raises(ValueError, match="outside the client output"):
         Args(output_dir=server.parent, server_log_dir=server, overwrite=True)
+
+
+def test_nsight_target_ownership_uses_exact_output_path(tmp_path):
+    import subprocess
+    import sys
+    import time
+
+    from scripts.local_batch_sweep import server_process_groups
+
+    target = tmp_path / "policy"
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(10)",
+            "scripts.serve",
+            "--server.output-dir",
+            str(target),
+        ],
+        start_new_session=True,
+    )
+    try:
+        time.sleep(0.05)
+        assert server_process_groups(target) == {child.pid}
+        assert server_process_groups(tmp_path / "other-policy") == set()
+    finally:
+        child.terminate()
+        child.wait(timeout=3)
