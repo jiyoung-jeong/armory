@@ -164,6 +164,10 @@ def analyze_trial(run):
                     actual_skip = max(0, r["next_action_index"] - r["action_index_start"])
                     row.update(
                         arrival_prediction_error_ms=(r["time"] - pc["arrival_time"]) * 1000,
+                        actual_action_index_start=r["action_index_start"],
+                        action_start_prediction_error=r["action_index_start"]
+                        - pc["action_index_start"],
+                        actual_queue_net_actions=r["queue_after"] - r["queue_before"],
                         actual_first_executed_index=actual_skip,
                         actual_new_chunk_actions=max(0, r["max_execution_horizon"] - actual_skip),
                     )

@@ -50,6 +50,10 @@ def analyze(run):
         )
         * 1000000
     )
+    mode_row = con.execute(
+        "select value from META_DATA_CAPTURE where name='CUDA_GRAPH_TRACE_OPTIONS:MODE'"
+    ).fetchone()
+    graph_mode = str(mode_row[0]).lower() if mode_row else "unknown"
     tables = {row[0] for row in con.execute("select name from sqlite_master where type='table'")}
     nvtx = con.execute(
         "select start,end,text,globalTid from NVTX_EVENTS where text like 'armory.infer%'"
@@ -177,7 +181,7 @@ def analyze(run):
         ax.set(
             xlabel="Actual batch size",
             ylabel="Host wall time (ms)",
-            title="OpenPI call phases; materialize includes GPU completion wait",
+            title="OpenPI host call phases; sample_dispatch includes synchronization",
         )
         ax.figure.tight_layout()
         ax.figure.savefig(dest / "adapter_phases.png", dpi=170)
@@ -196,7 +200,48 @@ def analyze(run):
     ].copy()
     in_capture.to_csv(dest / "starvation_in_capture.csv", index=False)
     by_size = {int(size): stats(group.duration_ms) for size, group in frame.groupby("batch_size")}
+    prediction_summary = {}
+    lifecycle_path = run / "event_analysis/response_lifecycle.csv"
+    if lifecycle_path.exists():
+        lifecycle = pd.read_csv(lifecycle_path)
+        if "predicted_inference_ms" in lifecycle:
+            selected = lifecycle[lifecycle.batch_id.isin(frame.batch_id)].copy()
+            comparable = selected[selected.batch_size.eq(selected.predicted_batch_size)].copy()
+            unique = comparable.drop_duplicates("batch_id")
+            unique.to_csv(dest / "inference_predictions.csv", index=False)
+            comparable.to_csv(dest / "response_predictions.csv", index=False)
+            prediction_summary = dict(
+                scope="Complete inferences inside capture, matching predicted/actual batch size",
+                mismatched_batch_requests=int(len(selected) - len(comparable)),
+                inferences_by_batch={
+                    int(size): {
+                        key: stats(group[key].dropna())
+                        for key in [
+                            "predicted_inference_ms",
+                            "inference_ms",
+                            "inference_prediction_error_ms",
+                            "completion_prediction_error_ms",
+                        ]
+                    }
+                    for size, group in unique.groupby("batch_size")
+                },
+                received_responses_by_batch={
+                    int(size): {
+                        key: stats(group[key].dropna())
+                        for key in [
+                            "arrival_prediction_error_ms",
+                            "predicted_new_chunk_actions",
+                            "actual_new_chunk_actions",
+                            "actual_queue_net_actions",
+                            "action_start_prediction_error",
+                        ]
+                    }
+                    for size, group in comparable[comparable.received].groupby("batch_size")
+                },
+            )
     summary = dict(
+        graph_trace=graph_mode,
+        decision_time_predictions=prediction_summary,
         run=run.name,
         worker_pid=(worker >> 24) & 0xFFFFFF,
         epoch=epoch,
@@ -224,13 +269,13 @@ def analyze(run):
     )
     (dest / "summary.json").write_text(json.dumps(summary, indent=2))
     if has_events:
-        plot(run, dest, epoch, first / 1e9, last / 1e9, frame, activity, in_capture)
+        plot(run, dest, epoch, first / 1e9, last / 1e9, frame, activity, in_capture, graph_mode)
     con.close()
     print(json.dumps(summary), flush=True)
     return summary
 
 
-def plot(run, dest, epoch, first, last, batches, activity, incidents):
+def plot(run, dest, epoch, first, last, batches, activity, incidents, graph_mode):
     # Longest observed starvation onset with room around it, ties by earliest time.
     eligible = incidents[
         (incidents.start > epoch + first + 1) & (incidents.start < epoch + last - 1)
@@ -269,12 +314,22 @@ def plot(run, dest, epoch, first, last, batches, activity, incidents):
                 )
         axes[0].set_ylabel("infer_batch")
         axes[0].set_yticks([])
-        for j, kind in enumerate(["KERNEL", "GRAPH_TRACE", "MEMCPY"]):
+        kinds = (
+            ["KERNEL", "MEMCPY", "MEMSET"]
+            if graph_mode == "node"
+            else ["KERNEL", "GRAPH_TRACE", "MEMCPY"]
+        )
+        labels = (
+            ["kernel incl. nodes", "copy", "memset"]
+            if graph_mode == "node"
+            else ["kernel", "graph span", "copy"]
+        )
+        for j, kind in enumerate(kinds):
             spans = clipped(activity.get(kind, []), int(lo * 1e9), int(hi * 1e9))
             axes[1].broken_barh(
                 [(a / 1e9, (b - a) / 1e9) for a, b in spans], (j, 0.8), facecolors=plt.cm.tab10(j)
             )
-        axes[1].set_yticks([0.4, 1.4, 2.4], ["kernel", "graph span", "copy"], fontsize=8)
+        axes[1].set_yticks([0.4, 1.4, 2.4], labels, fontsize=8)
         for robot in range(4):
             ax = axes[robot + 2]
             ev = read_jsonl(run / f"client/broker_events_{robot}.jsonl")
@@ -302,7 +357,7 @@ def plot(run, dest, epoch, first, last, batches, activity, incidents):
             "Seconds since Nsight capture start; red = observed action starvation, green = chunk receipt"
         )
         fig.suptitle(
-            f"{run.name}: aligned inference and action queues\nGraph spans include gaps; server process tree only"
+            f"{run.name}: aligned inference and action queues\nCUDA {graph_mode} trace; server process tree only, not GPU utilization"
         )
         fig.tight_layout()
         fig.savefig(dest / f"{name}.png", dpi=160)

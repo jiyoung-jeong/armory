@@ -83,3 +83,5 @@ request_to_step_record_ms도 저장했다. 이는 직렬화 직전 request_times
 새 분석 도구의 회귀 검증 6개와 ruff/git diff 검증을 통과했다. 테스트는 겹치는 예측의 순증가, 수신 순서 누락 검출, 기록되지 않은 tail step 거부, 응답 없는 초기 대기, ACK/저장 역방향 분리, 에피소드 간 응답 보존, 초기 대기와 실행 중 부족 구간 구분을 다룬다.
 
 원본 및 상세 CSV는 deep9의 /home/jyjeong/armory/output/local_batch_sweep_20260914/chunk_usage/에 보관한다.
+
+후속 작업: episode 경계 수정, 새 4대 기준 실행, 고정 입력 batch·Nsight·시뮬레이터 부하 대조는 [후속 실험 보고서](2026-09-15-fixed-batch-and-nsight.md)에 정리했다. 위 본문은 수정 전 데이터에 대한 당시 분석으로 보존한다.
