@@ -123,6 +123,12 @@ def analyze(run):
         params=(worker,),
     )
     copies.to_csv(dest / "copies.csv", index=False)
+    sync_by_thread = {}
+    for start, end, tid in con.execute(
+        "select r.start,r.end,r.globalTid from CUPTI_ACTIVITY_KIND_RUNTIME r "
+        "join StringIds s on r.nameId=s.id where s.value='cuStreamSynchronize'"
+    ):
+        sync_by_thread.setdefault(tid, []).append((start, end))
     phase_rows = []
     starts = frame.nvtx_start_ns.to_numpy()
     for start, end, label, tid in con.execute(
@@ -136,12 +142,20 @@ def analyze(run):
         parent = frame.iloc[index]
         if end > parent.nvtx_end_ns:
             continue
+        sync = clipped(sync_by_thread.get(tid, []), start, end)
+        device = clipped(merged, start, end)
         phase_rows.append(
             dict(
                 batch_id=int(parent.batch_id),
                 batch_size=int(parent.batch_size),
                 phase=label.rsplit(".", 1)[1],
                 duration_ms=(end - start) / 1e6,
+                host_stream_sync_ms=union_length(sync) / 1e6,
+                recorded_cuda_union_ms=union_length(device) / 1e6,
+                sync_overlapping_cuda_ms=sum(
+                    union_length(clipped(device, a, b)) for a, b in merge_intervals(sync)
+                )
+                / 1e6,
             )
         )
     phase_summary = {}
@@ -151,7 +165,12 @@ def analyze(run):
         assert phase_frame.batch_id.nunique() == len(frame)
         phase_frame.to_csv(dest / "adapter_phases.csv", index=False)
         for (size, phase), group in phase_frame.groupby(["batch_size", "phase"]):
-            phase_summary.setdefault(int(size), {})[phase] = stats(group.duration_ms)
+            phase_summary.setdefault(int(size), {})[phase] = dict(
+                **stats(group.duration_ms),
+                host_stream_sync_mean_ms=float(group.host_stream_sync_ms.mean()),
+                recorded_cuda_union_mean_ms=float(group.recorded_cuda_union_ms.mean()),
+                sync_overlapping_cuda_mean_ms=float(group.sync_overlapping_cuda_ms.mean()),
+            )
         order = ["prepare_inputs", "sample_dispatch", "materialize", "output_transform"]
         means = phase_frame.groupby(["batch_size", "phase"]).duration_ms.mean().unstack()[order]
         ax = means.plot.bar(stacked=True, figsize=(8, 4), rot=0)

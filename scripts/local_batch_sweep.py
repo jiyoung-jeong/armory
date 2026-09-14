@@ -101,7 +101,22 @@ def wait_ready(server, expected_batch, timeout=360):
     raise TimeoutError("Server readiness timeout")
 
 
-def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
+def validate_profile_report(dest):
+    # nsys stop can exit zero even when the QDSTRM importer reports failure.
+    report = dest / "timeline.nsys-rep"
+    log = (dest / "server.stdout.log").read_text()
+    if (
+        not report.exists()
+        or report.stat().st_size == 0
+        or "Importer error status:" in log
+        or "Errors occurred while processing the raw events" in log
+    ):
+        raise RuntimeError(
+            f"Nsight report import failed; preserve raw trace and inspect {dest / 'server.stdout.log'}"
+        )
+
+
+def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False, graph_trace="graph"):
     name = f"{'profile' if profile else 'run'}_r{robots}_b{batch}_rep{repeat}"
     dest = output / name
     if resume and (dest / "manifest.json").exists():
@@ -116,7 +131,11 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
             seed=7,
             status="complete",
         )
-        if not all(prior.get(k) == v for k, v in expected.items()):
+        if profile:
+            expected["graph_trace"] = graph_trace
+        if not all(
+            prior.get(k, "graph" if k == "graph_trace" else None) == v for k, v in expected.items()
+        ):
             raise ValueError(f"Cannot resume incomplete or differently configured trial: {dest}")
         emit("trial_skipped_complete", run=name)
         return
@@ -169,6 +188,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
             "--sample=none",
             "--cpuctxsw=none",
             "--trace=cuda,nvtx",
+            f"--cuda-graph-trace={graph_trace}",
             "--trace-fork-before-exec=true",
             "--kill=none",
             f"--output={dest / 'timeline'}",
@@ -202,6 +222,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
         seed=7,
         gpu=gpu,
         profiling=profile,
+        graph_trace=graph_trace if profile else None,
         record_events=True,
         episode_isolation=True,
         server_command=server_args,
@@ -293,6 +314,8 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
                                 str(NSYS),
                                 "start",
                                 f"--session={session}",
+                                "--trace=cuda,nvtx",
+                                f"--cuda-graph-trace={graph_trace}",
                                 "--sample=none",
                                 "--cpuctxsw=none",
                             ],
@@ -315,6 +338,7 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False):
                             stderr=subprocess.STDOUT,
                             timeout=90,
                         )
+                        validate_profile_report(dest)
                         capture_end = time.monotonic()
                         emit("capture_stop", run=name)
                 elif server.poll() is not None:
@@ -349,6 +373,7 @@ def main():
     )
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--graph-trace", choices=["graph", "node"], default="graph")
     parser.add_argument("--seconds", type=float, default=180)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--resume", action="store_true", help="Skip matching completed trials")
@@ -360,9 +385,19 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     if args.phase == "profile4":
         for size in [2, 4]:
-            trial(output, 4, size, 0, 60, args.gpu, True, resume=args.resume)
+            trial(
+                output,
+                4,
+                size,
+                0,
+                60,
+                args.gpu,
+                True,
+                resume=args.resume,
+                graph_trace=args.graph_trace,
+            )
     elif args.phase == "profile":
-        trial(output, 2, 2, 0, 35, args.gpu, True, resume=args.resume)
+        trial(output, 2, 2, 0, 35, args.gpu, True, resume=args.resume, graph_trace=args.graph_trace)
     else:
         for rep in range(1, args.repeats + 1):
             if args.phase in ("repeat", "clean"):
