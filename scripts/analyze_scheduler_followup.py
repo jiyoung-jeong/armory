@@ -18,6 +18,7 @@ from scripts.analyze_mirror_provenance import analyze as analyze_provenance
 
 def summarize(root):
     rows = []
+    robot_rows = []
     audits = []
     for p in sorted(root.glob("*/run_*/manifest.json")):
         m = json.loads(p.read_text())
@@ -28,7 +29,8 @@ def summarize(root):
             analyze_trial(run)
         if not (run / "mirror_audit/summary.json").exists():
             analyze_provenance(run)
-        row, _ = summarize_trial(run)
+        row, per_robot = summarize_trial(run)
+        robot_rows.extend(dict(r, algorithm=m["algorithm"]) for r in per_robot)
         row["algorithm"] = m["algorithm"]
         row["condition"] = f"{m['algorithm']} / B{m['max_batch_size']}"
         rows.append(row)
@@ -37,6 +39,7 @@ def summarize(root):
         return
     f = pd.DataFrame(rows)
     f.to_csv(root / "trials.csv", index=False)
+    pd.DataFrame(robot_rows).to_csv(root / "robots.csv", index=False)
     g = (
         f.groupby(["algorithm", "max_batch"])
         .agg(

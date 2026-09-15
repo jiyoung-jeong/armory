@@ -230,7 +230,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seconds", type=float, default=60)
+    parser.add_argument("--latency-sensitivity", action="store_true")
     args = parser.parse_args()
+    if args.seconds <= 5:
+        parser.error("seconds must exceed the 5-second warm interval")
     args.output.mkdir(parents=True, exist_ok=False)
     logging.disable(logging.CRITICAL)
     fixed = pd.read_csv("output/fixed_batch_20260915/summary.csv")
@@ -257,10 +260,29 @@ def main():
                         rows.append(row)
                         print(json.dumps(row), flush=True)
                         pd.DataFrame(rows).to_csv(args.output / "conditions.csv", index=False)
+    sensitivity_rows = []
+    if args.latency_sensitivity:
+        for scale in [1, 0.9, 0.8, 0.7, 0.5]:
+            for algorithm in ["lookahead-actions", "round-robin"]:
+                for cap in [2, 3]:
+                    row = simulate(
+                        algorithm,
+                        cap,
+                        {k: v * scale for k, v in costs_live.items()},
+                        seconds=args.seconds,
+                        stagger=True,
+                    )
+                    row["latency_scale"] = scale
+                    sensitivity_rows.append(row)
+        pd.DataFrame(sensitivity_rows).to_csv(args.output / "latency_sensitivity.csv", index=False)
     (args.output / "manifest.json").write_text(
         json.dumps(
             dict(
-                status="complete", conditions=len(rows), seconds=args.seconds, description=__doc__
+                status="complete",
+                conditions=len(rows),
+                latency_sensitivity_conditions=len(sensitivity_rows),
+                seconds=args.seconds,
+                description=__doc__,
             ),
             indent=2,
         )

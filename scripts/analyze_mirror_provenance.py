@@ -41,6 +41,9 @@ def analyze(run):
                 timeline.setdefault(key, []).append(e)
     for ev in timeline.values():
         ev.sort(key=lambda e: e["time"])
+    episode_last_tick = {
+        key: max(e["time"] for e in ev if e["kind"] == "step") for key, ev in timeline.items()
+    }
     stage = pd.read_csv(run / "event_analysis/response_lifecycle.csv").set_index("request_id")
     rows = []
     for b in read_jsonl(run / "policy/server/batches.jsonl"):
@@ -84,11 +87,13 @@ def analyze(run):
                 selected_start=p["selected_action_index_start"],
                 processed_start=processed_step["post_action_index"],
                 same_predicted_observation=p["observation_step"] == processed["observation_step"],
+                forecast_is_future=p["observation_step"] > selected["observation_step"],
                 selected_to_processed_action_shift=processed_step["post_action_index"]
                 - p["selected_action_index_start"],
                 total_start_error=processed_step["post_action_index"] - p["action_index_start"],
                 inference_ms=b["inference_duration"] * 1000,
                 received=bool(response["received"]),
+                episode_active_at_infer=t0 < episode_last_tick[key],
             )
             if forecast_step:
                 truth = forecast_step["post_action_index"]
@@ -105,7 +110,7 @@ def analyze(run):
                 )
             else:
                 row["forecast_observation_recorded"] = False
-            if state and last_tick:
+            if state and last_tick and row["episode_active_at_infer"]:
                 q = state["queue_after"]
                 # Tick-based estimate; not a counterfactual measured exhaustion time.
                 next_tick = max(t0, last_tick["time"] + 0.05)
@@ -113,7 +118,7 @@ def analyze(run):
                     queue_at_infer=q,
                     estimated_existing_queue_slack_ms=(next_tick + q * 0.05 - t0) * 1000,
                 )
-                if response["received"]:
+                if response["received"] and response["queue_apply"] < episode_last_tick[key]:
                     required = (response["queue_apply"] - t0) * 1000
                     row.update(
                         actual_infer_to_admission_ms=required,
@@ -132,6 +137,17 @@ def analyze(run):
         processed=len(f),
         slot_updates=int(f.slot_updated.sum()),
         total_start_error=f.total_start_error.value_counts().sort_index().to_dict(),
+        known_observation_origin_error=f.loc[~f.forecast_is_future, "same_observation_origin_error"]
+        .dropna()
+        .value_counts()
+        .sort_index()
+        .to_dict(),
+        future_observation_origin_error=f.loc[f.forecast_is_future, "same_observation_origin_error"]
+        .dropna()
+        .value_counts()
+        .sort_index()
+        .to_dict(),
+        future_forecasts=int(f.forecast_is_future.sum()),
         same_observation_origin_error=f.same_observation_origin_error.dropna()
         .value_counts()
         .sort_index()
@@ -146,6 +162,7 @@ def analyze(run):
         estimated_slack_deficit_ms=stats(f.estimated_slack_deficit_ms.dropna()),
         positive_estimated_deficits=int((f.estimated_slack_deficit_ms > 0).sum()),
         admitted_with_slack_estimate=int(f.estimated_slack_deficit_ms.notna().sum()),
+        slack_scope="Inference and admission before the episode's last recorded control tick",
         caveat="Queue uses timestamp-ordered broker events; 20 Hz slack extrapolation is an estimate, not observed counterfactual exhaustion.",
     )
     (dest / "summary.json").write_text(json.dumps(summary, indent=2))
