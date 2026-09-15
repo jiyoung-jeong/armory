@@ -30,9 +30,9 @@ def response(start, chunk_id=1, observation_step=0, horizon=5):
     )
 
 
-def setup_pair():
+def setup_pair(control_hz=1.0):
     broker = ActionChunkBroker(0, 5)
-    robot = Robot("test", 1.0, 0, 5, _StubLatencyTracker())
+    robot = Robot("test", control_hz, 0, 5, _StubLatencyTracker())
     sent = []
     agent = PolicyAgent.__new__(PolicyAgent)
     agent._broker = broker
@@ -45,32 +45,34 @@ def setup_pair():
     agent.get_action(Observation(step=0))
     robot.step(_make_request(0, sent[-1][1], 0.0, 5))
     broker.receive_response(response(0))
-    robot.queue_chunk(ActionChunk(1, 0, 0, 0, 5, 0.1, origin="confirmed"))
+    robot.queue_chunk(ActionChunk(1, 0, 0, 0, 5, 0.1 / control_hz, origin="confirmed"))
     return broker, robot, agent, sent
 
 
+@pytest.mark.parametrize("control_hz", [1.0, 20.0])
 @pytest.mark.parametrize("dispatch_tick", [1, 3, 6])
 @pytest.mark.parametrize("arrival_offset", [-0.001, 0.001])
 def test_same_observation_forecast_matches_suffix_queue_and_future_starvation(
-    dispatch_tick, arrival_offset
+    dispatch_tick, arrival_offset, control_hz
 ):
-    broker, robot, agent, sent = setup_pair()
+    broker, robot, agent, sent = setup_pair(control_hz)
     for tick in range(1, dispatch_tick + 1):
         agent.get_action(Observation(step=tick))
-        robot.step(_make_request(tick, sent[-1][1], float(tick), 5))
+        robot.step(_make_request(tick, sent[-1][1], tick / control_hz, 5))
     # Dispatch between ticks; no slot update between prediction and GPU read.
     start = sent[-1][1]
-    arrival = dispatch_tick + 2 + arrival_offset
-    ctx = robot.calculate_chunk_context(dispatch_tick + 0.2, arrival)
+    arrival_tick = dispatch_tick + 2 + arrival_offset
+    arrival = arrival_tick / control_hz
+    ctx = robot.calculate_chunk_context((dispatch_tick + 0.2) / control_hz, arrival)
     assert ctx.observation_step == sent[-1][0]
     assert ctx.action_index_start == start
-    for tick in range(dispatch_tick + 1, int(arrival) + 1):
+    for tick in range(dispatch_tick + 1, int(arrival_tick) + 1):
         agent.get_action(Observation(step=tick))
     expected_skip = max(0, broker.next_action_step - start)
     before = broker.num_actions_available
     broker.receive_response(response(start, 2, dispatch_tick))
     assert ctx.first_executed_index == expected_skip
-    assert ctx.execution_start_step == int(arrival) + 1
+    assert ctx.execution_start_step == int(arrival_tick) + 1
     suffix = max(0, 5 - expected_skip)
     assert broker.num_actions_available == suffix
     predicted = ActionChunk(
@@ -86,15 +88,15 @@ def test_same_observation_forecast_matches_suffix_queue_and_future_starvation(
     )
     robot.queue_chunk(predicted)
     # Forecast from the dispatch snapshot, then compare every future control tick.
-    robot.step_forward(dispatch_tick + 10.0)
+    robot.step_forward((dispatch_tick + 10.00001) / control_hz)
     future = {s.observation_step: s for s in robot.steps}
-    predicted_next = future[int(arrival)].next_action_step
+    predicted_next = future[int(arrival_tick)].next_action_step
     predicted_queue = sum(
         robot.action_is_available(i, arrival)
         for i in range(predicted_next, predicted.last_action_index + 1)
     )
     assert predicted_queue - before == broker.num_actions_available - before
-    for tick in range(int(arrival) + 1, dispatch_tick + 11):
+    for tick in range(int(arrival_tick) + 1, dispatch_tick + 11):
         action = broker.get_action(tick)
         assert future[tick].action_step == (action.step if action else None)
         assert future[tick].next_action_step == broker.next_action_step
