@@ -116,7 +116,19 @@ def validate_profile_report(dest):
         )
 
 
-def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False, graph_trace="graph"):
+def trial(
+    output,
+    robots,
+    batch,
+    repeat,
+    seconds,
+    gpu,
+    profile,
+    resume=False,
+    graph_trace="graph",
+    algorithm="lookahead-actions",
+    record_predictions=False,
+):
     name = f"{'profile' if profile else 'run'}_r{robots}_b{batch}_rep{repeat}"
     dest = output / name
     if resume and (dest / "manifest.json").exists():
@@ -130,11 +142,22 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False, gr
             profiling=profile,
             seed=7,
             status="complete",
+            algorithm=algorithm,
+            record_predictions=bool(record_predictions or profile),
         )
         if profile:
             expected["graph_trace"] = graph_trace
         if not all(
-            prior.get(k, "graph" if k == "graph_trace" else None) == v for k, v in expected.items()
+            prior.get(
+                k,
+                {
+                    "graph_trace": "graph",
+                    "algorithm": "lookahead-actions",
+                    "record_predictions": bool(profile),
+                }.get(k),
+            )
+            == v
+            for k, v in expected.items()
         ):
             raise ValueError(f"Cannot resume incomplete or differently configured trial: {dest}")
         emit("trial_skipped_complete", run=name)
@@ -163,15 +186,22 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False, gr
         OMP_NUM_THREADS="2",
         OPENBLAS_NUM_THREADS="2",
         ARMORY_NVTX="1" if profile else "0",
-        ARMORY_RECORD_PREDICTIONS="1" if profile else "0",
+        ARMORY_RECORD_PREDICTIONS="1" if profile or record_predictions else "0",
     )
+    config_path = ROOT / f"configs/server/local_libero_b{batch}.json"
+    if not config_path.exists() or algorithm != "lookahead-actions":
+        config = json.loads((ROOT / "configs/server/local_libero_b2.json").read_text())
+        config["server"]["max_batch_size"] = batch
+        config["server"]["scheduler"]["scheduling_algorithm"] = algorithm
+        config_path = dest / "server_input.json"
+        config_path.write_text(json.dumps(config, indent=2))
     server_args = [
         sys.executable,
         "-u",
         "-m",
         "scripts.serve",
         "--json-path",
-        f"configs/server/local_libero_b{batch}.json",
+        str(config_path),
         "--server.output-dir",
         str(dest / "policy"),
         "--log-dir",
@@ -210,11 +240,15 @@ def trial(output, robots, batch, repeat, seconds, gpu, profile, resume=False, gr
         "--output-dir",
         str(dest / "client"),
         "--record-events",
+        "--scheduler-config.scheduling-algorithm",
+        algorithm,
         "--server-log-dir",
         str(dest / "policy/server"),
     ]
     manifest = dict(
         name=name,
+        algorithm=algorithm,
+        record_predictions=bool(record_predictions or profile),
         robots=robots,
         max_batch_size=batch,
         repeat=repeat,

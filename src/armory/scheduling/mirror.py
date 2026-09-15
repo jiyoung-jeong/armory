@@ -226,7 +226,16 @@ class Robot:
         and min/max_execution_horizon."""
         for i in range(start, len(self.chunks)):
             chunk = self.chunks[i]
-            ctx = self._context_at_arrival(chunk.arrival_time)
+            if chunk.origin == "confirmed":
+                continue  # An ACK already supplied the actual client context.
+            if chunk.origin == "completed":
+                # Completion has the exact slot snapshot. Refine only the
+                # receive-side execution context, never its known source.
+                ctx = self._execution_context(
+                    chunk.observation_step, chunk.action_index_start, chunk.arrival_time
+                )
+            else:
+                ctx = self._context_at_arrival(chunk.arrival_time)
             self.chunks[i] = replace(
                 chunk,
                 observation_step=ctx.observation_step,
@@ -249,13 +258,17 @@ class Robot:
         control_step = self.get_latest_control_step_before(obs_cutoff)
 
         observation_step = control_step.observation_step
-        action_start_index = (
-            control_step.action_step
-            if control_step.action_step is not None
-            else control_step.next_action_step
-        )
+        # PolicyAgent sends its request after popping this tick's action.
+        action_start_index = control_step.next_action_step
 
-        step = self.steps[-1]
+        return self._execution_context(observation_step, action_start_index, arrival_time)
+
+    def _execution_context(
+        self, observation_step: int, action_start_index: int, arrival_time: float
+    ) -> ChunkContext:
+        # Responses arriving before a tick are eligible for that tick. Requests
+        # record the post-pop state; the future tick's action_step is pre-pop.
+        step = self.get_latest_control_step_before(arrival_time)
         while step.time < arrival_time:
             step = self.advance_step(step)
 
@@ -304,32 +317,10 @@ class Robot:
             control_step = step
 
         observation_step = control_step.observation_step
-        action_start_index = (
-            control_step.action_step
-            if control_step.action_step is not None
-            else control_step.next_action_step
-        )
+        # PolicyAgent sends its request after popping this tick's action.
+        action_start_index = control_step.next_action_step
 
-        while step.time < arrival_time:
-            step = self.advance_step(step)
-
-        execution_start_step = step.observation_step
-        first_executed_index = max(
-            0,
-            step.action_step - action_start_index
-            if step.action_step is not None
-            else step.next_action_step - action_start_index,
-        )
-
-        return ChunkContext(
-            observation_step=observation_step,
-            action_index_start=action_start_index,
-            min_execution_horizon=self.min_execution_horizon,
-            max_execution_horizon=self.max_execution_horizon,
-            arrival_time=arrival_time,
-            execution_start_step=execution_start_step,
-            first_executed_index=first_executed_index,
-        )
+        return self._execution_context(observation_step, action_start_index, arrival_time)
 
     def assert_consistency(self) -> None:
         """Debug-time invariant checks. Remove the call sites once we're
@@ -493,7 +484,7 @@ class Robot:
 
     def next_chunk_start(self, cs: ControlStep) -> int:
         """Action index the next queued chunk should start at, given control step ``cs``."""
-        return cs.action_step if cs.action_step is not None else cs.next_action_step
+        return cs.next_action_step
 
     def _clone_for_twin(self) -> Robot:
         """Cheap shallow clone for speculative twins.

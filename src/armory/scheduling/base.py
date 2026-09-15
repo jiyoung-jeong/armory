@@ -142,6 +142,10 @@ class RequestScheduler(ABC):
                         chunks=[
                             dict(
                                 robot_id=slot.robot_id,
+                                selected_request_id=slot.request_id,
+                                selected_observation_step=slot.observation_step,
+                                selected_action_index_start=slot.action_index_start,
+                                observation_step=chunk.observation_step,
                                 chunk_id=chunk.chunk_id,
                                 arrival_time=chunk.arrival_time,
                                 action_index_start=chunk.action_index_start,
