@@ -84,6 +84,139 @@ def summarize(root):
     print(g.to_string(index=False), flush=True)
 
 
+def summarize_context(root):
+    """Aggregate logged provenance and active-episode slack, separately from scores."""
+    rows = []
+    suffix_rows = []
+    for path in sorted(root.glob("*/run_*/mirror_audit/provenance_and_slack.csv")):
+        run = path.parent.parent
+        manifest = json.loads((run / "manifest.json").read_text())
+        if manifest["status"] != "complete":
+            continue
+        frame = pd.read_csv(path)
+        frame["algorithm"] = manifest["algorithm"]
+        frame["max_batch"] = manifest["max_batch_size"]
+        rows.append(frame)
+        stages = pd.read_csv(run / "event_analysis/response_lifecycle.csv")
+        joined = frame.merge(
+            stages,
+            left_on="processed_request_id",
+            right_on="request_id",
+            validate="one_to_one",
+            suffixes=("", "_stage"),
+        )
+        # Isolate arrival/queue prediction from changed or future observation origins.
+        same = joined[
+            (~joined.forecast_is_future)
+            & joined.same_predicted_observation
+            & joined.received
+            & joined.estimated_slack_deficit_ms.notna()
+        ]
+        suffix_error = same.actual_new_chunk_actions - same.predicted_new_chunk_actions
+        suffix_rows.append(
+            dict(
+                algorithm=manifest["algorithm"],
+                max_batch=manifest["max_batch_size"],
+                repeat=manifest["repeat"],
+                compared=len(same),
+                exact_suffix=int(suffix_error.eq(0).sum()),
+                suffix_mae=suffix_error.abs().mean(),
+                suffix_error_distribution=suffix_error.value_counts().sort_index().to_dict(),
+            )
+        )
+    if not rows:
+        return
+    (root / "suffix_prediction_trials.json").write_text(json.dumps(suffix_rows, indent=2))
+    f = pd.concat(rows, ignore_index=True)
+    provenance, slack = [], []
+    for (algorithm, cap), g in f.groupby(["algorithm", "max_batch"]):
+        known = g.loc[~g.forecast_is_future, "same_observation_origin_error"].dropna()
+        future = g.loc[g.forecast_is_future, "same_observation_origin_error"].dropna()
+        provenance.append(
+            dict(
+                algorithm=algorithm,
+                max_batch=cap,
+                processed=len(g),
+                slot_updates=int(g.slot_updated.sum()),
+                known_observations=len(known),
+                known_errors=int(known.ne(0).sum()),
+                future_forecasts=int(g.forecast_is_future.sum()),
+                future_observations_recorded=len(future),
+                future_errors=int(future.ne(0).sum()),
+                missing_forecast_observations=int((~g.forecast_observation_recorded).sum()),
+                known_error_distribution=known.value_counts().sort_index().to_dict(),
+                future_error_distribution=future.value_counts().sort_index().to_dict(),
+            )
+        )
+        admitted = g[g.estimated_slack_deficit_ms.notna()]
+        slack.append(
+            dict(
+                algorithm=algorithm,
+                max_batch=cap,
+                admitted=len(admitted),
+                queue_at_infer_mean=admitted.queue_at_infer.mean(),
+                estimated_slack_mean_ms=admitted.estimated_existing_queue_slack_ms.mean(),
+                infer_to_admission_mean_ms=admitted.actual_infer_to_admission_ms.mean(),
+                estimated_deficit_mean_ms=admitted.estimated_slack_deficit_ms.mean(),
+                estimated_deficit_p95_ms=admitted.estimated_slack_deficit_ms.quantile(0.95),
+                positive_deficit_fraction=admitted.estimated_slack_deficit_ms.gt(0).mean(),
+            )
+        )
+    (root / "provenance_conditions.json").write_text(json.dumps(provenance, indent=2))
+    pd.DataFrame(slack).to_csv(root / "slack_conditions.csv", index=False)
+    robots = pd.read_csv(root / "robots.csv")
+    robots.groupby(["algorithm", "max_batch", "robot", "tasks"]).agg(
+        repeats=("repeat", "count"),
+        success=("success", "sum"),
+        starvation_mean=("post_first_starvation_rate", "mean"),
+        maximum_streak_steps=("max_streak_steps", "max"),
+    ).reset_index().to_csv(root / "robot_conditions.csv", index=False)
+
+    telemetry_path = root / "gpu_telemetry.jsonl"
+    if not telemetry_path.exists():
+        return
+    samples = []
+    for line in telemetry_path.read_text().splitlines():
+        entry = json.loads(line)
+        fields = [value.strip() for value in entry["values"].split(",")]
+        if len(fields) != 6:
+            raise ValueError(f"Unexpected GPU telemetry: {entry}")
+        samples.append(
+            dict(
+                time=entry["time"],
+                sm_mhz=float(fields[0].split()[0]),
+                watts=float(fields[1].split()[0]),
+                temperature_c=float(fields[2]),
+                sw_thermal=fields[4] == "Active",
+                hw_thermal=fields[5] == "Active",
+            )
+        )
+    samples = pd.DataFrame(samples)
+    thermal = []
+    for trial in pd.read_csv(root / "trials.csv").itertuples():
+        active = samples[samples.time.between(trial.first_step, trial.last_step)]
+        if active.empty:
+            continue
+        thermal.append(
+            dict(
+                algorithm=trial.algorithm,
+                max_batch=trial.max_batch,
+                repeat=trial.repeat,
+                samples=len(active),
+                first_sample_delay_s=active.time.min() - trial.first_step,
+                last_sample_before_end_s=trial.last_step - active.time.max(),
+                sm_mhz_mean=active.sm_mhz.mean(),
+                sm_mhz_min=active.sm_mhz.min(),
+                temperature_c_mean=active.temperature_c.mean(),
+                temperature_c_max=active.temperature_c.max(),
+                watts_mean=active.watts.mean(),
+                sw_thermal_samples=int(active.sw_thermal.sum()),
+                hw_thermal_samples=int(active.hw_thermal.sum()),
+            )
+        )
+    pd.DataFrame(thermal).to_csv(root / "thermal_trials.csv", index=False)
+
+
 def plot_model(root):
     f = pd.read_csv(root / "conditions.csv")
     colors = dict(
@@ -137,6 +270,7 @@ def main():
     p.add_argument("--model", type=Path)
     args = p.parse_args()
     summarize(args.root)
+    summarize_context(args.root)
     if args.model:
         plot_model(args.model)
 
