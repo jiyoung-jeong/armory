@@ -48,7 +48,7 @@ logger = logging.getLogger("armory.serving.server")
 
 @dataclass
 class ServerState:
-    scheduler_sock: zmq.asyncio.Socket  # PUB to scheduler
+    scheduler_sock: zmq.asyncio.Socket  # XPUB broadcast to scheduler and GPU
     response_queues: dict[str, asyncio.Queue]
     slots: RobotSlots  # WS manages slot allocation
     robot_metadata: dict[str, ConnectRequest]
@@ -195,6 +195,25 @@ def _start_backend(
     )
 
 
+async def _wait_for_subscribers(
+    socket: zmq.asyncio.Socket, *, expected: int, timeout: float = 10.0
+) -> None:
+    """Wait for the workers' empty-topic subscriptions before accepting clients.
+
+    Worker ready events precede the main process binding its broadcast socket.
+    PUB would silently discard early control messages before SUB connections
+    establish. XPUB_VERBOSER exposes every subscribe/unsubscribe notification.
+    """
+    active = 0
+    async with asyncio.timeout(timeout):
+        while active < expected:
+            message = await socket.recv()
+            if message == b"\x01":
+                active += 1
+            elif message == b"\x00":
+                active -= 1
+
+
 def create_lifespan(
     metadata: ServerMetadata,
     policy_factory: PolicyFactory,
@@ -229,50 +248,62 @@ def create_lifespan(
 
         zmq_ctx = zmq.asyncio.Context()
 
-        scheduler_sock = zmq_ctx.socket(zmq.PUB)
+        scheduler_sock = zmq_ctx.socket(zmq.XPUB)
+        scheduler_sock.setsockopt(zmq.XPUB_VERBOSER, 1)
         scheduler_sock.bind(socket_addresses["server_out_ep"])
 
         response_sock = zmq_ctx.socket(zmq.SUB)
         response_sock.setsockopt(zmq.SUBSCRIBE, b"")
         response_sock.connect(socket_addresses["gpu_out_ep"])
 
-        response_queues: dict[str, asyncio.Queue] = {}
+        state: ServerState | None = None
+        router: asyncio.Task | None = None
+        watchdog: asyncio.Task | None = None
+        try:
+            await _wait_for_subscribers(scheduler_sock, expected=2)
+            logger.info("Scheduler and GPU broadcast subscriptions ready")
+            response_queues: dict[str, asyncio.Queue] = {}
 
-        record_dir = metrics_dir(config)
-        state = ServerState(
-            scheduler_sock=scheduler_sock,
-            response_queues=response_queues,
-            slots=slots,
-            robot_metadata={},
-            batch_queue=batch_queue,
-            config=config,
-            metrics_dir=record_dir,
-            events_log=open(record_dir / "events.jsonl", "w"),
-        )
-        app.state.server = state
-        write_metadata(state, metadata)
+            record_dir = metrics_dir(config)
+            state = ServerState(
+                scheduler_sock=scheduler_sock,
+                response_queues=response_queues,
+                slots=slots,
+                robot_metadata={},
+                batch_queue=batch_queue,
+                config=config,
+                metrics_dir=record_dir,
+                events_log=open(record_dir / "events.jsonl", "w"),
+            )
+            app.state.server = state
+            write_metadata(state, metadata)
 
-        router = asyncio.create_task(_router_task(response_sock, response_queues))
-        watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
+            router = asyncio.create_task(_router_task(response_sock, response_queues))
+            watchdog = asyncio.create_task(_watchdog_task(gpu_proc, scheduler_proc))
 
-        yield
+            yield
+        finally:
+            for task in (watchdog, router):
+                if task is not None:
+                    task.cancel()
+            await asyncio.gather(
+                *(task for task in (watchdog, router) if task is not None),
+                return_exceptions=True,
+            )
+            if state is not None:
+                state.events_log.close()
+            gpu_proc.terminate()
+            scheduler_proc.terminate()
 
-        watchdog.cancel()
-        router.cancel()
-        state.events_log.close()
-        gpu_proc.terminate()
-        scheduler_proc.terminate()
+            for proc in (gpu_proc, scheduler_proc):
+                await loop.run_in_executor(None, proc.join, 5)
+                if proc.is_alive():
+                    logger.warning("Process %s did not exit cleanly, killing", proc.name)
+                    proc.kill()
+                    await loop.run_in_executor(None, proc.join)
 
-        loop = asyncio.get_event_loop()
-        for proc in (gpu_proc, scheduler_proc):
-            await loop.run_in_executor(None, proc.join, 5)
-            if proc.is_alive():
-                logger.warning("Process %s did not exit cleanly, killing", proc.name)
-                proc.kill()
-                await loop.run_in_executor(None, proc.join)
-
-        scheduler_sock.close()
-        response_sock.close()
-        zmq_ctx.term()
+            scheduler_sock.close(linger=0)
+            response_sock.close(linger=0)
+            zmq_ctx.term()
 
     return lifespan
