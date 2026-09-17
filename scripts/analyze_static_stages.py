@@ -183,6 +183,20 @@ def analyze(folder):
         b: HloStages((run / f"b{b}.optimized_hlo.txt").read_text()) for b in manifest["batch_sizes"]
     }
 
+    loop_regions = {}
+    for index, call in enumerate(calls):
+        names = resolvers[call["batch_size"]].action_loop_names()
+        loop_regions[index] = sorted(
+            (start, end)
+            for start, end, label, tid in nvtx
+            if end
+            and (tid & ~0xFFFFFF) == worker
+            and call["start"] <= start < end <= call["end"]
+            and any(
+                re.search(r"hlo_op=" + re.escape(name) + r"_body(?:[,#])", label or "")
+                for name in names
+            )
+        )
     runtime = []
     for start, end, tid, corr, name in con.execute(
         "select a.start,a.end,a.globalTid,a.correlationId,s.value from CUPTI_ACTIVITY_KIND_RUNTIME a join StringIds s on s.id=a.nameId where (a.globalTid & ~16777215)=?",
@@ -252,6 +266,12 @@ def analyze(folder):
         event["api_name"] = match["api"]["name"] if match else ""
         event["api_start"] = match["api"]["start"] if match else None
         event["correlation_matched"] = bool(match)
+        event["action_step"] = -1
+        if match:
+            for step, (start, end) in enumerate(loop_regions[event["call"]]):
+                if start <= match["api"]["start"] and match["api"]["end"] <= end:
+                    event["action_step"] = step
+                    break
         event.update(
             batch_size=calls[event["call"]]["batch_size"],
             phase=calls[event["call"]]["phase"],
@@ -289,6 +309,10 @@ def analyze(folder):
             selected = kernels[kernels.stage.eq(stage)]
             duration = union_length(intervals(selected)) / 1e6
             row[stage + "_kernel_ms"] = duration
+            all_stage = own[own.stage.eq(stage)]
+            stage_copies = all_stage[all_stage.kind.eq("MEMCPY")]
+            row[stage + "_activity_ms"] = union_length(intervals(all_stage)) / 1e6
+            row[stage + "_copy_ms"] = union_length(intervals(stage_copies)) / 1e6
             stage_rows.append(
                 dict(
                     batch_size=call["batch_size"],
@@ -298,6 +322,9 @@ def analyze(folder):
                     kernel_count=len(selected),
                     kernel_sum_ms=selected.duration_ms.sum(),
                     kernel_union_ms=duration,
+                    activity_union_ms=row[stage + "_activity_ms"],
+                    copy_union_ms=row[stage + "_copy_ms"],
+                    copy_bytes=int(stage_copies.bytes.sum()),
                     span_ms=(selected.end.max() - selected.start.min()) / 1e6
                     if len(selected)
                     else 0,
@@ -306,17 +333,22 @@ def analyze(folder):
         copies = own[own.kind.eq("MEMCPY")]
         row["copy_union_ms"] = union_length(intervals(copies)) / 1e6
         row["copy_bytes"] = int(copies.bytes.sum())
+        for kind, label in [(1, "h2d"), (2, "d2h"), (8, "d2d")]:
+            subset = copies[copies.copy_kind.eq(kind)]
+            row[label + "_copy_ms"] = union_length(intervals(subset)) / 1e6
+            row[label + "_bytes"] = int(subset.bytes.sum())
+        row["cross_stage_overlap_ms"] = (
+            sum(
+                row[stage + "_activity_ms"]
+                for stage in [*STAGES, "vlm_mixed", "mixed", "unattributed"]
+            )
+            - activity_union
+        )
         sync = [
             (a["start"], a["end"]) for a in runtime if a["call"] == i and "Synchronize" in a["name"]
         ]
         row["host_sync_union_ms"] = union_length(sync) / 1e6
-        loops = resolvers[call["batch_size"]].action_loop_names()
-        row["action_loop_body_count"] = sum(
-            bool(re.search(r"hlo_op=" + re.escape(name) + r"_body(?:[,#])", label or ""))
-            for start, end, label, tid in nvtx
-            if end and call["start"] <= start < end <= call["end"]
-            for name in loops
-        )
+        row["action_loop_body_count"] = len(loop_regions[i])
         call_rows.append(row)
     per_call = pd.DataFrame(call_rows)
     per_call.to_csv(dest / "calls.csv", index=False)
@@ -325,7 +357,15 @@ def analyze(folder):
     assert measured.groupby("batch_size").size().to_dict() == {
         b: manifest["samples"] for b in manifest["batch_sizes"]
     }
+    assert measured.action_loop_body_count.eq(manifest["num_steps"]).all()
     columns = [
+        "cross_stage_overlap_ms",
+        *[
+            s + suffix
+            for s in [*STAGES, "vlm_mixed", "mixed", "unattributed"]
+            for suffix in ["_activity_ms", "_copy_ms"]
+        ],
+        *[kind + suffix for kind in ["h2d", "d2h", "d2d"] for suffix in ["_copy_ms", "_bytes"]],
         "full_ms",
         "kernel_union_ms",
         "activity_union_ms",
@@ -343,6 +383,29 @@ def analyze(folder):
     summary["known_stage_fraction"] = (
         1 - (summary.mixed_kernel_ms + summary.unattributed_kernel_ms) / summary.kernel_union_ms
     )
+    summary["vlm_activity_ms"] = (
+        summary.vlm_embed_activity_ms
+        + summary.vlm_prefill_activity_ms
+        + summary.vlm_mixed_activity_ms
+    )
+    summary["activity_stage_coverage"] = (
+        1
+        - (summary.mixed_activity_ms + summary.unattributed_activity_ms) / summary.activity_union_ms
+    )
+    host_calls = pd.read_json(run / "calls.jsonl", lines=True)
+    host_controls = host_calls.groupby(["batch_size", "phase"]).duration_ms.mean().unstack()
+    for phase in ["before", "profile", "after"]:
+        summary[phase + "_wall_ms"] = summary.batch_size.map(host_controls[phase])
+    summary["capture_off_mean_ms"] = (summary.before_wall_ms + summary.after_wall_ms) / 2
+    summary["capture_overhead_percent"] = 100 * (
+        summary.profile_wall_ms / summary.capture_off_mean_ms - 1
+    )
+    paired = measured.merge(
+        host_calls[host_calls.phase.eq("profile")],
+        on=["phase", "batch_size", "index"],
+        validate="one_to_one",
+    )
+    assert (paired.full_ms - paired.duration_ms).abs().max() < 1
     summary.to_csv(dest / "summary.csv", index=False)
     relevant = frame[frame.phase.eq("profile")]
     relevant.groupby(["batch_size", "stage", "kernel"]).agg(
@@ -352,6 +415,33 @@ def analyze(folder):
     ).reset_index().sort_values(["batch_size", "total_ms"], ascending=[True, False]).to_csv(
         dest / "kernels.csv", index=False
     )
+    step_rows = []
+    for (batch, index, step), events in relevant[relevant.action_step.ge(0)].groupby(
+        ["batch_size", "index", "action_step"]
+    ):
+        kernels = events[events.kind.eq("KERNEL")]
+        copies = events[events.kind.eq("MEMCPY")]
+        step_rows.append(
+            dict(
+                batch_size=batch,
+                index=index,
+                action_step=step,
+                kernel_union_ms=union_length(list(zip(kernels.start, kernels.end, strict=True)))
+                / 1e6,
+                activity_union_ms=union_length(list(zip(events.start, events.end, strict=True)))
+                / 1e6,
+                copy_union_ms=union_length(list(zip(copies.start, copies.end, strict=True))) / 1e6,
+                kernel_count=len(kernels),
+            )
+        )
+    steps = pd.DataFrame(step_rows)
+    assert (
+        steps.groupby(["batch_size", "index"])
+        .action_step.apply(list)
+        .apply(lambda values: values == list(range(manifest["num_steps"])))
+        .all()
+    )
+    steps.to_csv(dest / "action_steps.csv", index=False)
     validation = dict(
         status="complete",
         calls=len(measured),
@@ -364,6 +454,9 @@ def analyze(folder):
         .action_loop_body_count.apply(list)
         .to_dict(),
         stage_coverage=summary.set_index("batch_size").known_stage_fraction.to_dict(),
+        activity_stage_coverage=summary.set_index("batch_size").activity_stage_coverage.to_dict(),
+        nvtx_host_timer_max_difference_ms=float((paired.full_ms - paired.duration_ms).abs().max()),
+        max_cross_stage_overlap_ms=float(measured.cross_stage_overlap_ms.max()),
         kernel_sum_is_not_wall_time=True,
         host_sync_overlaps_gpu=True,
     )

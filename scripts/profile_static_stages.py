@@ -45,10 +45,33 @@ def jit_parts(wrapper):
     return values["jitted_fn"], values["state"]
 
 
+class ExternalGuard:
+    def __init__(self, path):
+        self.path = path
+        self.failure = None
+        self.context = {}
+        deadline = time.monotonic() + 40
+        while not path.exists():
+            if time.monotonic() > deadline:
+                raise TimeoutError("External GPU guard did not start")
+            time.sleep(0.25)
+        self.check()
+
+    def check(self):
+        state = json.loads(self.path.read_text())
+        self.failure = state["error"]
+        if time.time() - state["checked_at"] > 20:
+            self.failure = "External GPU guard heartbeat is stale"
+        if self.failure:
+            raise RuntimeError(self.failure)
+
+
 def run(args):
     args.output.mkdir(parents=True, exist_ok=False)
     manifest = dict(
         status="starting",
+        pid=os.getpid(),
+        external_gpu_observer=args.external_observer,
         started_at=time.time(),
         gpu=args.gpu,
         graph_mode=args.graph_mode,
@@ -75,8 +98,11 @@ def run(args):
         temporary.replace(args.output / "manifest.json")
 
     save()
-    monitor = Telemetry(args.gpu, args.output / "gpu_telemetry.jsonl")
-    monitor.thread.start()
+    if args.external_observer:
+        monitor = ExternalGuard(args.output / "gpu_guard.json")
+    else:
+        monitor = Telemetry(args.gpu, args.output / "gpu_telemetry.jsonl")
+        monitor.thread.start()
     profiler_started = False
     try:
         import jax
@@ -236,9 +262,12 @@ def run(args):
     finally:
         if profiler_started:
             libcudart.cudaProfilerStop()
-        monitor.stop.set()
-        monitor.thread.join(timeout=25)
-        if monitor.failure or monitor.thread.is_alive():
+        alive = False
+        if not args.external_observer:
+            monitor.stop.set()
+            monitor.thread.join(timeout=25)
+            alive = monitor.thread.is_alive()
+        if monitor.failure or alive:
             manifest.update(
                 status="failed", telemetry_error=monitor.failure or "thread did not stop"
             )
@@ -251,6 +280,7 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--external-observer", action="store_true")
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--batches", type=int, nargs="+", default=[1, 2, 3, 4, 5])
