@@ -395,8 +395,13 @@ def analyze(folder):
     host_calls = pd.read_json(run / "calls.jsonl", lines=True)
     host_controls = host_calls.groupby(["batch_size", "phase"]).duration_ms.mean().unstack()
     for phase in ["before", "profile", "after"]:
-        summary[phase + "_wall_ms"] = summary.batch_size.map(host_controls[phase])
-    summary["capture_off_mean_ms"] = (summary.before_wall_ms + summary.after_wall_ms) / 2
+        summary[phase + "_wall_ms"] = (
+            summary.batch_size.map(host_controls[phase]) if phase in host_controls else float("nan")
+        )
+    summary["capture_off_mean_ms"] = summary[["before_wall_ms", "after_wall_ms"]].mean(axis=1)
+    summary["control_basis"] = (
+        "before_only" if manifest.get("capture_until_exit") else "before_and_after"
+    )
     summary["capture_overhead_percent"] = 100 * (
         summary.profile_wall_ms / summary.capture_off_mean_ms - 1
     )
@@ -442,8 +447,29 @@ def analyze(folder):
         .all()
     )
     steps.to_csv(dest / "action_steps.csv", index=False)
+    diagnostic_rows = con.execute(
+        "select timestamp,severity,text,globalPid,timestampType,source from DIAGNOSTIC_EVENT where severity in (2,3)"
+    ).fetchall()
+    diagnostics = [
+        dict(
+            timestamp=r[0],
+            severity=r[1],
+            message=r[2],
+            global_pid=r[3],
+            inference_worker=r[3] == worker,
+            timestamp_type=r[4],
+            source=r[5],
+        )
+        for r in diagnostic_rows
+    ]
+    (dest / "trace_diagnostics.json").write_text(json.dumps(diagnostics, indent=2))
+    worker_warnings = [r for r in diagnostics if r["inference_worker"]]
+    print("Inference worker diagnostic warnings:", worker_warnings)
     validation = dict(
         status="complete",
+        trace_quality="worker_warnings_present" if worker_warnings else "no_worker_warnings",
+        worker_warnings=worker_warnings,
+        kernel_counts_per_batch=measured.groupby("batch_size").kernel_count.apply(list).to_dict(),
         calls=len(measured),
         stablehlo_equal=all(x["identical"] for x in manifest["stablehlo_checks"].values()),
         gpu_events=len(relevant),

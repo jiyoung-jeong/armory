@@ -72,6 +72,7 @@ def run(args):
         status="starting",
         pid=os.getpid(),
         external_gpu_observer=args.external_observer,
+        capture_until_exit=args.capture_until_exit,
         started_at=time.time(),
         gpu=args.gpu,
         graph_mode=args.graph_mode,
@@ -249,11 +250,12 @@ def run(args):
                         ),
                         flush=True,
                     )
-                assert libcudart.cudaProfilerStop() == 0
-                profiler_started = False
+                if not args.capture_until_exit:
+                    assert libcudart.cudaProfilerStop() == 0
+                    profiler_started = False
                 for size in reversed(args.batches):
                     for i in range(args.controls):
-                        call(size, "after", i)
+                        call(size, "after_traced" if args.capture_until_exit else "after", i)
         monitor.check()
         manifest.update(status="complete", finished_at=time.time(), outputs_validated=True)
     except BaseException as exc:
@@ -281,6 +283,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--external-observer", action="store_true")
+    parser.add_argument(
+        "--capture-until-exit",
+        action="store_true",
+        help="Use with nsys --capture-range-end=none; trailing calls remain traced.",
+    )
     parser.add_argument("--inputs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--batches", type=int, nargs="+", default=[1, 2, 3, 4, 5])
