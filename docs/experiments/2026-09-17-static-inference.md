@@ -15,6 +15,42 @@ Batch 1–5 각각 1,000회의 일반 추론을 완료했다. B1→B5에서 처�
 - 반환 action은 요청당 NumPy `(10,7)` 배열이다. 호출마다 shape·finite 여부와 해당 B의 warmup 기준 출력과의 일치(`rtol=atol=1e-5`)를 timer 밖에서 검사했다.
 - 정책 서버, client, scheduler, 네트워크, LIBERO 렌더러, Nsight는 측정 중 실행하지 않았다. 시스템 Python·드라이버·GPU clock/power/fan 설정은 변경하지 않았다.
 
+**성능표와 함께 보존한 입력 규격**
+
+입력 규격은 원본 관측과 모델 호출 직전의 `Observation`을 구분해 기록한다. 이번 GPU 측정 당시에는 원본 관측의 shape·dtype·SHA256을 저장했다. 이후 동일한 관측·checkpoint 정규화 통계·tokenizer·adapter 전처리를 **CPU에서 재실행**하여 아래 모델 입력 규격을 확인했다. 모델 가중치를 로드하거나 추론을 다시 실행한 결과가 아니며, 최초 GPU 실행 중 tensor를 직접 dump한 자료도 아니다. JAX 기본 32-bit 모드로 재구성했고 이 조건을 JSON에 명시했다.
+
+| 항목 | 원본 요청 하나 | 모델 입력 규격 (`B`는 batch) |
+| --- | --- | --- |
+| 외부 카메라 | `(224,224,3)`, `uint8` | `(B,224,224,3)`, `float32`, NHWC |
+| 손목 카메라 | `(224,224,3)`, `uint8` | `(B,224,224,3)`, `float32`, NHWC |
+| Padding 이미지 슬롯 | 원본에는 없음 | `(B,224,224,3)`, `float32`, image mask=False |
+| 이미지 mask | 원본에는 없음 | 슬롯별 `(B,)`, `bool`; 실제 두 슬롯은 True |
+| Prompt | 문자열 | ID `(B,200)`, `int32`; 유효 토큰 mask `(B,200)`, `bool` |
+| State | `(8,)`, `float64` | 정규화·padding 후 `(B,32)`, `float32` |
+
+이미지 슬롯 세 개는 이름으로 구분된 별도 tensor다. 원본의 실제 영상은 두 장이며 전처리에서 padding 슬롯 하나를 추가한다. 원본 이미지 `uint8`의 원소당 크기는 1 byte, 모델 입력 이미지 `float32`는 4 bytes다. 모델 가중치의 bfloat16과 입력 이미지의 float32는 다른 항목이다.
+
+Prompt의 200은 padding을 포함한 길이다. 관측 0–4의 유효 토큰 수는 **16, 14, 20, 14, 14**이며, special token을 포함한다. B=2이면 `[16,14]`, B=5이면 다섯 관측을 모두 사용한다. 이미지 해상도·dtype·padding 규칙·state 차원·denoising 10회·action horizon 10을 고정하고 batch 축 B를 바꿨다. 각 B에서 사용하는 입력 내용은 동일한 저장 목록의 앞 B개다.
+
+| Batch | 이미지 슬롯 각각의 shape | Prompt ID shape | State shape | 관측 tensor 합계 MiB | p50 ms | 요청/s |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `(1, 224, 224, 3)` | `(1, 200)` | `(1, 32)` | 1.724 | 135.03 | 7.38 |
+| 2 | `(2, 224, 224, 3)` | `(2, 200)` | `(2, 32)` | 3.447 | 204.62 | 9.74 |
+| 3 | `(3, 224, 224, 3)` | `(3, 200)` | `(3, 32)` | 5.171 | 257.06 | 11.64 |
+| 4 | `(4, 224, 224, 3)` | `(4, 200)` | `(4, 32)` | 6.895 | 307.72 | 12.97 |
+| 5 | `(5, 224, 224, 3)` | `(5, 200)` | `(5, 32)` | 8.619 | 365.27 | 13.68 |
+
+관측 tensor 합계는 세 이미지·이미지 mask·state·prompt ID·prompt mask의 `원소 수 × dtype 크기`를 합한 **논리적 배열 크기**다. 추가로 생성되는 sampling noise와 RNG, 가중치, 중간 activation, allocator 공간은 포함하지 않는다. 이 숫자는 실제 네트워크 전송량·H2D 복사량·GPU 전체 메모리 사용량이 아니다. 통신량은 직렬화 형식과 메타데이터까지 포함해 별도로 측정해야 한다.
+
+[입력 규격 JSON](data/2026-09-17-static-input-spec.json)에는 batch별 각 tensor의 shape·dtype·바이트 수·유효 토큰 수와 원본 관측·tokenizer·정규화 통계의 SHA256을 저장했다. [입력 규격과 성능을 연결한 CSV](data/2026-09-17-static-input-results.csv)는 각 성능 행에 입력 규격 JSON의 SHA256을 붙인다. 다른 실험과 비교할 때 B 이외의 규격, 모델/checkpoint, 실행 조건이 같은지 확인하고, 달라졌다면 별도 실험 조건으로 표시한다.
+
+새 실험에서도 저장된 입력과 완료된 manifest를 사용해 아래 명령으로 규격을 기록할 수 있다. 로컬에 이미 있는 tokenizer·정규화 파일만 읽으며 GPU와 네트워크를 사용하지 않는다. 기존 `input_spec.json`이 있으면 덮어쓰지 않고 종료한다.
+
+```bash
+.venv/bin/python -m scripts.describe_static_inputs output/new_static_inference \
+  --cache .cache/openpi-private/cache
+```
+
 **측정 순서와 시간 경계**
 
 각 실제 입력 shape에서 30회 호출하여 최초 컴파일·cuDNN 탐색을 포함한 warmup을 제외했다. 본 측정의 각 블록 앞에서도 같은 B로 10회 더 실행하여 shape 전환을 제외했다. 모든 batch shape를 먼저 준비한 하나의 프로세스에서 다음 순서로 실행했다.
