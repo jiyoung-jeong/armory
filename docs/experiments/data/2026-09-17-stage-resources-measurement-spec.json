@@ -1,0 +1,100 @@
+{
+  "status": "complete",
+  "runtime_commit": "b6d3fa752174f00c1ac34f0ea18ddf4e46415b7a",
+  "gpu": 0,
+  "uuid": "GPU-48f8ed9c-ab6c-5134-2277-bd7e0f487b4b",
+  "batches": [
+    1,
+    5
+  ],
+  "inputs": "output/static_inputs_20260917",
+  "warmup": 30,
+  "seed": 7,
+  "num_steps": 10,
+  "action_horizon": 10,
+  "nsys": {
+    "version": "2025.6.3.343",
+    "samples": 10,
+    "controls": 5,
+    "gpu_metrics_hz": 10000,
+    "flags": [
+      "--sample=none",
+      "--cpuctxsw=none",
+      "--trace=cuda,nvtx",
+      "--cuda-graph-trace=node",
+      "--capture-range=cudaProfilerApi",
+      "--capture-range-end=none",
+      "--kill=none",
+      "--gpu-metrics-devices=0",
+      "--gpu-metrics-frequency=10000"
+    ],
+    "runner_extra": [
+      "--external-observer",
+      "--capture-until-exit"
+    ]
+  },
+  "ncu": {
+    "version": "2026.1.0.0",
+    "samples": 1,
+    "controls": 1,
+    "flags": [
+      "--config-file",
+      "off",
+      "--target-processes",
+      "application-only",
+      "--clock-control",
+      "none",
+      "--cache-control",
+      "all",
+      "--replay-mode",
+      "kernel",
+      "--profile-from-start",
+      "off",
+      "--kernel-name-base",
+      "demangled",
+      "--filter-mode",
+      "per-launch-config",
+      "--launch-count",
+      "1",
+      "--kill",
+      "no"
+    ],
+    "sections": [
+      "SpeedOfLight",
+      "ComputeWorkloadAnalysis",
+      "MemoryWorkloadAnalysis",
+      "Occupancy",
+      "LaunchStats",
+      "SchedulerStats",
+      "WarpStateStats"
+    ],
+    "extra_metrics": [
+      "lts__t_bytes.sum.per_second"
+    ],
+    "sample_counts": {
+      "1": 112,
+      "5": 128
+    },
+    "passes_per_kernel": 17,
+    "nvtx_filter": false,
+    "runner_extra": [
+      "--external-observer"
+    ]
+  },
+  "privileges": {
+    "uid": 1006,
+    "gid": 1006,
+    "capability": "CAP_SYS_ADMIN",
+    "lifetime": "Profiler process and descendants only; no permanent account/file capabilities",
+    "no_new_privs": true,
+    "system_configuration_changed": false
+  },
+  "notes": [
+    "GPU idle before each experiment; external collision guard",
+    "Counter limits kept at RmProfilingAdminOnly=1; clock and power unchanged",
+    "Original monolithic JIT kept; StableHLO matches, optimized XLA autotuning differs",
+    "NCU full invocation durations include replay overhead; do not use as serving latency",
+    "NSYS stage values are sampled estimates over activity unions, not FLOP utilization",
+    "Cold-cache isolated NCU samples are not complete stage-range counters"
+  ]
+}

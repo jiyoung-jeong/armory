@@ -132,3 +132,5 @@ mkdir -p output/new_static_stages
 분석기 회귀 테스트와 GPU interval 합집합 테스트 5개가 통과했다. Ruff 검사와 보고서 내 로컬 링크 검증도 완료했다.
 
 후속 실험: [Nsight Compute로 선택한 prefill GEMM의 카운터 측정](2026-09-17-ncu-prefill.md).
+
+후속 [VLM·action 구간 자원 사용률 측정](2026-09-17-stage-resources.md)에서 전체 GPU 활동 구간의 Tensor/SM 시계열과 NCU 메모리·warp·stall 지표를 추가 수집했다.

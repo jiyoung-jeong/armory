@@ -1,0 +1,208 @@
+{
+  "status": "complete",
+  "batches": {
+    "1": {
+      "samples": 112,
+      "independent_hlo_stage_conflicts": 0,
+      "excluded_conflicts": [],
+      "unmatched": 14,
+      "ambiguous": 5,
+      "stablehlo_matches_reference": true,
+      "optimized_hlo_byte_identical": false,
+      "outputs_validated": true
+    },
+    "5": {
+      "samples": 128,
+      "independent_hlo_stage_conflicts": 1,
+      "excluded_conflicts": [
+        {
+          "kernel": "input_reduce_fusion_7",
+          "stage": "action",
+          "own_hlo_stage": "vlm_embed"
+        }
+      ],
+      "unmatched": 8,
+      "ambiguous": 3,
+      "stablehlo_matches_reference": true,
+      "optimized_hlo_byte_identical": false,
+      "outputs_validated": true
+    }
+  },
+  "metrics": {
+    "kernel_ms": {
+      "metric": "gpu__time_duration.sum",
+      "unit": "ns",
+      "scale": 1e-06
+    },
+    "sm_pct": {
+      "metric": "sm__throughput.avg.pct_of_peak_sustained_elapsed",
+      "unit": "%",
+      "scale": 1
+    },
+    "tensor_pct": {
+      "metric": "sm__pipe_tensor_op_hmma_cycles_active.avg.pct_of_peak_sustained_elapsed",
+      "unit": "%",
+      "scale": 1
+    },
+    "dram_pct": {
+      "metric": "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",
+      "unit": "%",
+      "scale": 1
+    },
+    "dram_gbps": {
+      "metric": "dram__bytes.sum.per_second",
+      "unit": "byte/s",
+      "scale": 1e-09
+    },
+    "l2_pct": {
+      "metric": "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+      "unit": "%",
+      "scale": 1
+    },
+    "l2_hit_pct": {
+      "metric": "lts__t_sector_hit_rate.pct",
+      "unit": "%",
+      "scale": 1
+    },
+    "occupancy_pct": {
+      "metric": "sm__warps_active.avg.pct_of_peak_sustained_active",
+      "unit": "%",
+      "scale": 1
+    },
+    "theoretical_occupancy_pct": {
+      "metric": "sm__maximum_warps_per_active_cycle_pct",
+      "unit": "%",
+      "scale": 1
+    },
+    "registers_per_thread": {
+      "metric": "launch__registers_per_thread",
+      "unit": "register/thread",
+      "scale": 1
+    },
+    "shared_bytes_per_block": {
+      "metric": "launch__shared_mem_per_block",
+      "unit": "byte/block",
+      "scale": 1
+    },
+    "replay_passes": {
+      "metric": "profiler__replayer_passes",
+      "unit": "pass",
+      "scale": 1
+    },
+    "l2_gbps": {
+      "metric": "lts__t_bytes.sum.per_second",
+      "unit": "byte/s",
+      "scale": 1e-09
+    },
+    "l1_hit_pct": {
+      "metric": "l1tex__t_sector_hit_rate.pct",
+      "unit": "%",
+      "scale": 1
+    },
+    "active_warps_per_scheduler": {
+      "metric": "smsp__warps_active.avg.per_cycle_active",
+      "unit": "warp",
+      "scale": 1
+    },
+    "eligible_warps_per_scheduler": {
+      "metric": "smsp__warps_eligible.avg.per_cycle_active",
+      "unit": "warp",
+      "scale": 1
+    },
+    "issued_warps_per_scheduler": {
+      "metric": "smsp__issue_active.avg.per_cycle_active",
+      "unit": null,
+      "scale": 1
+    },
+    "no_eligible_pct": {
+      "metric": "smsp__issue_inst0.avg.pct_of_peak_sustained_active",
+      "unit": "%",
+      "scale": 1
+    },
+    "issue_active_pct": {
+      "metric": "smsp__issue_active.avg.pct_of_peak_sustained_active",
+      "unit": "%",
+      "scale": 1
+    },
+    "warp_cycles_barrier": {
+      "metric": "smsp__average_warps_issue_stalled_barrier_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_branch_resolving": {
+      "metric": "smsp__average_warps_issue_stalled_branch_resolving_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_dispatch_stall": {
+      "metric": "smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_drain": {
+      "metric": "smsp__average_warps_issue_stalled_drain_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_imc_miss": {
+      "metric": "smsp__average_warps_issue_stalled_imc_miss_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_lg_throttle": {
+      "metric": "smsp__average_warps_issue_stalled_lg_throttle_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_long_scoreboard": {
+      "metric": "smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_math_pipe_throttle": {
+      "metric": "smsp__average_warps_issue_stalled_math_pipe_throttle_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_membar": {
+      "metric": "smsp__average_warps_issue_stalled_membar_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_mio_throttle": {
+      "metric": "smsp__average_warps_issue_stalled_mio_throttle_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_misc": {
+      "metric": "smsp__average_warps_issue_stalled_misc_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_no_instruction": {
+      "metric": "smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_not_selected": {
+      "metric": "smsp__average_warps_issue_stalled_not_selected_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_selected": {
+      "metric": "smsp__average_warps_issue_stalled_selected_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_short_scoreboard": {
+      "metric": "smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_sleeping": {
+      "metric": "smsp__average_warps_issue_stalled_sleeping_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_tex_throttle": {
+      "metric": "smsp__average_warps_issue_stalled_tex_throttle_per_issue_active.ratio",
+      "unit": "inst"
+    },
+    "warp_cycles_wait": {
+      "metric": "smsp__average_warps_issue_stalled_wait_per_issue_active.ratio",
+      "unit": "inst"
+    }
+  },
+  "denominator": "Weighted diagnostic estimate over mapped unique-stage kernel configurations. Weights are reference Nsight kernel durations; excludes copies/gaps, ambiguous configurations and cross-run stage conflicts. Not direct stage-range counters or warm-cache occupancy.",
+  "stage_assignment": "Cross-run kernel + grid + block + static/dynamic shared-memory match against HLO-resolved Nsight trace with identical StableHLO; no live NCU stage NVTX. XLA autotuning selected some different compiled kernels/configurations. own_hlo_stage is supplemental metadata from the NCU run optimized HLO, with call-site tags taking priority over shared fusion child metadata; it is not used to assign reference time weights to unmatched kernels.",
+  "cache_control": "all",
+  "clock_control": "none",
+  "replay_mode": "kernel",
+  "filter_mode": "per-launch-config",
+  "launch_count": 1,
+  "stall_definition": "Average warp cycles in each state per issued instruction; not percentage of elapsed inference time. Not-selected reflects available parallelism, not necessarily a bottleneck."
+}

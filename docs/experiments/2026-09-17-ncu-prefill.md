@@ -79,3 +79,5 @@ GUI에서 각 result의 `GPU Speed Of Light Throughput`, `Compute Workload Analy
 GPU 측정 재현 시에는 수집 설정 JSON의 kernel 필터와 flags를 사용하고, 기존 `scripts.profile_static_stages`에 `--external-observer --batches 1` 또는 `5`, `--samples 1 --controls 1 --warmup 30`을 전달한다. `scripts.watch_profile_gpu`는 해당 새 출력 폴더를 대상으로 별도 프로세스에서 먼저 시작한다. GPU는 유휴 상태여야 하며 sudo/capability 실행은 서버에서 허용된 범위로 한정한다.
 
 측정 종료 후 두 GPU 모두 메모리 0MiB·활동률 0%로 반환됐고, 상태 감시도 종료됐다. 일시적인 capability는 프로세스 종료와 함께 사라졌다.
+
+후속 [VLM·action 구간 자원 사용률 측정](2026-09-17-stage-resources.md)에서 전체 GPU 활동 구간의 Tensor/SM 시계열과 NCU 메모리·warp·stall 지표를 추가 수집했다.

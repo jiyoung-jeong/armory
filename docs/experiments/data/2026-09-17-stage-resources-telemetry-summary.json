@@ -1,0 +1,29 @@
+[
+  {
+    "run": "nsys",
+    "temperature_min": 79.0,
+    "temperature_max": 81.0,
+    "clock_min": 1530.0,
+    "clock_max": 1845.0,
+    "thermal_samples": 0,
+    "samples": 6
+  },
+  {
+    "run": "ncu_b1",
+    "temperature_min": 66.0,
+    "temperature_max": 74.0,
+    "clock_min": 1800.0,
+    "clock_max": 1890.0,
+    "thermal_samples": 0,
+    "samples": 512
+  },
+  {
+    "run": "ncu_b5",
+    "temperature_min": 68.0,
+    "temperature_max": 73.0,
+    "clock_min": 1800.0,
+    "clock_max": 1875.0,
+    "thermal_samples": 0,
+    "samples": 591
+  }
+]

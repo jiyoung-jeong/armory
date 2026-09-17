@@ -1,0 +1,40 @@
+{
+  "status": "complete",
+  "diagnostics": [],
+  "samples": 113457,
+  "sample_period_ns": {
+    "median": 100001,
+    "minimum": 100000,
+    "maximum": 100001
+  },
+  "counter_stream_type_id": 281479271677952,
+  "denominator": "Union of all stage-attributed GPU kernel, memcpy and memset intervals; excludes gaps/CPU work. VLM total includes embedding, prefill and VLM-shared fusion.",
+  "estimator": "Time-integral of sampled metrics over union intervals, sample at t represents preceding interval. One-period shifts both directions quantify alignment sensitivity; samples cannot resolve individual short kernels.",
+  "does_not_measure": "Model FLOPS utilization; whole CPU stage span; NCU SM throughput; warm-cache kernel-specific counters",
+  "metric_names": {
+    "tensor_active_pct": "Tensor Active [Throughput %]",
+    "sm_active_pct": "SMs Active [Throughput %]",
+    "sm_issue_pct": "SM Issue [Throughput %]",
+    "compute_warps_pct": "Compute Warps in Flight [Throughput %]",
+    "dram_read_pct": "DRAM Read Bandwidth [Throughput %]",
+    "dram_write_pct": "DRAM Write Bandwidth [Throughput %]"
+  },
+  "stage_labels": {
+    "vlm_embed": [
+      "vlm_embed"
+    ],
+    "vlm_prefill": [
+      "vlm_mixed",
+      "vlm_prefill"
+    ],
+    "vlm_total": [
+      "vlm_embed",
+      "vlm_mixed",
+      "vlm_prefill"
+    ],
+    "action": [
+      "action"
+    ]
+  },
+  "outputs_validated": true
+}
