@@ -40,12 +40,12 @@ def configure(gpu):
     )
 
 
-def capture(output):
+def capture(output, tasks=(5, 2, 6, 9)):
     from evaluation.envs.libero import LiberoRobotSpec, LiberoSimEnvironment
 
     output.mkdir(parents=True, exist_ok=False)
     records = []
-    for index, task in enumerate([5, 2, 6, 9]):
+    for index, task in enumerate(tasks):
         env = LiberoSimEnvironment(
             LiberoRobotSpec("libero_10", task), max_episode_steps=500, seed=7 + index
         )
@@ -310,13 +310,14 @@ def main():
     parser.add_argument("--samples", type=int, default=50)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--with-renderer-control", action="store_true")
+    parser.add_argument("--tasks", type=int, nargs="+", default=[5, 2, 6, 9])
     args = parser.parse_args()
     if args.mode == "run" and args.inputs is None:
         parser.error("run requires --inputs")
     if args.samples < 1 or args.repeats < 1:
         parser.error("samples and repeats must be positive")
     configure(args.gpu)
-    capture(args.output) if args.mode == "capture" else run(args)
+    capture(args.output, args.tasks) if args.mode == "capture" else run(args)
 
 
 if __name__ == "__main__":
