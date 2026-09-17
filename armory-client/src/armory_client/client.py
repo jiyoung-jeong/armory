@@ -107,6 +107,7 @@ class BidirectionalWebsocket:
         min_execution_horizon: int = 5,
         max_execution_horizon: int = 100,
         noise: np.ndarray | None = None,
+        action_executed: bool | None = None,
     ) -> dict[str, float | int]:
         if self._pre_send_hook is not None:
             self._pre_send_hook()
@@ -125,6 +126,7 @@ class BidirectionalWebsocket:
                 min_execution_horizon=min_execution_horizon,
                 max_execution_horizon=max_execution_horizon,
                 noise=noise,
+                action_executed=action_executed,
             )
         )
         serialize_end = time.time()

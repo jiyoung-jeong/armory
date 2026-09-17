@@ -65,6 +65,7 @@ class PolicyAgent(Agent):
                 self._broker.num_actions_available,
                 min_execution_horizon=self._broker.min_execution_horizon,
                 max_execution_horizon=self._broker.max_execution_horizon,
+                action_executed=action.action_chunk_index is not None,
             )
             if self._event_log is not None:
                 self._event(

@@ -225,6 +225,7 @@ async def _receive_loop(
                 noise=req.noise,
                 control_hz=state.robot_metadata[robot_id].control_hz,
                 weight=state.robot_metadata[robot_id].weight,
+                action_executed=req.action_executed,
             )
             state.slots.write(slot_index, slot_data)
             await state.scheduler_sock.send_pyobj(slot_data.request)

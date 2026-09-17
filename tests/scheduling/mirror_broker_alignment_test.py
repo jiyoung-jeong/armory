@@ -126,3 +126,42 @@ def test_newer_slot_is_separate_from_same_observation_origin():
     processed = replace(selected, request_id=2, observation_step=2, action_index_start=sent[-1][1])
     assert processed.request_id != selected.request_id
     assert processed.action_index_start == selected.action_index_start + 1
+
+
+@pytest.mark.parametrize("last_tick_consumed", [False, True])
+def test_sparse_request_resynchronizes_exact_post_pop_counter(last_tick_consumed):
+    broker, robot, agent, sent = setup_pair(20.0)
+    # Five actions were available at the initial snapshot. Whether the next
+    # reported tick is 4 (still consuming) or 10 (already starved) is explicit.
+    last = 4 if last_tick_consumed else 10
+    for tick in range(1, last + 1):
+        agent.get_action(Observation(step=tick))
+    request = replace(
+        _make_request(last, broker.next_action_step, last / 20.0, 5),
+        action_executed=last_tick_consumed,
+    )
+    robot.step(request)
+    assert robot.executed_steps == broker.next_action_step
+    assert robot.steps[-1].action_step == (
+        broker.next_action_step - 1 if last_tick_consumed else None
+    )
+    assert len(robot.steps) == 2  # Intermediate action timings are not fabricated.
+    robot.step_forward((last + 4.001) / 20.0)
+    forecast = {step.observation_step: step for step in robot.steps}
+    for tick in range(last + 1, last + 5):
+        action = broker.get_action(tick)
+        assert forecast[tick].action_step == (action.step if action else None)
+        assert forecast[tick].next_action_step == broker.next_action_step
+
+
+def test_sparse_legacy_request_fails_instead_of_fabricating_progress():
+    _, robot, _, _ = setup_pair()
+    with pytest.raises(ValueError, match="Sparse observations"):
+        robot.step(_make_request(10, 5, 10.0, 5))
+
+
+def test_sparse_counter_cannot_advance_more_than_control_ticks():
+    _, robot, _, _ = setup_pair()
+    request = replace(_make_request(2, 4, 2.0, 5), action_executed=True)
+    with pytest.raises(ValueError, match="exceeds elapsed"):
+        robot.step(request)

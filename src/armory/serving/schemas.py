@@ -32,6 +32,7 @@ class SlotRequest:
     control_hz: float
     weight: float = 1.0
     episode_id: str = ""
+    action_executed: bool | None = None
 
     def can_serve(self, last_action_index_start: int, anticipated_action_index_start: int) -> bool:
         return (

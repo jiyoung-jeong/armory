@@ -132,11 +132,24 @@ class Robot:
                 logger.warning(f"self.steps: {self.steps}")
                 logger.warning(f"request: {request}")
                 return False
-            stepped_forward = request.action_index_start > self.last_request.action_index_start
-            action_step = self.last_request.action_index_start if stepped_forward else None
-            next_action_step = (
-                action_step + 1 if action_step is not None else latest.next_action_step
-            )
+            observation_gap = request.observation_step - latest.observation_step
+            action_advance = request.action_index_start - latest.next_action_step
+            if not 0 <= action_advance <= observation_gap:
+                raise ValueError("Action progress exceeds elapsed control ticks")
+            executed = request.action_executed
+            if executed is None:
+                if observation_gap != 1:
+                    raise ValueError("Sparse observations require action_executed telemetry")
+                executed = action_advance == 1
+            if (executed and action_advance == 0) or (
+                not executed and action_advance == observation_gap
+            ):
+                raise ValueError("Current action telemetry contradicts cumulative progress")
+            action_step = request.action_index_start - 1 if executed else None
+            # This is the authoritative post-pop broker counter, even when
+            # intermediate control ticks were not transmitted. Do not invent
+            # those ticks or attribute all progress to the current tick.
+            next_action_step = request.action_index_start
             control_step = ControlStep(
                 time=request.request_timestamp,
                 observation_step=request.observation_step,
@@ -334,7 +347,15 @@ class Robot:
 
     def assert_step_consistency(self) -> None:
         for prev, curr in pairwise(self.steps):
-            if curr.action_step is not None and curr.action_step != prev.next_action_step:
+            gap = curr.observation_step - prev.observation_step
+            progress = curr.next_action_step - prev.next_action_step
+            if gap <= 0 or not 0 <= progress <= gap:
+                raise ValueError("Invalid cumulative progress between control observations")
+            if (
+                gap == 1
+                and curr.action_step is not None
+                and curr.action_step != prev.next_action_step
+            ):
                 logger.warning(f"self.steps: {self.steps}")
                 logger.warning(f"prev: {prev}")
                 logger.warning(f"curr: {curr}")

@@ -17,6 +17,8 @@ class InferRequest:
     noise: np.ndarray | None = None  # action_horizon noise_dim
     episode_id: str = ""
     type: Literal["infer"] = "infer"
+    # Whether this observation tick consumed an action; None is a legacy client.
+    action_executed: bool | None = None
 
 
 @dataclass(frozen=True)
