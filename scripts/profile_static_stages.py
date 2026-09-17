@@ -175,6 +175,7 @@ def run(args):
                     monitor.context = dict(phase=phase, batch_size=size)
                     policy._policy._rng = rng
                     label = f"armory.stage_call phase={phase} b={size} i={index}"
+                    start_epoch = time.time()
                     with nvtx_range(label):
                         begin = time.perf_counter_ns()
                         outputs = policy.infer_batch(requests[:size])
@@ -196,6 +197,7 @@ def run(args):
                                 batch_size=size,
                                 index=index,
                                 duration_ms=duration,
+                                start_epoch=start_epoch,
                                 label=label,
                             )
                         )
