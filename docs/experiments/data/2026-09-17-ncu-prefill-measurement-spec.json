@@ -1,0 +1,47 @@
+{
+  "scope": "NCU prefill GEMM kernels, batch 1 and 5; no device/driver configuration changes",
+  "ncu": "/usr/local/cuda-13.2/bin/ncu",
+  "ncu_version": "2026.1.0.0",
+  "clock_control": "none",
+  "cache_control": "all",
+  "replay_mode": "kernel",
+  "profile_from_start": false,
+  "target_processes": "application-only",
+  "launch_count_limit_per_batch": 6,
+  "sections": [
+    "SpeedOfLight",
+    "ComputeWorkloadAnalysis",
+    "MemoryWorkloadAnalysis",
+    "Occupancy",
+    "LaunchStats"
+  ],
+  "kernel_filter": "regex:.*gemm.*",
+  "nvtx_filters": null,
+  "privilege": {
+    "uid": 1006,
+    "effective_capabilities": "CAP_SYS_ADMIN",
+    "bounding_set": "CAP_SYS_ADMIN only",
+    "no_new_privs": true,
+    "lifetime": "NCU process and target only; no persistent file capabilities or driver changes"
+  },
+  "inputs": "output/static_inputs_20260917",
+  "notes": "Each batch has a fresh process; same monolithic JIT and scopes as Nsight Systems; measurements are isolated replay samples, not full inference latency.",
+  "status": "complete",
+  "kernel_filters": {
+    "1": "regex:.*cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x128_32x[45]_nn_align8.*",
+    "5": "regex:.*(cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_nn_align8|ampere_bf16_s16816gemm_bf16_256x128_ldg8_f2f_stages_32x3_nn).*"
+  },
+  "successful_runs": [
+    "b1_gemm",
+    "b5_gemm"
+  ],
+  "captured_call": "First transition call after 30 warmups and one capture-off call; launch-count=6 stops collection, target continues to validate output.",
+  "warnings": [
+    "GPU clocks intentionally not locked."
+  ],
+  "failed_attempts": {
+    "b1": "CAP_PERFMON-only model run emitted ERR_NVGPUCTRPERM; zero kernels",
+    "b1_sysadmin": "NVTX-filtered run stalled; interrupted with zero kernels"
+  },
+  "root_probe": "One tiny CUDA kernel successfully collected with direct sudo; then user UID + temporary CAP_SYS_ADMIN also passed."
+}

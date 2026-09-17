@@ -130,3 +130,5 @@ mkdir -p output/new_static_stages
 이번 입력·모델·장치에서는 B를 늘릴 때 action 생성 전체를 동일한 비율로 비싸게 만드는 것이 아니라 VLM prefix 처리 비용이 더 크게 증가했다. 따라서 batch 비용을 하나의 상수나 B에 정비례하는 값으로 두기보다, VLM과 action의 서로 다른 scaling을 모델링할 근거가 생겼다. VLM prefill의 상위 kernel을 대상으로 Nsight Compute를 사용하면 compute/memory 원인을 추가로 좁힐 수 있다. 별도 stage batching·cache 재사용·모델 분할이 실제로 유리한지는 아직 실험하지 않았다. 제어 deadline·요청 교체·starvation 및 multi-robot scheduling에 대한 주장은 다음 serving 실험에서 검증해야 한다.
 
 분석기 회귀 테스트와 GPU interval 합집합 테스트 5개가 통과했다. Ruff 검사와 보고서 내 로컬 링크 검증도 완료했다.
+
+후속 실험: [Nsight Compute로 선택한 prefill GEMM의 카운터 측정](2026-09-17-ncu-prefill.md).
