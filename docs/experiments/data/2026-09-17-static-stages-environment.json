@@ -1,0 +1,11 @@
+{
+  "python": "3.11.16 (main, Sep  1 2026, 14:18:37) [Clang 22.1.3 ]",
+  "packages": {
+    "jax": "0.5.3",
+    "jaxlib": "0.5.3",
+    "flax": "0.10.2",
+    "numpy": "2.4.4"
+  },
+  "nsys": "NVIDIA Nsight Systems version 2025.6.3.343-256337165561v0",
+  "trace_sha256": "5cb482745c7d2c3481dc2c7b6cb0e65531731a28c62b1bc923f981d5dca4978a"
+}

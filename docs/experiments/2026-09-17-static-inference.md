@@ -152,3 +152,5 @@ GPU 실행 코드는 `43d02ef`이고 이후 집계·시각화는 별도 스크�
 1. B4→B5에서 늘어나는 batch 시간의 원인이 VLM, action 생성 반복, kernel launch/host gap 중 무엇인지 별도 Nsight 실행으로 분해한다. 현재 host 구간 표만으로 특정 GPU stage를 병목으로 지목하지 않는다.
 2. 10대가 각각 2Hz로 요청한다면 유입은 20 요청/초다. 이번에 측정한 B1–5의 최대 추론 처리량 13.68 요청/초보다 높으므로, 같은 실행 경로에서 모든 요청을 보존·처리하는 serving은 대기열 증가가 예상된다. Armory가 관측을 교체·생략하는 조건이라면 queue length 대신 처리·대체·누락 수를 구분해야 한다. 실제 로봇 수별 SLO·starvation은 별도 실험으로 확인한다.
 3. 이번 데이터는 LIBERO 초기 관측 5개와 SYNC/10 denoising steps에 대한 결과다. 다른 입력 분포, RTC, 다른 생성 길이, Thor 또는 네트워크 조건으로 그대로 일반화하지 않는다. Nsight·multi-robot·Thor 실행은 이번 측정에 포함하지 않았다.
+
+후속 실험: [2단계 Nsight VLM·action 비용 분해 결과](2026-09-17-static-stage-nsight.md).

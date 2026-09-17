@@ -14,7 +14,7 @@ from matplotlib.collections import LineCollection
 COLORS = {"vlm_embed": "#4e79a7", "vlm_prefill": "#59a14f", "action": "#e15759", "other": "#999999"}
 LABELS = {
     "vlm_embed": "VLM: image/text embeddings",
-    "vlm_prefill": "VLM: prefix prefill",
+    "vlm_prefill": "VLM: prefill / shared VLM",
     "action": "Action generation (10 iterations)",
     "other": "Other / mixed",
 }

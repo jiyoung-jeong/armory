@@ -1,0 +1,11 @@
+{
+  "samples": 16,
+  "temperature_min_c": 83.0,
+  "temperature_max_c": 87.0,
+  "sm_clock_min_mhz": 1530.0,
+  "sm_clock_max_mhz": 1860.0,
+  "sw_thermal_samples": 2,
+  "hw_thermal_samples": 0,
+  "memory_max_mib": 8548.0,
+  "interval": "first profile start through last profile end, includes intervening transition/validation gaps"
+}

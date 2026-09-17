@@ -1,0 +1,231 @@
+{
+  "status": "complete",
+  "pid": 3740698,
+  "external_gpu_observer": true,
+  "capture_until_exit": true,
+  "started_at": 1789645338.576455,
+  "gpu": 0,
+  "graph_mode": "default",
+  "batch_sizes": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "warmup": 30,
+  "samples": 10,
+  "control_samples": 10,
+  "input_directory": "/home/jyjeong/armory/output/static_inputs_20260917",
+  "rng_seed": 7,
+  "config": "pi05_libero",
+  "num_steps": 10,
+  "infer_type": "SYNC",
+  "jit": "single original module_jit; only named_scope metadata added",
+  "stages": {
+    "embed_prefix": "armory_stage_vlm_embed",
+    "prefill": "armory_stage_vlm_prefill",
+    "flow_matching": "armory_stage_action"
+  },
+  "gpu_barriers_added_inside_inference": false,
+  "git_commit": "56c6d5b7d6faf5ce5124b5327bf7930cd4c8c392",
+  "submodules": "51f92a0e23328d4ffc811c054f8cfe5b71b0980d third_party/Isaac-GR00T (remotes/origin/armory-n1.7-py311)\n 65a492ad4019afb1c69372449e2600d3199bb93c third_party/libero (heads/compat)\n fc5860f709d3c6acc98240600488d2558e09101a third_party/openpi (remotes/origin/openpi-rtc)",
+  "xla_flags": "",
+  "inputs_metadata": [
+    {
+      "robot": 0,
+      "task": 5,
+      "seed": 7,
+      "initial_state_index": 0,
+      "prompt": "pick up the book and place it in the back compartment of the caddy",
+      "observation_step": 0,
+      "arrays": {
+        "state": {
+          "shape": [
+            8
+          ],
+          "dtype": "float64"
+        },
+        "image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist_image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        }
+      },
+      "sha256": "a5268292f77eda529940a529c3c7afba4d07ba7166a361734d066c6973d7e369"
+    },
+    {
+      "robot": 1,
+      "task": 2,
+      "seed": 8,
+      "initial_state_index": 0,
+      "prompt": "turn on the stove and put the moka pot on it",
+      "observation_step": 0,
+      "arrays": {
+        "state": {
+          "shape": [
+            8
+          ],
+          "dtype": "float64"
+        },
+        "image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist_image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        }
+      },
+      "sha256": "8b0622e4c98de887041e4032915ab0186fd43a0799101c7a308c76279bb5e5ab"
+    },
+    {
+      "robot": 2,
+      "task": 6,
+      "seed": 9,
+      "initial_state_index": 0,
+      "prompt": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "observation_step": 0,
+      "arrays": {
+        "state": {
+          "shape": [
+            8
+          ],
+          "dtype": "float64"
+        },
+        "image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist_image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        }
+      },
+      "sha256": "33b4e73bfd87d0004d6a70c571582b49e62fa1e4b04ca3100cd16ca703c31551"
+    },
+    {
+      "robot": 3,
+      "task": 9,
+      "seed": 10,
+      "initial_state_index": 0,
+      "prompt": "put the yellow and white mug in the microwave and close it",
+      "observation_step": 0,
+      "arrays": {
+        "state": {
+          "shape": [
+            8
+          ],
+          "dtype": "float64"
+        },
+        "image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist_image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        }
+      },
+      "sha256": "0c4354df2faf33038cc03668406359a13de8056c3e54f13ab925e25ff6e073de"
+    },
+    {
+      "robot": 4,
+      "task": 0,
+      "seed": 11,
+      "initial_state_index": 0,
+      "prompt": "put both the alphabet soup and the tomato sauce in the basket",
+      "observation_step": 0,
+      "arrays": {
+        "state": {
+          "shape": [
+            8
+          ],
+          "dtype": "float64"
+        },
+        "image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        },
+        "wrist_image": {
+          "shape": [
+            224,
+            224,
+            3
+          ],
+          "dtype": "uint8"
+        }
+      },
+      "sha256": "13cca2aa81312dddef048862119a81d370b9da32bdcfd94a31f94f8c9391cc96"
+    }
+  ],
+  "stablehlo_checks": {
+    "1": {
+      "identical": true,
+      "original_sha256": "77121ce67cb2d5ad268ea45d334b13da428a88036ed7a5a6ba2544699f5f2007",
+      "annotated_sha256": "77121ce67cb2d5ad268ea45d334b13da428a88036ed7a5a6ba2544699f5f2007"
+    },
+    "2": {
+      "identical": true,
+      "original_sha256": "c95425f9ac25c5e54a49fd6057cb72b9ded10c062bb29235d6943431de738b5c",
+      "annotated_sha256": "c95425f9ac25c5e54a49fd6057cb72b9ded10c062bb29235d6943431de738b5c"
+    },
+    "3": {
+      "identical": true,
+      "original_sha256": "63d01a21514f2ec0c0c27c479f15707365b1b277c1493883a451573773598030",
+      "annotated_sha256": "63d01a21514f2ec0c0c27c479f15707365b1b277c1493883a451573773598030"
+    },
+    "4": {
+      "identical": true,
+      "original_sha256": "09f919cff9069137742ea93c7936991253d883dbb112a7dd14ffb98665421696",
+      "annotated_sha256": "09f919cff9069137742ea93c7936991253d883dbb112a7dd14ffb98665421696"
+    },
+    "5": {
+      "identical": true,
+      "original_sha256": "8a67b9b6faa73a062c47e7875eb42cbd5783bfa6665714634b76a355b692715c",
+      "annotated_sha256": "8a67b9b6faa73a062c47e7875eb42cbd5783bfa6665714634b76a355b692715c"
+    }
+  },
+  "warmed_at": 1789645505.979203,
+  "finished_at": 1789645549.2796664,
+  "outputs_validated": true
+}
