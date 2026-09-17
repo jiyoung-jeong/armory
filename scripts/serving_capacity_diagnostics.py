@@ -61,7 +61,10 @@ def main():
                 row = match.iloc[0]
                 events = rows(path.parent / f"broker_{int(row.robot)}.jsonl")
                 source = next(
-                    e for e in events if e.get("request_timestamp") == row.request_timestamp
+                    e
+                    for e in events
+                    if e.get("observation_step") == int(row.observation_step)
+                    and "request_timestamp" in e
                 )
                 null_offsets = [
                     (e["time"] - row.request_timestamp) * 1000

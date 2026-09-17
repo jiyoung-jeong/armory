@@ -1,0 +1,25 @@
+{
+  "miss_available": {
+    "root": "serving_capacity_20260917",
+    "case": "r1_hz20_rep0",
+    "robot": 0,
+    "request_id": 12,
+    "latency_ms": 197.784423828125,
+    "control_hz": 20.0,
+    "queue_after_request_tick": 3,
+    "starvation_offsets_after_request_ms": []
+  },
+  "pass_starved": {
+    "root": "serving_capacity_20260917",
+    "case": "r4_hz20_rep0",
+    "robot": 1,
+    "request_id": 459,
+    "latency_ms": 149.17540550231934,
+    "control_hz": 20.0,
+    "queue_after_request_tick": 0,
+    "starvation_offsets_after_request_ms": [
+      49.92032051086426,
+      99.95460510253906
+    ]
+  }
+}
